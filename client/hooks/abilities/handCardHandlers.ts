@@ -96,17 +96,8 @@ export function handleHandCardClick(
       cursorStack.originalOwnerId // CRITICAL: Pass token owner ID for command cards
     )
 
-    if (isValid) {
       // Apply the token/status to the card
       if (cursorStack.type === 'Revealed') {
-        // DIAGNOSTIC: Log Revealed token placement
-        console.log('[HAND CARD REVEALED]', {
-          player: player.name,
-          cardName: card.name,
-          cardIndex,
-          remainingCount: cursorStack.count - 1,
-        })
-
         // For Revealed, we need to request reveal or add status
         const effectiveActorId = cursorStack.sourceCard?.ownerId ?? gameState.activePlayerId ?? localPlayerId ?? 1
         if (!card.statuses) {
@@ -130,7 +121,6 @@ export function handleHandCardClick(
             markAbilityUsed(cursorStack.sourceCoords, cursorStack.isDeployAbility, false, readyStatusToRemove)
           }
         } else {
-          console.log('[HAND CARD REVEALED] Already has Revealed from this player - just completing ability')
         }
 
         // CRITICAL: Always clear targeting mode when clicking on a valid hand card
@@ -155,17 +145,14 @@ export function handleHandCardClick(
           // after placing all Revealed tokens
           const chained = cursorStack.chainedAction
           if (chained) {
-            console.log('[HAND CARD REVEALED] Executing chainedAction after placing all Revealed tokens:', chained.type, chained.mode || chained.tokenType)
 
             // Use actionQueue if available (preferred path)
             if (setActionQueue) {
-              console.log('[HAND CARD REVEALED] Scheduling chainedAction to actionQueue')
               setTimeout(() => {
                 setActionQueue(prev => [...prev, chained])
               }, 0)
             } else if (onAction) {
               // Fallback: execute directly if setActionQueue not available
-              console.log('[HAND CARD REVEALED] Executing chainedAction directly via onAction')
               const sourceCoords = cursorStack.sourceCoords || { row: -1, col: -1 }
               setTimeout(() => {
                 onAction(chained, sourceCoords)
@@ -176,7 +163,6 @@ export function handleHandCardClick(
       }
     }
     return
-  }
 
   // Add visual selection effect when card is clicked during selection mode
   if (abilityMode?.type === 'ENTER_MODE' && abilityMode.mode === 'SELECT_TARGET') {

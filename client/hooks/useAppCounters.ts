@@ -476,10 +476,6 @@ export const useAppCounters = ({
                     // This fixes Data Interception where chainedAction (SELECT_UNIT_FOR_MOVE) needs to
                     // execute AFTER token placement and be processed by actionQueue useEffect
                     if (setActionQueue) {
-                      console.log('[COUNTER DROP] Scheduling chainedAction to actionQueue:', {
-                        type: chained.type,
-                        mode: chained.mode,
-                      })
                       // CRITICAL: Use setTimeout to defer setActionQueue until AFTER useEffect completes
                       // This prevents the race condition where:
                       // 1. setActionQueue adds chainedAction
@@ -487,13 +483,11 @@ export const useAppCounters = ({
                       // 3. useEffect runs again with cursorStack:false and executes GLOBAL_AUTO_APPLY twice
                       setTimeout(() => {
                         setActionQueue(prev => {
-                          console.log('[COUNTER DROP] Adding chainedAction to queue, current length:', prev.length)
                           return [...prev, chained]
                         })
                       }, 0)
                     } else {
                       // Fallback: execute directly if setActionQueue not available
-                      console.log('[COUNTER DROP] setActionQueue not available - executing chainedAction directly')
                       onAction(chained, { row, col })
                     }
 

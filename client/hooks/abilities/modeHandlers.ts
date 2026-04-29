@@ -1826,7 +1826,7 @@ function handleSelectUnitForMove(
   const freshCard = freshState.board[boardCoords.row][boardCoords.col].card
 
   // DIAGNOSTIC: Log filter check with both old and fresh card states
-  console.log('[SELECT_UNIT_FOR_MOVE] Filter check', {
+  console.log('Filter check:', {
     cardName: card.name,
     cardId: card.id,
     boardCoords,
@@ -1837,11 +1837,9 @@ function handleSelectUnitForMove(
   })
 
   if (payload.filter && !payload.filter(freshCard || card, boardCoords.row, boardCoords.col)) {
-    console.log('[SELECT_UNIT_FOR_MOVE] Filter FAILED - card not valid')
     return false
   }
 
-  console.log('[SELECT_UNIT_FOR_MOVE] Filter PASSED - transitioning to SELECT_CELL')
 
   // Use freshCard if available, otherwise fall back to card parameter
   const cardToUse = freshCard || card
@@ -1880,7 +1878,6 @@ function handleSelectUnitForMove(
   const actorId = originalOwnerId ?? localPlayerId ?? 0
   if (calculateValidTargets) {
     const targets = calculateValidTargets(newMode, freshState, localPlayerId || 0, commandContext)
-    console.log('[SELECT_UNIT_FOR_MOVE] Calculated valid targets:', targets.length, 'targets for', cardToUse.name)
     setTargetingMode(newMode, actorId, boardCoords, targets, commandContext)
   } else {
     setTargetingMode(newMode, actorId, boardCoords, undefined, commandContext)

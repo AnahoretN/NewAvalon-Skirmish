@@ -40,7 +40,6 @@ export class GameStateLogger {
    */
   endAction(currentState: GameState): GameDelta[] | null {
     if (!this.beforeState || !this.actionType || this.playerId === null) {
-      console.warn('[GameStateLogger] endAction called without startAction')
       return null
     }
 

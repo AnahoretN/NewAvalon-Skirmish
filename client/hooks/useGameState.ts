@@ -328,7 +328,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     latestHighlightRef.current = latestHighlight
   }, [latestHighlight])
   useEffect(() => {
-    console.log('[useGameState] latestFloatingTexts state changed!', latestFloatingTexts)
     latestFloatingTextsRef.current = latestFloatingTexts || []
   }, [latestFloatingTexts])
   useEffect(() => {
@@ -351,15 +350,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           // This fixes targetingMode being cleared immediately after being set
           if (personalState.version !== undefined) {
             if (personalState.version <= stateVersionRef.current) {
-              // Log skipped states with targetingMode for debugging
-              if (personalState.targetingMode?.handTargets) {
-                console.log('[DISCARD_FROM_HAND] Skipping old state:', {
-                  receivedVersion: personalState.version,
-                  currentVersion: stateVersionRef.current,
-                  hasHandTargets: true,
-                  handTargetsCount: personalState.targetingMode.handTargets.length,
-                })
-              }
               return // Skip old state
             }
           }
@@ -408,7 +398,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           }, 700)
         },
         onFloatingTextBatch: (events) => {
-          console.log('[useGameState] onFloatingTextBatch callback called:', events)
           const timestamp = Date.now()
           const batch = events.map((item, i) => ({
             row: item.row,
@@ -417,7 +406,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
             playerId: item.playerId,
             timestamp: timestamp + i
           }))
-          console.log('[useGameState] Calling setLatestFloatingTexts with batch:', batch)
           setLatestFloatingTexts(batch)
         }
       }
@@ -473,15 +461,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           // This fixes targetingMode being cleared immediately after being set
           if (personalState.version !== undefined) {
             if (personalState.version <= stateVersionRef.current) {
-              // Log skipped states with targetingMode for debugging
-              if (personalState.targetingMode?.handTargets) {
-                console.log('[DISCARD_FROM_HAND] Skipping old state:', {
-                  receivedVersion: personalState.version,
-                  currentVersion: stateVersionRef.current,
-                  hasHandTargets: true,
-                  handTargetsCount: personalState.targetingMode.handTargets.length,
-                })
-              }
               return // Skip old state
             }
           }
@@ -530,7 +509,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           }, 700)
         },
         onFloatingTextBatch: (events) => {
-          console.log('[useGameState] onFloatingTextBatch callback called:', events)
           const timestamp = Date.now()
           const batch = events.map((item, i) => ({
             row: item.row,
@@ -539,7 +517,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
             playerId: item.playerId,
             timestamp: timestamp + i
           }))
-          console.log('[useGameState] Calling setLatestFloatingTexts with batch:', batch)
           setLatestFloatingTexts(batch)
         }
       }
@@ -696,10 +673,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           setLatestHighlight({ ...data, timestamp: Date.now() })
         },
         onFloatingText: (batch) => {
-          console.log('[useGameState GUEST] onFloatingText callback called:', batch)
           const timestamp = Date.now()
           const withTimestamp = batch.map((item, i) => ({ ...item, timestamp: timestamp + i }))
-          console.log('[useGameState GUEST] Calling setLatestFloatingTexts with batch:', withTimestamp)
           setLatestFloatingTexts(withTimestamp)
         },
         // onTargetingMode and onClearTargetingMode removed to prevent race conditions
@@ -966,7 +941,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
               }, 700)
             },
             onFloatingTextBatch: (events) => {
-              console.log('[useGameState RESTORED] onFloatingTextBatch callback called:', events)
               const timestamp = Date.now()
               const batch = events.map((item, i) => ({
                 row: item.row,
@@ -975,7 +949,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
                 playerId: item.playerId,
                 timestamp: timestamp + i
               }))
-              console.log('[useGameState RESTORED] Calling setLatestFloatingTexts with batch:', batch)
               setLatestFloatingTexts(batch)
             }
           })
@@ -994,7 +967,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
             // Clear the session so it doesn't keep failing on page reload
             localStorage.removeItem('webrtc_host_session')
             // Don't show error - user can still use WebSocket mode
-            console.warn('[useGameState] WebRTC auto-restore failed (PeerJS server down). Use WebSocket mode or try again later.')
           } else {
             // Other errors - clear session
             localStorage.removeItem('webrtc_host_session')
@@ -1330,8 +1302,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           // CRITICAL: Pass targeting mode for chained actions (Tactical Maneuver rewards)
           targetingMode: gameState.targetingMode,
         }
-        console.log('[MOVE_CARD_ON_BOARD] Sending action:', action, actionData)
-        console.log('[MOVE_CARD_ON_BOARD] Card:', item.card?.baseId, 'from:', item.boardCoords, 'to:', target.boardCoords)
       }
 
       sendAction(action, actionData)

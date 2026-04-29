@@ -55,7 +55,6 @@ export const useGameLog = ({
   const initializeBaseState = useCallback((initialState: GameState) => {
     if (!baseState) {
       baseState = deepCloneState(initialState)
-      console.log('[useGameLog] Base state initialized')
     }
   }, [])
 
@@ -75,7 +74,6 @@ export const useGameLog = ({
    */
   const computeStateAtIndex = useCallback((index: number): GameState | null => {
     if (!baseState) {
-      console.warn('[useGameLog] Cannot compute state: no base state')
       return null
     }
 
@@ -114,9 +112,7 @@ export const useGameLog = ({
     playerId?: number,
     deltas?: GameDelta[]
   ) => {
-    console.log('[useGameLog] addLogEntry called:', { type, details, playerId, hasGameState: !!gameState })
     if (!gameState) {
-      console.warn('[useGameLog] No gameState, skipping log entry')
       return
     }
 
@@ -128,7 +124,6 @@ export const useGameLog = ({
         initializeBaseState(gameState)
       } else if (logs.length === 0) {
         // First entry is not GAME_START - use current state as base (imperfect but functional)
-        console.warn('[useGameLog] First log entry is not GAME_START, using current state as base')
         initializeBaseState(gameState)
       }
     }
@@ -137,7 +132,6 @@ export const useGameLog = ({
     const player = gameState.players.find(p => p.id === actorId)
 
     if (!player) {
-      console.warn('[useGameLog] Player not found:', { actorId, players: gameState.players.map(p => p.id) })
       return
     }
 
@@ -156,12 +150,10 @@ export const useGameLog = ({
       inverseDeltas: deltas ? invertDeltas(deltas) : undefined
     }
 
-    console.log('[useGameLog] Adding log entry:', entry)
 
     // Update local state
     setLogs(prev => {
       const newLogs = [...prev, entry]
-      console.log('[useGameLog] Logs updated:', { count: newLogs.length, lastEntry: newLogs[newLogs.length - 1] })
       return newLogs
     })
 
@@ -223,7 +215,6 @@ export const useGameLog = ({
     // Compute state at target index
     const restoredState = computeStateAtIndex(targetIndex)
     if (!restoredState) {
-      console.error('[useGameLog] Failed to compute state at index:', targetIndex)
       return
     }
 
@@ -237,26 +228,22 @@ export const useGameLog = ({
       targetIndex,
     })
 
-    console.log('[useGameLog] Rewound to log index:', targetIndex, 'logId:', logId)
   }, [isHost, logs, computeStateAtIndex, sendAction])
 
   // Forward one step (host only)
   const forwardLog = useCallback(() => {
-    console.log('[useGameLog] forwardLog called:', { isHost, rewindIndex, length: rewindHistory.length })
     if (!isHost || rewindIndex >= logs.length - 1) {return}
 
     const targetIndex = rewindIndex + 1
     const restoredState = computeStateAtIndex(targetIndex)
 
     if (!restoredState) {
-      console.error('[useGameLog] Failed to compute state for forward')
       return
     }
 
     rewindIndex = targetIndex
     const targetLog = logs[targetIndex]
 
-    console.log('[useGameLog] Sending RESTORE_GAME_STATE forward:', { rewindIndex, logId: targetLog?.id })
     sendAction('RESTORE_GAME_STATE', {
       gameState: restoredState,
       logId: targetLog?.id,
@@ -266,21 +253,18 @@ export const useGameLog = ({
 
   // Backward one step (host only)
   const backwardLog = useCallback(() => {
-    console.log('[useGameLog] backwardLog called:', { isHost, rewindIndex, length: rewindHistory.length })
     if (!isHost || rewindIndex <= 0) {return}
 
     const targetIndex = rewindIndex - 1
     const restoredState = computeStateAtIndex(targetIndex)
 
     if (!restoredState) {
-      console.error('[useGameLog] Failed to compute state for backward')
       return
     }
 
     rewindIndex = targetIndex
     const targetLog = logs[targetIndex]
 
-    console.log('[useGameLog] Sending RESTORE_GAME_STATE backward:', { rewindIndex, logId: targetLog?.id })
     sendAction('RESTORE_GAME_STATE', {
       gameState: restoredState,
       logId: targetLog?.id,

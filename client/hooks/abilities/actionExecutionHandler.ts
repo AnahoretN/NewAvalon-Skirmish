@@ -87,20 +87,6 @@ export function handleActionExecution(
   sourceCoords: { row: number; col: number },
   props: ActionHandlerProps
 ): void {
-  // DIAGNOSTIC: Log all action executions with call stack
-  const callStack = new Error().stack?.split('\n').slice(2, 7).map(line => line.trim())
-  console.log('[handleActionExecution] Called:', {
-    type: action.type,
-    mode: action.mode,
-    tokenType: action.tokenType,
-    sourceCard: action.sourceCard?.name,
-    hasChainedAction: !!action.chainedAction,
-    chainedActionType: action.chainedAction?.type,
-    chainedActionMode: action.chainedAction?.mode,
-    sourceCoords,
-    callStack,
-  })
-
   const {
     gameState,
     getFreshGameState, // Функция для получения свежего состояния
@@ -399,25 +385,20 @@ function handleGlobalAutoApply(
     const gridSize = freshState.board.length
 
     // DIAGNOSTIC: Log filter execution start
-    console.log('[GLOBAL_AUTO_APPLY filter] Starting filter scan for', action.sourceCard?.name, '| tokenType:', tokenType)
 
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
         const card = freshState.board[r][c].card
         if (card && filter(card, r, c)) {
           targets.push({ row: r, col: c })
-          console.log('[GLOBAL_AUTO_APPLY filter] Found target:', card.name, 'at', {row: r, col: c})
         }
       }
     }
 
-    console.log('[GLOBAL_AUTO_APPLY filter] Total targets found:', targets.length)
 
     if (targets.length === 0) {
-      console.log('[GLOBAL_AUTO_APPLY filter] No targets found - triggering NO_TARGET')
       triggerNoTarget(action.sourceCoords || sourceCoords)
       if (action.chainedAction) {
-        console.log('[GLOBAL_AUTO_APPLY filter] Has chainedAction despite no targets - scheduling in 1000ms')
         setTimeout(() => {
           if (props.pendingChainedActionRef) {
             props.pendingChainedActionRef.current = true
@@ -443,7 +424,6 @@ function handleGlobalAutoApply(
 
     if (action.chainedAction) {
       // DIAGNOSTIC: Log chainedAction execution
-      console.log('[CHAINED_ACTION] Will execute in 1000ms:', action.chainedAction.type, action.chainedAction.tokenType || action.chainedAction.mode || action.chainedAction.payload?.actionType)
 
       // CRITICAL: Use longer delay to ensure gameState updates before chainedAction executes
       // This fixes commands like Data Interception where dynamicCount needs to see tokens
@@ -536,7 +516,7 @@ function handleCreateStack(
   props: ActionHandlerProps
 ): void {
   const callStack = new Error().stack?.split('\n').slice(2, 5).map(line => line.trim())
-  console.log('[handleCreateStack] Called:', {
+  console.log('CREATE_STACK action:', {
     tokenType: action.tokenType,
     count: action.count,
     sourceCard: action.sourceCard?.name,
@@ -617,10 +597,6 @@ function handleCreateStack(
     }
 
     // DIAGNOSTIC: Log dynamic count calculation with detailed info
-    console.log('[DYNAMIC_COUNT] Action:', action.sourceCard?.name, '| Token:', factor, '| Owner:', ownerId)
-    console.log('[DYNAMIC_COUNT] Found:', dynamic, 'tokens across', tokenLocations.length, 'locations')
-    console.log('[DYNAMIC_COUNT] Locations:', tokenLocations)
-    console.log('[DYNAMIC_COUNT] commandContext.lastPlacedToken:', justPlaced, '| counted from context:', justPlacedCounted)
 
     count = dynamic
   }
@@ -742,23 +718,18 @@ function handleCreateStack(
       }
 
       // DIAGNOSTIC: Log Revealed token targeting setup
-      console.log('[CREATE_STACK] Setting up Revealed token targeting for owner', tokenOwnerId, '=>', handTargets.length, 'hand targets')
 
       // CRITICAL: If no hand targets, skip Revealed placement
       // For command cards with chainedAction (e.g., Enhanced Interrogation, Data Interception),
       // the chainedAction will be added to actionQueue directly
       if (handTargets.length === 0) {
-        console.log('[CREATE_STACK] No hand targets for Revealed - skipping Revealed placement')
         // CRITICAL: If this action has a chainedAction, add it to actionQueue directly
         // This ensures chainedAction is processed after the current action completes
         if (action.chainedAction) {
-          console.log('[CREATE_STACK] Action has chainedAction - adding to actionQueue:', action.chainedAction.type, action.chainedAction.mode)
           if (props.setActionQueue) {
-            console.log('[CREATE_STACK] Adding chainedAction to actionQueue via setActionQueue')
             props.setActionQueue((prev: any[]) => [...prev, action.chainedAction!])
           } else {
             // Fallback: execute directly if setActionQueue not available
-            console.log('[CREATE_STACK] setActionQueue not available - executing chainedAction directly')
             if (props.pendingChainedActionRef) {
               props.pendingChainedActionRef.current = true
             }
@@ -817,7 +788,7 @@ function handleCreateStack(
       const freshState = getFreshGameState()
 
       // DIAGNOSTIC: Log opponent hand availability for debugging guest issues
-      console.log('[CREATE_STACK] Checking opponent hands for Revealed token:', {
+      console.log('Opponent hand selection data:', {
         tokenOwnerId,
         excludedId,
         onlyOpponents: action.onlyOpponents,
@@ -835,31 +806,29 @@ function handleCreateStack(
       for (const player of freshState.players) {
         // Skip excluded player (token owner's own hand)
         if (player.id === excludedId) {
-          console.log('[CREATE_STACK] Skipping excluded player:', player.id, '(token owner)')
           continue
         }
         // Skip teammates if onlyOpponents is set
         const onlyOpponents = action.onlyOpponents || action.payload?.onlyOpponents
         if (onlyOpponents) {
           const tokenOwner = freshState.players.find(p => p.id === tokenOwnerId)
-          console.log('[CREATE_STACK] Checking teammate skip for player:', player.id, 'tokenOwner:', tokenOwner?.id, 'tokenOwnerTeamId:', tokenOwner?.teamId, 'playerTeamId:', player.teamId)
           // CRITICAL FIX: In FFA mode, teamId is undefined/null for everyone
           // Only skip as teammates if both have the same explicitly defined teamId (not null/undefined)
           if (tokenOwner && tokenOwner.teamId !== null && tokenOwner.teamId !== undefined && tokenOwner.teamId === player.teamId) {
-            console.log('[CREATE_STACK] Skipping player as teammate:', player.id, 'teamId:', player.teamId)
             continue
           }
           // Also skip if both have undefined teamId AND it's actually team mode (not FFA)
           // We can detect team mode by checking if gameMode is not 'FFA'
           const gameMode = freshState.gameMode
           if (tokenOwner && (tokenOwner.teamId === null || tokenOwner.teamId === undefined) && (player.teamId === null || player.teamId === undefined) && gameMode !== 'FFA' && gameMode !== 'FreeForAll') {
-            console.log('[CREATE_STACK] Skipping player with null/undefined teamId in team mode:', player.id, 'gameMode:', gameMode)
             continue
           }
         }
         // Add this player's hand cards
         if (player.hand) {
-          console.log('[CREATE_STACK] Player', player.id, 'has', player.hand.length, 'cards in hand', {
+          console.log('Processing player hand:', {
+            playerId: player.id,
+            playerName: player.name,
             isLocal: player.id === props.localPlayerId,
             isExcluded: player.id === excludedId,
             firstCard: player.hand[0] ? { id: player.hand[0].id, baseId: player.hand[0].baseId, hasStatuses: !!player.hand[0].statuses, statuses: player.hand[0].statuses } : null
@@ -878,11 +847,8 @@ function handleCreateStack(
 
             // DIAGNOSTIC: Log why each card is or isn't added
             if (hasOurRevealed) {
-              console.log('[CREATE_STACK] Card', i, 'skipped (has Revealed token)')
             } else if (!passesFaceDownCheck) {
-              console.log('[CREATE_STACK] Card', i, 'skipped (face-down check failed)')
             } else {
-              console.log('[CREATE_STACK] Card', i, 'added as target', { cardId: card.id, baseId: card.baseId })
               handTargets.push({ playerId: player.id, cardIndex: i })
             }
           }
@@ -890,7 +856,7 @@ function handleCreateStack(
       }
 
       // DIAGNOSTIC: Log Revealed token targeting setup (all opponents)
-      console.log('[CREATE_STACK] Setting up Revealed token for all opponents =>', handTargets.length, 'hand targets', {
+      console.log('Revealed token targeting setup:', {
         tokenOwnerId,
         excludedId,
         onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
@@ -901,7 +867,7 @@ function handleCreateStack(
 
       // CRITICAL: If no hand targets, skip Revealed placement and execute chainedAction directly
       if (handTargets.length === 0) {
-        console.log('[CREATE_STACK] No hand targets for Revealed (all opponents) - skipping to chainedAction', {
+        console.log('No hand targets found, skipping Revealed placement:', {
           tokenOwnerId,
           excludedId,
           onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
@@ -918,7 +884,6 @@ function handleCreateStack(
         const isTargetingOpponentHands = action.onlyOpponents || action.payload?.onlyOpponents
 
         if (isGuestInWebRTCMode && isTargetingOpponentHands && action.chainedAction) {
-          console.log('[CREATE_STACK] Guest sending CREATE_STACK with chainedAction to host for proper execution')
 
           // Send the ability action to host so it can execute with full game state
           // This ensures DRAW_CARD and other chained actions work correctly
@@ -939,18 +904,18 @@ function handleCreateStack(
         // CRITICAL: For guests without opponent hand data, show a message to the user
         // This can happen if the guest hasn't received the latest state from the host yet
         if (props.localPlayerId !== 1 && props.localPlayerId !== tokenOwnerId) {
-          console.warn('[CREATE_STACK] Guest player detected with no opponent hand data. This might be a sync issue.')
           // Try to get fresh state one more time after a short delay
           setTimeout(() => {
             const retryState = getFreshGameState()
-            console.log('[CREATE_STACK] Retry - opponent hands:', retryState.players.map(p => ({
-              id: p.id,
-              handLength: p.hand?.length || 0
-            })))
+            console.log('Retry state check:', {
+              players: retryState.players.map(p => ({
+                id: p.id,
+                handLength: p.hand?.length || 0
+              }))
+            })
           }, 100)
         }
         if (action.chainedAction) {
-          console.log('[CREATE_STACK] Executing chainedAction:', action.chainedAction.type, action.chainedAction.mode)
           // CRITICAL: Set pending flag before executing chained action
           if (props.pendingChainedActionRef) {
             props.pendingChainedActionRef.current = true
@@ -997,27 +962,16 @@ function handleCreateStack(
       // The ability will complete when the player clicks on a hand card (in handCardHandlers.ts)
     } else {
       // Normal token placement (board only)
-      // DIAGNOSTIC: Log cursorStack creation
-      console.log('[CREATE_STACK] Creating cursorStack:', {
-        tokenType,
-        count,
-        tokenOwnerId,
-        sourceCard: action.sourceCard?.name,
-        hasChainedAction: !!action.chainedAction,
-        chainedActionType: action.chainedAction?.type,
-      })
       setCursorStack(createTokenCursorStack(tokenType, tokenOwnerId, null, modifications))
       // Don't clear abilityMode here - it will be cleared when cursorStack is depleted (in useAppAbilities.ts)
     }
   } else {
-    console.log('[CREATE_STACK] count is 0 - triggering NO_TARGET')
     triggerNoTarget(sourceCoords)
 
     // CRITICAL: Still execute chainedAction even when count is 0
     // This fixes Data Interception option 1 where chainedAction (SELECT_UNIT_FOR_MOVE)
     // should execute even when there are no opponent cards to reveal
     if (action.chainedAction) {
-      console.log('[CREATE_STACK] Executing chainedAction despite count=0:', action.chainedAction.type, action.chainedAction.mode)
       // CRITICAL: Set pending flag before executing chained action
       if (props.pendingChainedActionRef) {
         props.pendingChainedActionRef.current = true
@@ -1178,13 +1132,6 @@ function handleEnterMode(
   sourceCoords: { row: number; col: number },
   props: ActionHandlerProps
 ): void {
-  console.log('[handleEnterMode] Called:', {
-    mode: action.mode,
-    actionType: action.payload?.actionType,
-    sourceCard: action.sourceCard?.name,
-    sourceCoords,
-  })
-
   const { gameState, getFreshGameState, localPlayerId, commandContext, triggerNoTarget, setAbilityMode, addBoardCardStatus, setTargetingMode, clearTargetingMode, handleActionExecution: execAction, markAbilityUsed } = props
 
   const mode = action.mode
@@ -1332,34 +1279,21 @@ function handleEnterMode(
     // This fixes the issue where React state hasn't updated yet after card movement
     const freshGameState = getFreshGameState ? getFreshGameState() : gameState
     const actorId = action.sourceCard?.ownerId || localPlayerId
-    console.log('[PUSH DEBUG] ====================')
-    console.log('[PUSH DEBUG] localPlayerId:', localPlayerId)
-    console.log('[PUSH DEBUG] actorId:', actorId)
-    console.log('[PUSH DEBUG] action.sourceCoords:', action.sourceCoords)
-    console.log('[PUSH DEBUG] sourceCoords param:', sourceCoords)
-    console.log('[PUSH DEBUG] action.sourceCard:', action.sourceCard?.name, 'ownerId:', action.sourceCard?.ownerId)
-    console.log('[PUSH DEBUG] freshGameState.activeGridSize:', freshGameState.activeGridSize)
-    console.log('[PUSH DEBUG] freshGameState.board.length:', freshGameState.board.length)
 
     // Log board around sourceCoords
     if (action.sourceCoords) {
-      console.log('[PUSH DEBUG] Board around sourceCoords:')
       for (let dr = -2; dr <= 2; dr++) {
         for (let dc = -2; dc <= 2; dc++) {
           const r = action.sourceCoords.row + dr
           const c = action.sourceCoords.col + dc
           if (r >= 0 && r < freshGameState.board.length && c >= 0 && c < freshGameState.board[0].length) {
             const cell = freshGameState.board[r][c]
-            console.log(`[PUSH DEBUG]   board[${r}][${c}]:`, cell.card?.name || 'empty', 'ownerId:', cell.card?.ownerId)
           }
         }
       }
     }
 
     const pushTargets = calculateValidTargets(action, freshGameState, actorId, commandContext)
-    console.log('[PUSH DEBUG] pushTargets.length:', pushTargets.length)
-    console.log('[PUSH DEBUG] pushTargets:', pushTargets)
-    console.log('[PUSH DEBUG] ====================')
 
     if (pushTargets.length === 0) {
       triggerNoTarget(action.sourceCoords || sourceCoords)
@@ -1435,11 +1369,6 @@ function handleEnterMode(
 
   // SELECT_UNIT_FOR_MOVE (Finn Setup, Data Interception option 1)
   if (mode === 'SELECT_UNIT_FOR_MOVE') {
-    console.log('[SELECT_UNIT_FOR_MOVE] Called from handleEnterMode', {
-      sourceCard: action.sourceCard?.name,
-      sourceCoords,
-    })
-
     // CRITICAL: Use getFreshGameState() to get the latest state after CREATE_STACK
     // This fixes Data Interception option 1 where Exploit counter is placed just before SELECT_UNIT_FOR_MOVE
     const freshGameState = getFreshGameState ? getFreshGameState() : gameState
@@ -1448,13 +1377,11 @@ function handleEnterMode(
     // Check if there are valid targets (allied cards on board)
     const hasTargets = checkActionHasTargets(action, freshGameState, actorId, commandContext)
     if (!hasTargets) {
-      console.log('[SELECT_UNIT_FOR_MOVE] No targets found - triggering NO_TARGET')
       triggerNoTarget(action.sourceCoords || sourceCoords)
       // DON'T mark ability as used - preserve ready status so ability can be used when targets appear
       return
     }
     const targets = calculateValidTargets(action, freshGameState, actorId, commandContext)
-    console.log('[SELECT_UNIT_FOR_MOVE] Found targets:', targets.length)
     // CRITICAL: Clear any existing targeting mode before setting new one
     clearTargetingMode()
     setAbilityMode(action)
@@ -1490,27 +1417,11 @@ function handleEnterMode(
         handTargets.push({ playerId: player.id, cardIndex: i })
       }
 
-      console.log('[DISCARD_FROM_HAND] Hand targets calculated:', {
-        actionType,
-        ownerId,
-        playerName: player.name,
-        handSize: player.hand.length,
-        handTargetsCount: handTargets.length,
-        handTargets,
-        hasFilter: !!payload.filter,
-      })
-
       if (handTargets.length === 0) {
-        console.log('[DISCARD_FROM_HAND] No valid hand targets, triggering NO_TARGET')
         triggerNoTarget(action.sourceCoords || sourceCoords)
         return
       }
 
-      console.log('[DISCARD_FROM_HAND] Calling setTargetingMode with handTargets:', {
-        handTargetsCount: handTargets.length,
-        handTargets,
-        playerId: getSafePlayerId(action, localPlayerId),
-      })
       setAbilityMode(action)
       setTargetingMode(action, getSafePlayerId(action, localPlayerId), sourceCoords, [], commandContext, handTargets)
       return

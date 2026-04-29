@@ -74,7 +74,6 @@ export function applyDelta(state: any, delta: GameDelta): any {
   const { target, key } = resolvePath(newState, delta.path)
 
   if (target === null || target === undefined) {
-    console.warn('[applyDelta] Could not resolve path:', delta.path)
     return state
   }
 

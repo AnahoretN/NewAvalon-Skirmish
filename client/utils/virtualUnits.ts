@@ -35,7 +35,6 @@ export const computeVUPixels = (): number => {
 export const initializeVUBasePixels = (): void => {
   const vuPixels = computeVUPixels()
   const viewportHeight = window.innerHeight
-  console.log(`VU System: viewportHeight=${viewportHeight}px, 1 VU=${vuPixels.toFixed(3)}px, 18 VU=${(18 * vuPixels).toFixed(1)}px`)
   document.documentElement.style.setProperty('--vu-base-px', `${vuPixels}px`)
 
   // Проверим что переменная установилась

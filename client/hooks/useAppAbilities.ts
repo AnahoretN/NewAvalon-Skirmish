@@ -278,16 +278,8 @@ export const useAppAbilities = ({
   // Sync targeting mode with abilityMode for P2P visual effects
   // CRITICAL: DON'T auto-clear targetingMode when abilityMode becomes null
   // Targeting mode should only be cleared explicitly (e.g., when token is placed)
-  // This useEffect is only for logging now
-  useEffect(() => {
-    console.log('[USE APP ABILITIES] abilityMode changed', {
-      hasAbilityMode: !!abilityMode,
-      abilityModeType: abilityMode?.type,
-      abilityModeMode: abilityMode?.mode,
-    })
-    // NOTE: Removed automatic clearTargetingMode() call to prevent premature clearing
-    // Targeting mode is now managed explicitly in handCardHandlers.ts and modeHandlers.ts
-  }, [abilityMode])
+  // NOTE: Removed automatic clearTargetingMode() call to prevent premature clearing
+  // Targeting mode is now managed explicitly in handCardHandlers.ts and modeHandlers.ts
 
   /**
    * Activate a card's ability
@@ -322,21 +314,6 @@ export const useAppAbilities = ({
         tokenType: cursorStack.type,
       }
 
-      // DIAGNOSTIC: Log cursorStack validation
-      console.log('[BOARD CARD CLICK] Checking cursorStack target', {
-        cardName: card.name,
-        cardId: card.baseId,
-        cardOwnerId: card.ownerId,
-        tokenType: cursorStack.type,
-        targetOwnerId: cursorStack.targetOwnerId,
-        excludeOwnerId: cursorStack.excludeOwnerId,
-        onlyOpponents: cursorStack.onlyOpponents,
-        onlyFaceDown: cursorStack.onlyFaceDown,
-        targetType: cursorStack.targetType,
-        requiredTargetStatus: cursorStack.requiredTargetStatus,
-        originalOwnerId: cursorStack.originalOwnerId,
-      })
-
       const isValid = validateTarget(
         { card, ownerId: card.ownerId ?? 0, location: 'board' },
         constraints,
@@ -345,7 +322,6 @@ export const useAppAbilities = ({
         cursorStack.originalOwnerId // CRITICAL: Pass token owner ID for command cards
       )
 
-      console.log('[BOARD CARD CLICK] validateTarget result:', isValid)
 
       if (isValid) {
         // Handle Revealed token with duplicate check - prevent duplicate placement

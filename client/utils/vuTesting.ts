@@ -140,18 +140,12 @@ export function getViewportInfo(): {
  */
 export function logVuSystemStatus(): void {
   if (typeof window === 'undefined') {
-    console.log('VU System: Server-side (using 1080p standard)')
     return
   }
 
   const info = getViewportInfo()
   const vuVars = getComputedVuVariables()
 
-  console.group('🔍 VU System Status')
-  console.log('Viewport:', info)
-  console.log('VU Base:', `${info.vuBase.toFixed(3)}px (1 VU)`)
-  console.log('VU Variables:', vuVars)
-  console.groupEnd()
 }
 
 /**
@@ -215,13 +209,9 @@ export function runVuTests(): {
 
   const allPass = results.every((r) => r.pass)
 
-  console.group('🧪 VU System Tests')
   results.forEach((result) => {
     const icon = result.pass ? '✅' : '❌'
-    console.log(`${icon} ${result.name}`, result.details || '')
   })
-  console.log(`${allPass ? '✅' : '❌'} All Tests ${allPass ? 'PASSED' : 'FAILED'}`)
-  console.groupEnd()
 
   return { pass: allPass, results }
 }
@@ -287,8 +277,6 @@ export function showVuTestOverlay(): void {
   const overlay = createVuTestOverlay()
   document.body.appendChild(overlay)
 
-  console.log('🔍 VU Test Overlay enabled. Press F12 to see console tests.')
-  console.log('💡 Run runVuTests() in console for detailed tests.')
 }
 
 /**

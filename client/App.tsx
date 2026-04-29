@@ -728,26 +728,22 @@ const AppInner = function AppInner() {
   // ============================================================================
   const drawCardWithLogging = useCallback((playerId?: number) => {
     const targetId = playerId ?? localPlayerId
-    console.log('[drawCardWithLogging] Called:', { targetId, localPlayerId, hasGameState: !!gameState })
 
     // Call original function first
     drawCard(playerId)
 
     // Log after a short delay to let state update
     setTimeout(() => {
-      console.log('[drawCardWithLogging] Attempting to log DRAW_CARD')
       gameLogHook.addLogEntry('DRAW_CARD', createLogDetails.drawCard((t as any)('aCard')), targetId ?? localPlayerId ?? 0)
     }, 50)
   }, [drawCard, localPlayerId, gameLogHook, t])
 
   const drawCardsBatchWithLogging = useCallback((playerId: number, count: number) => {
-    console.log('[drawCardsBatchWithLogging] Called:', { playerId, count })
     drawCardsBatch(playerId, count)
     gameLogHook.addLogEntry('DRAW_MULTIPLE_CARDS', createLogDetails.drawMultipleCards(count), playerId)
   }, [drawCardsBatch, gameLogHook])
 
   const updatePlayerScoreWithLogging = useCallback((playerId: number, delta: number) => {
-    console.log('[updatePlayerScoreWithLogging] Called:', { playerId, delta })
     updatePlayerScore(playerId, delta)
   }, [updatePlayerScore])
 

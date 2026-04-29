@@ -112,7 +112,6 @@ export const MainMenu: React.FC<MainMenuProps> = memo(({
       // Note: createLocalGame already creates the game and sets localPlayerId
       // No need to call handleCreateGame again
     } catch (err) {
-      console.error('[MainMenu] Failed to create local game:', err)
     } finally {
       setIsInitializingHost(false)
     }

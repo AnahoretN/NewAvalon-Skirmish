@@ -106,13 +106,6 @@ export function activateAbility(
     }
     // Check for DISCARD_FROM_HAND cost (Faber, Lucius, etc.)
     if (action.payload?.cost?.type === 'DISCARD_FROM_HAND' && setAbilityMode) {
-      console.log('[DISCARD_FROM_HAND] Cost detected, creating discard mode:', {
-        cardName: card.name,
-        cardId: card.id,
-        ownerId: card.ownerId,
-        abilityMode: action.mode,
-        tokenId: action.payload.tokenId,
-      })
       // Determine the correct actionType based on the main ability action
       // - SEARCH_DECK (Lucius): LUCIUS_SETUP - discard any card then search deck
       // - CREATE_TOKEN (Faber): SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN - discard then place token
@@ -134,11 +127,7 @@ export function activateAbility(
           filter: isSearchDeckAbility ? undefined : (action.payload.filter || ((targetCard: Card) => targetCard.ownerId === card.ownerId))
         }
       }
-      console.log('[DISCARD_FROM_HAND] Discard mode created:', {
-        actionType: discardMode.payload.actionType,
-        hasFilter: !!discardMode.payload.filter,
-        tokenId: discardMode.payload.tokenId,
-      })
+
       // Remove ready status (but not for AUTO_STEPS - they handle it themselves)
       if (action.readyStatusToRemove && action.mode !== 'AUTO_STEPS') {
         markAbilityUsed(boardCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)

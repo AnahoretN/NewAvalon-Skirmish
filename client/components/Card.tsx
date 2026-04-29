@@ -614,7 +614,6 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
         colorData = PLAYER_COLORS[ownerColorName]
       } else {
         // Debug: log when ownerId exists but not in playerColorMap
-        console.warn(`[Card] ownerId ${card.ownerId} not found in playerColorMap. Map keys:`, Array.from(playerColorMap.keys()))
       }
     }
 
