@@ -394,6 +394,7 @@ export interface CommandContext {
     sourceOwnerId?: number; // Owner of the ability source (e.g., Centurion's owner for BUFF_LINES_FROM_CONTEXT)
     selectedHandCard?: { playerId: number, cardIndex: number }; // For Quick Response Team
     pendingCommandCard?: { sourceCoords: { row: number; col: number }; isDeployAbility?: boolean; readyStatusToRemove?: string }; // For Quick Response Team - marks command as used when play completes
+    lastPlacedToken?: { boardCoords: { row: number; col: number } }; // For Data Interception - tracks token placement
 }
 
 /**
@@ -445,6 +446,7 @@ export type AbilityAction = {
     replaceStatus?: boolean; // If true, replace the requiredTargetStatus with tokenType (e.g., Censor: Exploit -> Stun)
     originalOwnerId?: number; // The owner of the card that initiated this action (for multi-step commands like Data Interception)
     skipChainedActionOnNoTargets?: boolean; // If true, chained action won't execute when no valid targets exist (e.g., Recon Drone Commit)
+    supportRequired?: boolean; // If true, requires source card to have Support status (e.g., Inventive Maker Setup)
 };
 
 /**
@@ -762,6 +764,7 @@ export interface GameLogEntryDetails {
   winners?: number[]; // Player IDs who won
   winnerName?: string;
   targetLocation?: 'board' | 'hand' | 'discard' | 'deck' | 'showcase';
+  phase?: number;
 }
 
 /**
@@ -808,6 +811,3 @@ export interface GameLogHistory {
   baseState: GameState;    // Initial state before any logged actions
   entries: GameLogEntry[]; // All log entries with deltas
 }
-
-// Re-export GameLogActionType for convenience
-export type { GameLogActionType, GameLogEntryDetails }

@@ -1207,8 +1207,8 @@ function handleSelectTargetActionType(
     const isAdj = Math.abs(boardCoords.row - (sourceCoords?.row ?? 0)) + Math.abs(boardCoords.col - (sourceCoords?.col ?? 0)) === 1
     const targetPlayer = gameState.players.find(p => p.id === card.ownerId)
     const actorPlayer = gameState.players.find(p => p.id === ownerId)
-    // CRITICAL: Use != null to check for both undefined AND null
-    const isTeammate = targetPlayer?.teamId != null && actorPlayer?.teamId != null && targetPlayer.teamId === actorPlayer.teamId
+    // CRITICAL: Check for both undefined AND null
+    const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) && (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) && targetPlayer.teamId === actorPlayer.teamId
 
     if (!isAdj || card.ownerId === ownerId || isTeammate) {
       return false
@@ -1306,9 +1306,9 @@ function handlePush(
   const isAdj = Math.abs(boardCoords.row - sourceCoords.row) + Math.abs(boardCoords.col - sourceCoords.col) === 1
   const targetPlayer = gameState.players.find(p => p.id === card.ownerId)
   const actorPlayer = gameState.players.find(p => p.id === sourceCard?.ownerId)
-  // CRITICAL: Use != null to check for both undefined AND null
+  // CRITICAL: Check for both undefined AND null
   // If teamId is not set (undefined/null), player is in FFA mode - no teammates
-  const isTeammate = targetPlayer?.teamId != null && actorPlayer?.teamId != null && targetPlayer.teamId === actorPlayer.teamId
+  const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) && (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) && targetPlayer.teamId === actorPlayer.teamId
 
   if (!isAdj || card.ownerId === sourceCard?.ownerId || isTeammate) {
     return false
@@ -1551,8 +1551,9 @@ function handleShieldSelfThenPush(
           if (targetCard) {
             const targetPlayer = gameState.players.find(p => p.id === targetCard.ownerId)
             const actorPlayer = gameState.players.find(p => p.id === ownerId)
-            // CRITICAL: Use != null to check for both undefined AND null
-            const isTeammate = targetPlayer?.teamId != null && actorPlayer?.teamId != null &&
+            // CRITICAL: Check for both undefined AND null
+            const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) &&
+                              (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) &&
                               targetPlayer.teamId === actorPlayer.teamId
 
             if (targetCard.ownerId !== ownerId && !isTeammate) {
@@ -1571,8 +1572,8 @@ function handleShieldSelfThenPush(
   const isAdj = Math.abs(boardCoords.row - sourceCoords.row) + Math.abs(boardCoords.col - sourceCoords.col) === 1
   const targetPlayer = gameState.players.find(p => p.id === card.ownerId)
   const actorPlayer = gameState.players.find(p => p.id === ownerId)
-  // CRITICAL: Use != null to check for both undefined AND null
-  const isTeammate = targetPlayer?.teamId != null && actorPlayer?.teamId != null && targetPlayer.teamId === actorPlayer.teamId
+  // CRITICAL: Check for both undefined AND null
+  const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) && (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) && targetPlayer.teamId === actorPlayer.teamId
 
   if (isAdj && card.ownerId !== ownerId && !isTeammate) {
     // IMPORTANT: Apply Shield first if not already applied

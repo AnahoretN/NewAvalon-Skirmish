@@ -845,15 +845,14 @@ function handleCreateStack(
           console.log('[CREATE_STACK] Checking teammate skip for player:', player.id, 'tokenOwner:', tokenOwner?.id, 'tokenOwnerTeamId:', tokenOwner?.teamId, 'playerTeamId:', player.teamId)
           // CRITICAL FIX: In FFA mode, teamId is undefined/null for everyone
           // Only skip as teammates if both have the same explicitly defined teamId (not null/undefined)
-          // Use != null to check for both null AND undefined
-          if (tokenOwner && tokenOwner.teamId != null && tokenOwner.teamId === player.teamId) {
+          if (tokenOwner && tokenOwner.teamId !== null && tokenOwner.teamId !== undefined && tokenOwner.teamId === player.teamId) {
             console.log('[CREATE_STACK] Skipping player as teammate:', player.id, 'teamId:', player.teamId)
             continue
           }
           // Also skip if both have undefined teamId AND it's actually team mode (not FFA)
           // We can detect team mode by checking if gameMode is not 'FFA'
           const gameMode = freshState.gameMode
-          if (tokenOwner && tokenOwner.teamId == null && player.teamId == null && gameMode !== 'FFA' && gameMode !== 'FreeForAll') {
+          if (tokenOwner && (tokenOwner.teamId === null || tokenOwner.teamId === undefined) && (player.teamId === null || player.teamId === undefined) && gameMode !== 'FFA' && gameMode !== 'FreeForAll') {
             console.log('[CREATE_STACK] Skipping player with null/undefined teamId in team mode:', player.id, 'gameMode:', gameMode)
             continue
           }

@@ -36,16 +36,13 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
   currentRound,
   currentTurn,
   currentPhase,
-  gameState,
-  onRewind,
-  canRewind,
-  canForward,
   currentLogIndex,
-  onBackward,
-  onForward,
+  onRewind,
   maxRewindIndex = logs.length - 1,
 }) => {
   const { t } = useLanguage()
+  // Helper for translations that might not be in the type system
+  const tr = (key: string) => (t as any)(key)
   const [filter, setFilter] = useState<GameLogActionType | 'ALL'>('ALL')
   const [searchQuery, setSearchQuery] = useState('')
   // Initialize with the latest log entry, not currentLogIndex (which might be after rewind)
@@ -163,53 +160,58 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
 
     switch (type) {
       case 'GAME_START':
-        return t('gameStarted') || 'Game started'
+        return tr('gameStarted') || 'Game started'
       case 'ROUND_START':
-        return `${t('round')} ${log.round} ${t('started') || 'started'}`
-      case 'ROUND_WIN':
+        return `${t('round')} ${log.round} ${tr('started') || 'started'}`
+      case 'ROUND_WIN': {
         const winnerNames = details.winners?.map(id => {
           const player = players.find(p => p.id === id)
-          return player?.name || t('player')
-        }).join(', ') || (details.winnerName || t('player'))
-        return `${t('player')} ${winnerNames} ${t('wonRound') || 'won the round'}`
+          return player?.name || tr('player')
+        }).join(', ') || (details.winnerName || tr('player'))
+        return `${tr('player')} ${winnerNames} ${tr('wonRound') || 'won the round'}`
+      }
       case 'MATCH_WIN':
-        return `${details.winnerName || t('player')} ${t('wonMatch') || 'won the match'}`
+        return `${details.winnerName || tr('player')} ${tr('wonMatch') || 'won the match'}`
       case 'TURN_START':
-        return `${t('turn')} ${log.turn} ${t('started') || 'started'}`
+        return `${tr('turn')} ${log.turn} ${tr('started') || 'started'}`
       case 'PHASE_CHANGE':
         return `${t('phase')}: ${getPhaseName(details.phase || log.phase || 1)}`
       case 'DRAW_CARD':
-        return `${t('drew')} ${details.cardName || t('aCard')}`
-      case 'DRAW_MULTIPLE_CARDS':
+        return `${tr('drew')} ${details.cardName || tr('aCard')}`
+      case 'DRAW_MULTIPLE_CARDS': {
         const count = details.count || details.amount || 1
-        return `${t('drew')} ${count} ${t('gl_cards')}`
-      case 'PLAY_CARD':
+        return `${tr('drew')} ${count} ${tr('gl_cards')}`
+      }
+      case 'PLAY_CARD': {
         const coords = details.coords ? ` (${details.coords.row + 1}, ${details.coords.col + 1})` : ''
-        return `${t('played')} ${details.cardName}${coords}`
-      case 'ANNOUNCE_CARD':
-        const module = details.commandModule ? ` (${t('gl_module')} ${details.commandModule})` : ''
-        return `${t('gl_announced')} ${details.cardName}${module}`
-      case 'MOVE_CARD':
-        const from = details.fromCoords ? `(${details.fromCoords.row + 1}, ${details.fromCoords.col + 1})` : (details.from || t('unknown'))
-        const to = details.toCoords ? `(${details.toCoords.row + 1}, ${details.toCoords.col + 1})` : (details.to || t('unknown'))
-        return `${t('moved')} ${details.cardName} ${t('gl_from')} ${from} ${t('gl_to')} ${to}`
+        return `${tr('played')} ${details.cardName}${coords}`
+      }
+      case 'ANNOUNCE_CARD': {
+        const module = details.commandModule ? ` (${tr('gl_module')} ${details.commandModule})` : ''
+        return `${tr('gl_announced')} ${details.cardName}${module}`
+      }
+      case 'MOVE_CARD': {
+        const from = details.fromCoords ? `(${details.fromCoords.row + 1}, ${details.fromCoords.col + 1})` : (details.from || tr('unknown'))
+        const to = details.toCoords ? `(${details.toCoords.row + 1}, ${details.toCoords.col + 1})` : (details.to || tr('unknown'))
+        return `${tr('moved')} ${details.cardName} ${tr('gl_from')} ${from} ${tr('gl_to')} ${to}`
+      }
       case 'DESTROY_CARD':
-        return `${t('destroyed')} ${details.cardName}`
+        return `${tr('destroyed')} ${details.cardName}`
       case 'RETURN_TO_HAND':
-        return `${t('returned')} ${details.cardName} ${t('gl_toHand')}`
+        return `${tr('returned')} ${details.cardName} ${tr('gl_toHand')}`
       case 'DISCARD_CARD':
-        return `${t('discarded')} ${details.cardName}`
+        return `${tr('discarded')} ${details.cardName}`
       case 'DISCARD_FROM_BOARD':
-        return `${details.cardName} ${t('movedToDiscard') || 'moved to discard'}`
-      case 'ACTIVATE_ABILITY':
-        let abilityDesc = `${details.cardName}: ${details.abilityText || t('gl_ability')}`
+        return `${details.cardName} ${tr('movedToDiscard') || 'moved to discard'}`
+      case 'ACTIVATE_ABILITY': {
+        let abilityDesc = `${details.cardName}: ${details.abilityText || tr('gl_ability')}`
         if (details.targetLocation) {
           const locationMap: Record<string, string> = {
-            board: t('battlefield') || 'battlefield',
-            hand: t('gl_hand') || 'hand',
-            discard: t('gl_discard') || 'discard',
-            deck: t('gl_deck') || 'deck',
-            showcase: t('gl_showcase') || 'showcase'
+            board: tr('battlefield') || 'battlefield',
+            hand: tr('gl_hand') || 'hand',
+            discard: tr('gl_discard') || 'discard',
+            deck: tr('gl_deck') || 'deck',
+            showcase: tr('gl_showcase') || 'showcase'
           }
           abilityDesc += ` → ${locationMap[details.targetLocation] || details.targetLocation}`
         }
@@ -220,12 +222,13 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
           abilityDesc += ` [${details.toCoords.row + 1}, ${details.toCoords.col + 1}]`
         }
         return abilityDesc
+      }
       case 'PLACE_TOKEN':
-        return `${t('placed')} ${details.abilityText} ${t('gl_on')} ${details.targetCardName || t('target')}`
-      case 'PLACE_TOKEN_ON_CARD':
-        let tokenDesc = `${t('placed')} ${details.abilityText || t('token')}`
+        return `${tr('placed')} ${details.abilityText} ${tr('gl_on')} ${details.targetCardName || tr('target')}`
+      case 'PLACE_TOKEN_ON_CARD': {
+        let tokenDesc = `${tr('placed')} ${details.abilityText || tr('token')}`
         if (details.targetPlayerName) {
-          tokenDesc += ` ${t('gl_on')} ${details.targetPlayerName}'s`
+          tokenDesc += ` ${tr('gl_on')} ${details.targetPlayerName}'s`
         }
         if (details.targetCardName) {
           tokenDesc += ` ${details.targetCardName}`
@@ -233,27 +236,29 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
         if (details.toCoords) {
           tokenDesc += ` [${details.toCoords.row + 1}, ${details.toCoords.col + 1}]`
         } else if (details.targetLocation === 'hand') {
-          tokenDesc += ` (${t('gl_inHand') || 'in hand'})`
+          tokenDesc += ` (${tr('gl_inHand') || 'in hand'})`
         }
         return tokenDesc
+      }
       case 'REMOVE_STATUS':
-        return `${t('removed')} ${details.abilityText} ${t('gl_from')} ${details.cardName}`
+        return `${tr('removed')} ${details.abilityText} ${tr('gl_from')} ${details.cardName}`
       case 'ADD_STATUS':
-        return `${t('added')} ${details.abilityText} ${t('gl_to')} ${details.cardName}`
-      case 'SCORE_POINTS':
+        return `${tr('added')} ${details.abilityText} ${tr('gl_to')} ${details.cardName}`
+      case 'SCORE_POINTS': {
         const points = details.amount || 0
         const newScore = details.newScore || 0
-        return `${t('scored')} ${points} ${t('gl_points')} (${t('gl_total')}: ${newScore})`
+        return `${tr('scored')} ${points} ${tr('gl_points')} (${tr('gl_total')}: ${newScore})`
+      }
       case 'SHUFFLE_DECK':
-        return t('shuffledDeck') || 'Shuffled deck'
+        return tr('shuffledDeck') || 'Shuffled deck'
       case 'PLAYER_JOIN':
-        return `${details.targetPlayerName || log.playerName} ${t('joined') || 'joined'}`
+        return `${details.targetPlayerName || log.playerName} ${tr('joined') || 'joined'}`
       case 'PLAYER_LEAVE':
-        return `${details.targetPlayerName || log.playerName} ${t('left') || 'left'}`
+        return `${details.targetPlayerName || log.playerName} ${tr('left') || 'left'}`
       case 'GAME_END':
-        return t('gameEnded') || 'Game ended'
+        return tr('gameEnded') || 'Game ended'
       case 'COMMAND_OPTION':
-        return `${details.cardName}: ${details.commandOption || t('selectedOption')}`
+        return `${details.cardName}: ${details.commandOption || tr('selectedOption')}`
       default:
         return type
     }
@@ -316,8 +321,10 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
 
   // Handle log entry click - only selects the entry, does NOT rewind
   // Rewind only happens when user clicks the "Restore" button
-  const handleLogClick = (log: GameLogEntry, index: number) => {
-    if (!isHost) return
+  const handleLogClick = (_log: GameLogEntry, index: number) => {
+    if (!isHost) {
+      return
+    }
     setSelectedLogIndex(index)
     // Removed: onRewind call - should only happen via "Restore" button
   }
@@ -383,7 +390,9 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
 
   // Handle restore to selected log entry
   const handleRestoreToSelected = () => {
-    if (selectedLogIndex < 0 || selectedLogIndex >= logs.length) return
+    if (selectedLogIndex < 0 || selectedLogIndex >= logs.length) {
+      return
+    }
     const selectedLog = logs[selectedLogIndex]
     if (selectedLog && onRewind) {
       onRewind(selectedLog.id)
@@ -392,16 +401,18 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
 
   // Get filter options
   const filterOptions: { value: GameLogActionType | 'ALL'; label: string }[] = [
-    { value: 'ALL', label: t('allActions') || 'All Actions' },
+    { value: 'ALL', label: tr('allActions') || 'All Actions' },
     { value: 'DRAW_CARD', label: t('drawCard') || 'Draw Card' },
     { value: 'PLAY_CARD', label: t('play') || 'Play Card' },
     { value: 'MOVE_CARD', label: t('move') || 'Move' },
-    { value: 'ACTIVATE_ABILITY', label: t('activateAbility') || 'Ability' },
+    { value: 'ACTIVATE_ABILITY', label: tr('activateAbility') || 'Ability' },
     { value: 'SCORE_POINTS', label: t('score') || 'Score' },
     { value: 'DESTROY_CARD', label: t('destroy') || 'Destroy' },
   ]
 
-  if (!isOpen) return null
+  if (!isOpen) {
+    return null
+  }
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black bg-opacity-70 p-vu-lg">
@@ -415,7 +426,7 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between p-vu-md border-b border-gray-700">
           <h2 className="text-white font-bold flex items-center gap-vu-2" style={{ fontSize: `${getVuSize(24)}px` }}>
-            <span>{t('gameLog') || 'Game Log'}</span>
+            <span>{tr('gameLog') || 'Game Log'}</span>
           </h2>
           <div className="flex items-center gap-vu-base">
             <button
@@ -447,7 +458,7 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={t('searchLog') || 'Search...'}
+            placeholder={tr('searchLog') || 'Search...'}
             className="bg-gray-700 border border-gray-600 text-white rounded px-vu-md py-vu-base"
             style={{ fontSize: `${getVuSize(15)}px`, width: `${getVuSize(360)}px` }}
           />
@@ -464,16 +475,16 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
                     : 'bg-gray-800 text-gray-600 cursor-not-allowed'
                 }`}
                 style={{ fontSize: `${getVuSize(15)}px` }}
-                title={t('restoreToSelected') || 'Restore to selected'}
+                title={tr('restoreToSelected') || 'Restore to selected'}
               >
-                {t('restore') || 'Restore'}
+                {tr('restore') || 'Restore'}
               </button>
               <div className="w-px h-6 bg-gray-600" />
               <button
                 onClick={handleSaveLog}
                 className="px-vu-md py-vu-base rounded font-bold bg-green-600 hover:bg-green-700 text-white transition-colors"
                 style={{ fontSize: `${getVuSize(15)}px` }}
-                title={t('saveLog') || 'Save Log'}
+                title={tr('saveLog') || 'Save Log'}
               >
                 {t('saveText') || 'Save'}
               </button>
@@ -498,8 +509,8 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
           {Object.entries(groupedLogs).length === 0 ? (
             <div className="text-gray-500 text-center py-vu-lg">
               {searchQuery || filter !== 'ALL'
-                ? (t('noLogsFound') || 'No logs found matching your criteria.')
-                : (t('noLogsYet') || 'No game actions logged yet.')}
+                ? (tr('noLogsFound') || 'No logs found matching your criteria.')
+                : (tr('noLogsYet') || 'No game actions logged yet.')}
             </div>
           ) : (
             Object.entries(groupedLogs)
@@ -512,7 +523,7 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
                   </div>
 
                   {/* Log entries for this round */}
-                  {roundLogs.map((log, index) => {
+                  {roundLogs.map((log, _index) => {
                     const globalIndex = logs.findIndex(l => l.id === log.id)
                     const isSelected = globalIndex === selectedLogIndex
                     // Only mark as overwritten if we're in rewind mode (not at the latest entry)
@@ -546,7 +557,7 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
                             <span className={`font-medium whitespace-nowrap ${isOverwritten ? 'text-gray-600' : 'text-white'}`}>{log.playerName}</span>
                             <span className={`${isOverwritten ? 'text-gray-600' : 'text-gray-400'} break-words`}>{getActionDescription(log)}</span>
                             {isOverwritten && (
-                              <span className="text-vu-8 text-gray-500 italic">({t('overwritten') || 'overwritten'})</span>
+                              <span className="text-vu-8 text-gray-500 italic">({tr('overwritten') || 'overwritten'})</span>
                             )}
                           </div>
 
@@ -583,10 +594,10 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
         {/* Footer with stats */}
         <div className="p-vu-md border-t border-gray-700 flex items-center justify-between text-vu-8 text-gray-400">
           <div>
-            {t('totalActions') || 'Total actions'}: {logs.length}
+            {tr('totalActions') || 'Total actions'}: {logs.length}
             {searchQuery || filter !== 'ALL' ? (
               <span className="ml-vu-2">
-                ({t('filtered') || 'filtered'}: {filteredLogs.length})
+                ({tr('filtered') || 'filtered'}: {filteredLogs.length})
               </span>
             ) : null}
           </div>
@@ -594,10 +605,10 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
             <div className="text-vu-8">
               {selectedLogIndex >= 0 && selectedLogIndex < logs.length ? (
                 <span>
-                  {t('viewing') || 'Viewing'}: {selectedLogIndex + 1} / {logs.length}
+                  {tr('viewing') || 'Viewing'}: {selectedLogIndex + 1} / {logs.length}
                 </span>
               ) : (
-                <span>{t('live') || 'Live'}</span>
+                <span>{tr('live') || 'Live'}</span>
               )}
             </div>
           )}

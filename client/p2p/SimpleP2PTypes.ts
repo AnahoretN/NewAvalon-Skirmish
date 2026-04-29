@@ -119,6 +119,11 @@ export type ActionType =
   // Host exit game
   | 'HOST_EXIT_GAME'
 
+  // Special actions
+  | 'TARGETING_MODE'
+  | 'CLEAR_TARGETING_MODE'
+  | 'EXIT_GAME'
+
 /**
  * Message from client to host - action request
  */
@@ -341,10 +346,9 @@ export interface HostEndedGameMessage {
  */
 export interface JoinAcceptMessage {
   type: 'JOIN_ACCEPT'
-  data: {
-    playerId: number
-    playerToken: string
-  }
+  playerId: number
+  state: PersonalizedState
+  version?: number
 }
 
 /**

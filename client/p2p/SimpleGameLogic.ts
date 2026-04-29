@@ -2895,8 +2895,8 @@ function handleExecuteAbilityChained(state: GameState, playerId: number, data: a
       players: newState.players.map(p => {
         if (p.id === playerId) {
           // Discard first card from hand
-          let newHand = [...(p.hand || [])]
-          let newDiscard = [...(p.discard || [])]
+          const newHand = [...(p.hand || [])]
+          const newDiscard = [...(p.discard || [])]
           if (newHand.length > 0) {
             const discardedCard = newHand.shift()
             if (discardedCard) {
@@ -2904,7 +2904,7 @@ function handleExecuteAbilityChained(state: GameState, playerId: number, data: a
             }
           }
           // Then draw a card
-          let newDeck = [...(p.deck || [])]
+          const newDeck = [...(p.deck || [])]
           if (newDeck.length > 0) {
             const drawnCard = newDeck.shift()
             if (drawnCard) {

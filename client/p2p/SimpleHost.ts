@@ -97,7 +97,9 @@ function sanitizeCardForP2P(card: Card): any {
  * Helper function to sanitize TargetingModeData for P2P transmission
  */
 function sanitizeTargetingModeForP2P(targetingMode: any): any {
-  if (!targetingMode) return null
+  if (!targetingMode) {
+    return null
+  }
 
   const sanitized: any = {
     playerId: targetingMode.playerId,

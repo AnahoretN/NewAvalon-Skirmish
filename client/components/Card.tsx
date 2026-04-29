@@ -61,7 +61,7 @@ interface StatusIconProps {
   isNegative?: boolean; // true for negative tokens (top), false for positive tokens (bottom)
 }
 
-const StatusIcon: React.FC<StatusIconProps> = ({ type, playerId, count, refreshVersion, playerColorMap, smallStatusIcons = false, isNegative = true }) => {
+const StatusIcon: React.FC<StatusIconProps> = ({ type, playerId, count, refreshVersion, playerColorMap }) => {
   const statusColorName = playerColorMap.get(playerId)
   const statusBg = (statusColorName && PLAYER_COLORS[statusColorName]) ? PLAYER_COLORS[statusColorName].bg : 'bg-gray-500'
 
@@ -635,8 +635,12 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
         return aPriority - bPriority
       }
       // If only one has priority, it comes first
-      if (aPriority !== -1) return -1
-      if (bPriority !== -1) return 1
+      if (aPriority !== -1) {
+        return -1
+      }
+      if (bPriority !== -1) {
+        return 1
+      }
 
       // No priority for either - sort alphabetically by type, then by playerId
       if (a.type !== b.type) {

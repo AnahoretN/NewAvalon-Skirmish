@@ -493,7 +493,7 @@ export const calculateValidTargets = (
           break
         }
       }
-      if (sourceCoords.row !== actionSourceCoords?.row || sourceCoords.col !== actionSourceCoords?.col) break
+      if (sourceCoords && actionSourceCoords && (sourceCoords.row !== actionSourceCoords.row || sourceCoords.col !== actionSourceCoords.col)) break
     }
   }
 

@@ -37,7 +37,7 @@ export function resolvePath(state: any, path: DeltaPath): { target: any; key: st
   let current = state
   for (let i = 0; i < path.length - 1; i++) {
     const segment = path[i]
-    if (current == null) {
+    if (current === null || current === undefined) {
       return { target: null, key: path[path.length - 1] }
     }
     current = current[segment]
@@ -51,7 +51,7 @@ export function resolvePath(state: any, path: DeltaPath): { target: any; key: st
  */
 export function getValueAtPath(state: any, path: DeltaPath): any {
   const { target, key } = resolvePath(state, path)
-  if (target == null) return undefined
+  if (target === null || target === undefined) {return undefined}
   return target[key]
 }
 
@@ -60,7 +60,7 @@ export function getValueAtPath(state: any, path: DeltaPath): any {
  */
 export function setValueAtPath(state: any, path: DeltaPath, value: any): void {
   const { target, key } = resolvePath(state, path)
-  if (target != null) {
+  if (target !== null && target !== undefined) {
     target[key] = value
   }
 }
@@ -73,7 +73,7 @@ export function applyDelta(state: any, delta: GameDelta): any {
   const newState = deepClone(state)
   const { target, key } = resolvePath(newState, delta.path)
 
-  if (target == null) {
+  if (target === null || target === undefined) {
     console.warn('[applyDelta] Could not resolve path:', delta.path)
     return state
   }
@@ -168,7 +168,7 @@ export function createDeltasFromDiff(
   const deltas: GameDelta[] = []
 
   // Handle null/undefined cases
-  if (beforeState === afterState) return []
+  if (beforeState === afterState) {return []}
   if (beforeState === null || beforeState === undefined) {
     return [{ path: basePath, before: null, after: deepClone(afterState), op: 'set' }]
   }

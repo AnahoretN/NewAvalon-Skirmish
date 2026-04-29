@@ -3,7 +3,6 @@ import { GameMode } from '@/types'
 import type { Player } from '@/types'
 import { PLAYER_COLORS } from '@/constants'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { logger } from '@/utils/logger'
 
 interface TeamAssignmentModalProps {
   players: Player[];

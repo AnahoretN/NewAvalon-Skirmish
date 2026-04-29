@@ -4,7 +4,7 @@
  * Shows real-time VU metrics and allows testing different viewport sizes
  */
 
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { getViewportInfo, vuToPx, runVuTests } from '@/utils/vuTesting'
 
 interface VUTestPanelProps {
@@ -18,7 +18,9 @@ export function VUTestPanel({ enabled = true, onRunTests }: VUTestPanelProps) {
   const [showDetails, setShowDetails] = useState(false)
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled) {
+      return
+    }
 
     const handleResize = () => {
       setViewportInfo(getViewportInfo())
@@ -28,7 +30,9 @@ export function VUTestPanel({ enabled = true, onRunTests }: VUTestPanelProps) {
     return () => window.removeEventListener('resize', handleResize)
   }, [enabled])
 
-  if (!enabled) return null
+  if (!enabled) {
+    return null
+  }
 
   const handleRunTests = () => {
     const results = runVuTests()
@@ -149,7 +153,9 @@ export function VUTestPanel({ enabled = true, onRunTests }: VUTestPanelProps) {
           <div style={{ fontWeight: 'bold', marginBottom: 5 }}>CSS Variables:</div>
           <div style={{ fontSize: '9px', maxHeight: '200px', overflowY: 'auto' }}>
             {(() => {
-              if (typeof window === 'undefined') return 'Server-side'
+              if (typeof window === 'undefined') {
+                return 'Server-side'
+              }
               const root = document.documentElement
               const styles = getComputedStyle(root)
               const vars: string[] = []
@@ -206,7 +212,9 @@ export function VUTestPanel({ enabled = true, onRunTests }: VUTestPanelProps) {
         onClick={() => {
           if (typeof window !== 'undefined') {
             const overlay = document.getElementById('vu-test-overlay')
-            if (overlay) overlay.remove()
+            if (overlay) {
+              overlay.remove()
+            }
           }
         }}
         style={{
@@ -236,7 +244,9 @@ export function VUTestPanel({ enabled = true, onRunTests }: VUTestPanelProps) {
  */
 export function useVUTestPanel(enable: boolean = true) {
   useEffect(() => {
-    if (!enable || import.meta.env.PROD) return
+    if (!enable || import.meta.env.PROD) {
+      return
+    }
 
     // Create container for test panel
     const container = document.createElement('div')

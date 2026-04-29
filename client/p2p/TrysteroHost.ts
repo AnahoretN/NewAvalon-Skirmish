@@ -20,17 +20,6 @@ import { getDecksData } from '../content'
 import type { DeckType } from '../types'
 import { getRandomHostColor, assignUniqueRandomColor } from '../utils/colorAssigner'
 
-// Reconnection timeout: 30 seconds
-const RECONNECT_TIMEOUT_MS = 30000
-
-// Public BitTorrent trackers for signaling
-const DEFAULT_TRACKERS = [
-  'wss://tracker.btorrent.xyz',
-  'wss://tracker.openwebtorrent.com',
-  'wss://tracker.fastcast.nz',
-  'wss://tracker.files.fm:443/announce'
-]
-
 /**
  * Helper function to sanitize AbilityAction for P2P transmission
  */
@@ -55,7 +44,9 @@ function sanitizeActionForP2P(action: AbilityAction): any {
     requireStatusFromSourceOwner: action.requireStatusFromSourceOwner,
     mustBeAdjacentToSource: action.mustBeAdjacentToSource,
     mustBeInLineWithSource: action.mustBeInLineWithSource,
-    range: action.range,
+    maxDistanceFromSource: action.maxDistanceFromSource,
+    maxOrthogonalDistance: action.maxOrthogonalDistance,
+    placeAllAtOnce: action.placeAllAtOnce,
   }
 
   if (sanitized.payload) {
@@ -92,7 +83,9 @@ function sanitizeCardForP2P(card: Card): any {
 }
 
 function sanitizeTargetingModeForP2P(targetingMode: any): any {
-  if (!targetingMode) return null
+  if (!targetingMode) {
+    return null
+  }
 
   const sanitized: any = {
     playerId: targetingMode.playerId,
@@ -228,13 +221,13 @@ export class TrysteroHost {
         })
 
         // Set up join request
-        const [sendJoinRequest, getJoinRequest] = this.room.makeAction('JOIN_REQUEST')
+        const [_sendJoinRequest, getJoinRequest] = this.room.makeAction('JOIN_REQUEST')
         getJoinRequest((data: any, trysteroId: string) => {
           this.handleJoinRequest(data, trysteroId)
         })
 
         // Set up reconnect
-        const [sendReconnect, getReconnect] = this.room.makeAction('RECONNECT')
+        const [_sendReconnect, getReconnect] = this.room.makeAction('RECONNECT')
         getReconnect((data: any, trysteroId: string) => {
           this.handleReconnect(data, trysteroId)
         })

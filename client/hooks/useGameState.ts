@@ -46,6 +46,7 @@ interface UseGameStateResult {
   connectAsGuest: (hostId: string) => Promise<boolean>
   sendFullDeckToHost: (playerId: number, deck: any[], deckLength: number) => void
   shareHostDeckWithGuests: (deck: any[], deckLength: number) => void
+  getFreshGameState: () => GameState
   isReconnecting: boolean
   reconnectProgress: { attempt: number; maxAttempts: number; timeRemaining: number } | null
   setDummyPlayerCount: (count: number) => void
@@ -83,7 +84,7 @@ interface UseGameStateResult {
   sendAction: (action: string, data?: any) => void
 
   // Status effects
-  addBoardCardStatus: (coords: any, status: any, playerId?: number) => void
+  addBoardCardStatus: (coords: any, status: any, playerId?: number, count?: number) => void
   removeBoardCardStatus: (coords: any, status: any) => void
   removeBoardCardStatusByOwner: (coords: any, status: any, ownerId: number) => void
   modifyBoardCardPower: (coords: any, delta: number) => void
@@ -587,7 +588,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     if (manager.isConnectedToSignalling()) {
       // Already connected, just return peerId
       const peerId = manager.getPeerId()
-      if (peerId) return peerId
+      if (peerId) {return peerId}
     }
 
     try {
@@ -1709,7 +1710,9 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     // CRITICAL: Optimistic update - update local gameState immediately
     // This fixes chainedAction not seeing tokens added in previous steps
     setGameState((prev: GameState) => {
-      if (!prev.board[coords.row]?.[coords.col]) return prev
+      if (!prev.board[coords.row]?.[coords.col]) {
+        return prev
+      }
 
       const updatedBoard = prev.board.map((row, rIdx) =>
         row.map((cell, cIdx) => {

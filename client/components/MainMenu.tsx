@@ -26,12 +26,9 @@ interface MainMenuProps {
     onClearImageCache?: () => void;
     hostId?: string | null;
     // WebRTC props
-    initializeWebrtcHost?: () => Promise<string | null>;
     connectAsGuest?: (hostId: string) => Promise<boolean>;
     // NEW: Local game creation (without PeerJS)
     createLocalGame?: () => string;
-    connectToSignalling?: () => Promise<string>;
-    isConnectedToSignalling?: () => boolean;
 }
 
 export const MainMenu: React.FC<MainMenuProps> = memo(({
@@ -52,10 +49,7 @@ export const MainMenu: React.FC<MainMenuProps> = memo(({
   isPrivate = false,
   onClearImageCache,
   hostId = null,
-  initializeWebrtcHost,
   createLocalGame,
-  connectToSignalling,
-  isConnectedToSignalling,
 }) => {
   const [isInitializingHost, setIsInitializingHost] = useState(false)
 

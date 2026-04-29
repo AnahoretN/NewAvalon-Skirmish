@@ -46,14 +46,15 @@ export const ExampleComponent2 = () => {
 
 /**
  * ПРИМЕР 3: Адаптивный компонент
+ * Примечание: useResponsiveVU пока не реализован
  */
 export const ExampleComponent3 = () => {
-  const { sizes } = useResponsiveVU(); // Автоматический масштаб на основе размера экрана
+  const { sizes } = useVU(); // Используем обычный useVU
 
   return (
     <div
       style={{
-        width: sizes.modalLg,      // 400px на desktop, меньше на mobile
+        width: sizes.modalLg,      // 400px
         padding: sizes.gapLg,      // 16px
       }}
     >
@@ -394,6 +395,3 @@ export const ExampleModal = () => {
     </div>
   );
 };
-
-// Helper import (должен быть в вашем коде)
-import { useResponsiveVU } from '@/hooks/useVirtualUnits';

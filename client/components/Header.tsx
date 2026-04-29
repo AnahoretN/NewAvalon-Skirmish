@@ -8,7 +8,6 @@ import { TURN_PHASES, MAX_PLAYERS, PLAYER_COLORS } from '@/constants'
 import { useLanguage } from '@/contexts/LanguageContext'
 import type { TranslationResource } from '@/locales/types'
 import { generateInviteLink } from '@/utils/inviteLinks'
-import { logger } from '@/utils/logger'
 import { getWebRTCEnabled } from '@/hooks/useWebRTCEnabled'
 
 // Вычисляем VU размер для шрифтов динамически
@@ -64,7 +63,6 @@ interface HeaderProps {
   isConnectedToSignalling?: () => boolean;
   // Game Log props
   onOpenGameLog?: () => void;
-  gameLogCount?: number;
 }
 
 const StatusIndicator = memo<{
@@ -352,7 +350,7 @@ interface InvitePlayerMenuProps {
   isHost: boolean;
   isGameStarted: boolean;
   hostId?: string | null;
-  t: (key: string) => string;
+  t: (key: keyof TranslationResource['ui'] | string) => string;
   connectToSignalling?: () => Promise<string>;
   isConnectedToSignalling?: () => boolean;
 }
@@ -611,7 +609,6 @@ const Header = memo<HeaderProps>(({
   connectToSignalling,
   isConnectedToSignalling,
   onOpenGameLog,
-  gameLogCount = 0,
 }) => {
   const { t } = useLanguage()
   const [showRoundTooltip, setShowRoundTooltip] = useState(false)
@@ -633,13 +630,6 @@ const Header = memo<HeaderProps>(({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
-
-  // Универсальные стили для разных размеров текста
-  const textStyles = {
-    vu_deck: { fontSize: `${getVuSize(13)}px` },   // 13 VU
-    vu_8: { fontSize: `${getVuSize(8)}px` },     // 8 VU
-    vu_base: { fontSize: `${getVuSize(7)}px` },  // 7 VU
-  }
 
   const handleRoundMouseEnter = useCallback(() => {
     setShowRoundTooltip(true)

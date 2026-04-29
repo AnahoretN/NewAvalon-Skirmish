@@ -6,6 +6,7 @@
  */
 
 import { joinRoom, selfId } from '@trystero-p2p/torrent'
+import { logger } from '@/utils/logger'
 import type { PersonalizedState, SimpleGuestConfig, P2PMessage } from './SimpleP2PTypes'
 
 // Public BitTorrent trackers for signaling
@@ -186,7 +187,9 @@ export class TrysteroGuest {
    * Handle visual effect
    */
   private handleVisualEffect(data: any): void {
-    if (!data) return
+    if (!data) {
+      return
+    }
 
     switch (data.type) {
       case 'HIGHLIGHT':

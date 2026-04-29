@@ -210,15 +210,15 @@ export const useGameLog = ({
    * from current point back to the target point
    */
   const rewindToLog = useCallback((logId: string) => {
-    if (!isHost) return
+    if (!isHost) {return}
 
     const targetIndex = logs.findIndex(l => l.id === logId)
-    if (targetIndex === -1) return
+    if (targetIndex === -1) {return}
 
     // Find current rewind index
     const currentIndex = rewindIndex
 
-    if (targetIndex === currentIndex) return
+    if (targetIndex === currentIndex) {return}
 
     // Compute state at target index
     const restoredState = computeStateAtIndex(targetIndex)
@@ -243,7 +243,7 @@ export const useGameLog = ({
   // Forward one step (host only)
   const forwardLog = useCallback(() => {
     console.log('[useGameLog] forwardLog called:', { isHost, rewindIndex, length: rewindHistory.length })
-    if (!isHost || rewindIndex >= logs.length - 1) return
+    if (!isHost || rewindIndex >= logs.length - 1) {return}
 
     const targetIndex = rewindIndex + 1
     const restoredState = computeStateAtIndex(targetIndex)
@@ -267,7 +267,7 @@ export const useGameLog = ({
   // Backward one step (host only)
   const backwardLog = useCallback(() => {
     console.log('[useGameLog] backwardLog called:', { isHost, rewindIndex, length: rewindHistory.length })
-    if (!isHost || rewindIndex <= 0) return
+    if (!isHost || rewindIndex <= 0) {return}
 
     const targetIndex = rewindIndex - 1
     const restoredState = computeStateAtIndex(targetIndex)

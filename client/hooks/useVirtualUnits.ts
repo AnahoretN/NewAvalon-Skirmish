@@ -188,7 +188,9 @@ export const useVU = (): UseVUReturn => {
 
   // Отслеживание изменения размера окна
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined') {
+      return;
+    }
 
     const handleResize = () => {
       setWindowHeight(window.innerHeight);

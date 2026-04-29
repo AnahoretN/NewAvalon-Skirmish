@@ -23,7 +23,7 @@ import { useGameState } from './hooks/useGameState'
 import { useAppAbilities } from './hooks/useAppAbilities'
 import { useAppCommand } from './hooks/useAppCommand'
 import { useAppCounters } from './hooks/useAppCounters'
-import { useGameLog, createLogDetails, handleGameLogEntry, handleGameLogsSync } from './hooks/useGameLog'
+import { useGameLog, createLogDetails } from './hooks/useGameLog'
 import { initializeVUBasePixels } from './utils/virtualUnits'
 import type {
   Player,
@@ -131,7 +131,6 @@ const AppInner = function AppInner() {
     toggleAutoDraw,
     forceReconnect,
     connectToSignalling,
-    disconnectFromSignalling,
     isConnectedToSignalling,
     triggerHighlight,
     latestHighlight,
@@ -177,7 +176,6 @@ const AppInner = function AppInner() {
     // WebRTC props
     webrtcHostId,
     webrtcIsHost,
-    initializeWebrtcHost,
     connectAsGuest,
     sendFullDeckToHost,
     shareHostDeckWithGuests,
@@ -466,7 +464,6 @@ const AppInner = function AppInner() {
   // Wrapper for spawnToken with logging
   const spawnTokenWithLogging = useCallback((coords: {row: number, col: number}, name: string, ownerId: number) => {
     spawnToken(coords, name, ownerId)
-    const player = gameState?.players.find(p => p.id === ownerId)
     gameLogHook.addLogEntry('PLACE_TOKEN', createLogDetails.placeToken(name), ownerId)
   }, [spawnToken, gameLogHook, gameState?.players])
 
@@ -491,7 +488,7 @@ const AppInner = function AppInner() {
   const handleCommandConfirmWithLogging = useCallback((optionIndex: number, card: Card) => {
     handleCommandConfirm(optionIndex, card)
     const moduleNumber = optionIndex + 1
-    gameLogHook.addLogEntry('COMMAND_OPTION', createLogDetails.commandOption(card.name, `${t('module')} ${moduleNumber}`), (card.ownerId || localPlayerId) ?? 0)
+    gameLogHook.addLogEntry('COMMAND_OPTION', createLogDetails.commandOption(card.name, `${(t as any)('module')} ${moduleNumber}`), (card.ownerId || localPlayerId) ?? 0)
   }, [handleCommandConfirm, gameLogHook, localPlayerId, t])
 
   const {
@@ -501,7 +498,7 @@ const AppInner = function AppInner() {
     handleHandCardClick,
   } = useAppAbilities({
     gameState,
-    getFreshGameState, // Передаём функцию для получения свежего состояния
+    getFreshGameState,
     localPlayerId,
     abilityMode,
     setAbilityMode,
@@ -550,7 +547,7 @@ const AppInner = function AppInner() {
     sendAction,
     setActionQueue,
     pendingChainedActionRef,
-    addLogEntry: (type, details, playerId) => gameLogHook.addLogEntry(type, details, playerId),
+    addLogEntry: (type, details, playerId) => gameLogHook.addLogEntry(type as any, details, playerId),
   })
 
   const handleAnnouncedCardDoubleClick = (player: Player, card: Card) => {
@@ -739,7 +736,7 @@ const AppInner = function AppInner() {
     // Log after a short delay to let state update
     setTimeout(() => {
       console.log('[drawCardWithLogging] Attempting to log DRAW_CARD')
-      gameLogHook.addLogEntry('DRAW_CARD', createLogDetails.drawCard(t('aCard')), targetId ?? localPlayerId ?? 0)
+      gameLogHook.addLogEntry('DRAW_CARD', createLogDetails.drawCard((t as any)('aCard')), targetId ?? localPlayerId ?? 0)
     }, 50)
   }, [drawCard, localPlayerId, gameLogHook, t])
 
@@ -829,7 +826,7 @@ const AppInner = function AppInner() {
       // Disconnect host and PeerJS connections
       disconnectHostAndPeerJS()
     }
-    wasGameActiveRef.current = isGameActive
+    wasGameActiveRef.current = !!isGameActive
   }, [isGameActive, disconnectHostAndPeerJS])
 
   // PERFORMANCE: Use useRef to track player colors and only update when they actually change
@@ -1015,7 +1012,7 @@ const AppInner = function AppInner() {
           // Skip teammates if onlyOpponents is set
           if (onlyOpponents && excludedOwnerId !== undefined) {
             const excludedPlayer = gameState.players.find(p => p.id === excludedOwnerId)
-            if (excludedPlayer && excludedPlayer.teamId != null && excludedPlayer.teamId === player.teamId) {
+            if (excludedPlayer && excludedPlayer.teamId !== null && excludedPlayer.teamId === player.teamId) {
               continue
             }
           }
@@ -1250,7 +1247,7 @@ const AppInner = function AppInner() {
       if (mounted && Object.keys(getCountersDatabase()).length > 0) {
         setImageRefreshVersion(prev => prev + 1)
       }
-    }).catch(err => {
+    }).catch(() => {
       })
 
     return () => { mounted = false }
@@ -1552,10 +1549,9 @@ const AppInner = function AppInner() {
       }
     }
 
-    // CRITICAL: Use getFreshGameState() instead of gameState for calculateValidTargets
+    // CRITICAL: Use gameState for calculateValidTargets
     // This ensures filters see tokens added in previous steps of multi-step commands (e.g., Data Interception)
-    const freshGameState = getFreshGameState ? getFreshGameState() : gameState
-    const boardTargets = effectiveAction ? calculateValidTargets(effectiveAction, freshGameState, actorId ?? null, commandContext) : []
+    const boardTargets = effectiveAction ? calculateValidTargets(effectiveAction, gameState, actorId ?? null, commandContext) : []
     const handTargets: {playerId: number, cardIndex: number}[] = []
 
     // Handle playMode - highlight empty board cells for unit placement
@@ -1599,6 +1595,7 @@ const AppInner = function AppInner() {
 
         if (complexCommands.some(id => baseId.includes(id))) {
           // For complex commands, we need to get the actions that will be available
+          const freshGameState = getFreshGameState ? getFreshGameState() : gameState
           // Try option 0 (first option) to see what targets it needs
           try {
             const optionActions = getCommandAction(commandModalCard.id, 0, commandModalCard as any, freshGameState as any, commandModalCard.ownerId!)
@@ -1715,7 +1712,7 @@ const AppInner = function AppInner() {
         setValidTargets(boardTargets)
         prevBoardTargetsRef.current = boardTargets
       }
-      const handTargetsToUse = gameState.targetingMode.handTargets
+      const handTargetsToUse = gameState.targetingMode?.handTargets ?? []
       if (JSON.stringify(handTargetsToUse) !== JSON.stringify(prevHandTargetsRef.current)) {
         setValidHandTargets(handTargetsToUse)
         prevHandTargetsRef.current = handTargetsToUse
@@ -1860,8 +1857,9 @@ const AppInner = function AppInner() {
       // Ability mode was just cleared - check if it was a Deploy ability or any ability that set targeting mode
       // CRITICAL: Only clear targeting mode if cursorStack is NOT active
       // If cursorStack is active, targeting mode will be cleared when token is placed (in handCardHandlers.ts)
-      const targetingPlayer = gameState.targetingMode?.playerId
-        ? gameState.players.find(p => p.id === gameState.targetingMode.playerId)
+      const targetingPlayerId = gameState.targetingMode?.playerId
+      const targetingPlayer = targetingPlayerId
+        ? gameState.players.find(p => p.id === targetingPlayerId)
         : null
       const isTargetingModeOwnerDummy = targetingPlayer?.isDummy ?? false
       // CRITICAL: Don't clear targetingMode if it has handTargets (DISCARD_FROM_HAND abilities like Faber)
@@ -1979,7 +1977,7 @@ const AppInner = function AppInner() {
             // Skip teammates if onlyOpponents is set
             if (onlyOpponents && excludedOwnerId !== undefined) {
               const excludedPlayer = gameState.players.find(p => p.id === excludedOwnerId)
-              if (excludedPlayer && excludedPlayer.teamId != null && excludedPlayer.teamId === player.teamId) {
+              if (excludedPlayer && excludedPlayer.teamId !== null && excludedPlayer.teamId === player.teamId) {
                 continue
               }
             }
@@ -2039,7 +2037,7 @@ const AppInner = function AppInner() {
             // Skip teammates if onlyOpponents is set
             if (onlyOpponents && excludedOwnerId !== undefined) {
               const excludedPlayer = gameState.players.find(p => p.id === excludedOwnerId)
-              if (excludedPlayer && excludedPlayer.teamId != null && excludedPlayer.teamId === player.teamId) {
+              if (excludedPlayer && excludedPlayer.teamId !== null && excludedPlayer.teamId === player.teamId) {
                 continue
               }
             }
@@ -2986,7 +2984,7 @@ const AppInner = function AppInner() {
       }
       const canControl = player.id === localPlayerId || !!player.isDummy
       const localP = gameState.players?.find(p => p.id === localPlayerId)
-      const isTeammate = localP?.teamId != null && player.teamId === localP.teamId
+      const isTeammate = localP !== undefined && localP.teamId !== null && player.teamId === localP.teamId
       const isRevealedToMe = card.revealedTo === 'all' || (Array.isArray(card.revealedTo) && card.revealedTo.includes(localPlayerId))
       const isRevealedByRequest = card.statuses?.some((s: any) => s.type === 'Revealed' && s.addedByPlayerId === localPlayerId)
       const isVisible = (() => {
@@ -3187,10 +3185,7 @@ const AppInner = function AppInner() {
         isPrivate={gameState.isPrivate}
         hostId={webrtcHostId}
         onClearImageCache={handleClearImageCache}
-        initializeWebrtcHost={initializeWebrtcHost}
         createLocalGame={createLocalGame}
-        connectToSignalling={connectToSignalling}
-        isConnectedToSignalling={isConnectedToSignalling}
       />
       <ModalsRenderer />
       </>
@@ -3248,7 +3243,6 @@ const AppInner = function AppInner() {
         connectToSignalling={connectToSignalling}
         isConnectedToSignalling={isConnectedToSignalling}
         onOpenGameLog={() => setIsGameLogOpen(true)}
-        gameLogCount={gameLogHook.logs.length}
       />
 
       {/* Reconnection Modal - Shows when WebRTC connection is lost and attempting to reconnect */}

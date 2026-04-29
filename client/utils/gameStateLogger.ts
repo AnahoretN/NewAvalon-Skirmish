@@ -114,10 +114,14 @@ export const ActionDeltas = {
     faceUp: boolean
   ): GameDelta[] => {
     const player = beforeState.players.find(p => p.id === playerId)
-    if (!player) return []
+    if (!player) {
+      return []
+    }
 
     const card = player.hand?.[cardIndex]
-    if (!card) return []
+    if (!card) {
+      return []
+    }
 
     const handBefore = [...(player.hand || [])]
     const handAfter = handBefore.filter((_, i) => i !== cardIndex)
@@ -145,7 +149,9 @@ export const ActionDeltas = {
     drawnCard: Card
   ): GameDelta[] => {
     const player = beforeState.players.find(p => p.id === playerId)
-    if (!player) return []
+    if (!player) {
+      return []
+    }
 
     const handBefore = [...(player.hand || [])]
     const handAfter = [...handBefore, drawnCard]
@@ -183,7 +189,9 @@ export const ActionDeltas = {
     col: number
   ): GameDelta[] => {
     const cell = beforeState.board[row]?.[col]
-    if (!cell) return []
+    if (!cell) {
+      return []
+    }
 
     return [
       GameDeltaHelpers.destroyCard(row, col, cell.card)
@@ -203,7 +211,9 @@ export const ActionDeltas = {
     const fromCell = beforeState.board[fromRow]?.[fromCol]
     const toCell = beforeState.board[toRow]?.[toCol]
 
-    if (!fromCell) return []
+    if (!fromCell) {
+      return []
+    }
 
     return GameDeltaHelpers.moveCard(
       fromRow,
@@ -224,7 +234,9 @@ export const ActionDeltas = {
     card: Card
   ): GameDelta[] => {
     const player = beforeState.players.find(p => p.id === playerId)
-    if (!player) return []
+    if (!player) {
+      return []
+    }
 
     return [
       GameDeltaHelpers.announceCard(playerId, player.announcedCard, card)
@@ -243,7 +255,9 @@ export const ActionDeltas = {
     const cell = beforeState.board[row]?.[col]
     const player = beforeState.players.find(p => p.id === playerId)
 
-    if (!cell?.card || !player) return []
+    if (!cell?.card || !player) {
+      return []
+    }
 
     const handBefore = [...(player.hand || [])]
     const handAfter = [...handBefore, cell.card]
@@ -267,7 +281,9 @@ export const ActionDeltas = {
     scoreDelta: number
   ): GameDelta[] => {
     const player = beforeState.players.find(p => p.id === playerId)
-    if (!player) return []
+    if (!player) {
+      return []
+    }
 
     const scoreBefore = player.score || 0
     const scoreAfter = scoreBefore + scoreDelta

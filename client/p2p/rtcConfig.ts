@@ -69,7 +69,9 @@ const TRYSTERO_ENABLED_KEY = 'trystero_trackers_enabled'
 export function getCustomSignalingServers(): CustomSignalingServer[] {
   try {
     const data = localStorage.getItem(CUSTOM_SERVERS_KEY)
-    if (!data) return []
+    if (!data) {
+      return []
+    }
     return JSON.parse(data)
   } catch {
     return []
@@ -159,7 +161,9 @@ export function setTrysteroEnabled(enabled: boolean): void {
  */
 function getLastServerIndex(): number {
   const savedIndex = localStorage.getItem('peerjs_server_index')
-  if (!savedIndex) return 0
+  if (!savedIndex) {
+    return 0
+  }
 
   const index = parseInt(savedIndex, 10)
   const allServers = getAllSignalingServers()

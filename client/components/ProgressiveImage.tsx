@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { getPlaceholderImageUrl, getFullImageUrl, isCloudinaryUrl, VU_IMAGE_SIZES } from '@/utils/imageOptimization'
+import { getPlaceholderImageUrl, getFullImageUrl, isCloudinaryUrl } from '@/utils/imageOptimization'
 
 interface ProgressiveImageProps {
   src: string
@@ -21,7 +21,6 @@ interface ProgressiveImageProps {
   onLoad?: () => void
   onError?: () => void
   placeholderBlur?: number // Blur amount for placeholder (0-20)
-  size?: keyof typeof VU_IMAGE_SIZES // VU-based size preset
   children?: (imgProps: React.ImgHTMLAttributes<HTMLImageElement>) => React.ReactNode
 }
 
@@ -36,7 +35,6 @@ export function ProgressiveImage({
   onLoad,
   onError,
   placeholderBlur = 10,
-  size = 'NORMAL',
   children,
 }: ProgressiveImageProps) {
   const [imageSrc, setImageSrc] = useState(() => {
@@ -129,8 +127,7 @@ export function ProgressiveImage({
  */
 export function useProgressiveImage(
   src: string,
-  placeholderBlur: number = 10,
-  size: keyof typeof VU_IMAGE_SIZES = 'NORMAL'
+  placeholderBlur: number = 10
 ) {
   const [imageSrc, setImageSrc] = useState(() => {
     if (isCloudinaryUrl(src)) {

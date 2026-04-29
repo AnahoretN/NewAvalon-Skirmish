@@ -163,15 +163,11 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
       const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()
 
-        const rect = e.currentTarget.getBoundingClientRect()
-        const centerX = rect.left + rect.width / 2
-        const centerY = rect.top + rect.height / 2
-
         if (draggedItem) {
           handleDrop(draggedItem, { target: 'board', boardCoords: { row, col } })
         }
         setHoveredCell(null)
-      }, [draggedItem, handleDrop, row, col, setHoveredCell, activeGridSize])
+      }, [draggedItem, handleDrop, row, col, setHoveredCell])
 
       const handleClick = useCallback(() => {
         // Check if we're in line selection mode (for abilities) - check FIRST before other modes
@@ -227,11 +223,6 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
         const cellIsEmpty = !cell.card
         const canDrop = cellIsEmpty || (cell.card && isCounter)
 
-        // Get element position for debugging
-        const rect = e.currentTarget.getBoundingClientRect()
-        const centerX = rect.left + rect.width / 2
-        const centerY = rect.top + rect.height / 2
-
         if (canDrop) {
           // Set immediately for instant visual feedback - using state to trigger re-render
           setHoveredCell({ row, col })
@@ -278,8 +269,6 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
           return
         }
         if (cell.card) {
-          const rect = e.currentTarget.getBoundingClientRect()
-
           setDraggedItem({
             card: cell.card,
             source: 'board',

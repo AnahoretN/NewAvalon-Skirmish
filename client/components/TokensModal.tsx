@@ -21,7 +21,7 @@ interface TokensModalProps {
   activeGridSize?: 4 | 5 | 6 | 7; // Grid size from game board
 }
 
-export const TokensModal: React.FC<TokensModalProps> = ({ isOpen, onClose, setDraggedItem, openContextMenu, canInteract, anchorEl, imageRefreshVersion, localPlayerId, activePlayerId, players, playerColorMap, activeGridSize = 6 }) => {
+export const TokensModal: React.FC<TokensModalProps> = ({ isOpen, onClose, setDraggedItem, openContextMenu, canInteract, anchorEl, imageRefreshVersion, localPlayerId, activePlayerId, players, playerColorMap }) => {
   const { t } = useLanguage()
   const [draggedTokenId, setDraggedTokenId] = useState<string | null>(null)
   const [droppedOutside, setDroppedOutside] = useState(false)

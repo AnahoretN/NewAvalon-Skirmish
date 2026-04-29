@@ -60,7 +60,7 @@
 
 import React, { memo, useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import { DeckType as DeckTypeEnum } from '@/types'
-import type { Player, PlayerColor, Card as CardType, DragItem, DropTarget, CustomDeckFile, ContextMenuParams, CursorStackState } from '@/types'
+import type { Player, PlayerColor, Card as CardType, DragItem, DropTarget, CustomDeckFile, ContextMenuParams, CursorStackState, TargetingModeData } from '@/types'
 import { PLAYER_COLORS, GAME_ICONS } from '@/constants'
 import { deckFiles } from '@/content'
 import { Card as CardComponent } from './Card'
@@ -68,7 +68,6 @@ import { CardTooltipContent } from './Tooltip'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { parseTextDeckFormat } from '@/utils/textDeckFormat'
 import { calculateGlowColor, rgba, getPlayerColorRgbOrDefault, TIMING } from '@/utils/common'
-import { logger } from '@/utils/logger'
 
 // Вычисляем VU размер для шрифтов динамически
 const getVuSize = (vu: number) => {
@@ -125,7 +124,7 @@ interface PlayerPanelProps {
   handCardSelections?: { playerId: number; cardIndex: number; selectedByPlayerId: number; timestamp: number }[];
   cursorStack?: CursorStackState | null;
   // Targeting mode from gameState (synchronized across all players)
-  targetingMode?: { playerId: number, handTargets?: { playerId: number, cardIndex: number }[], isDeckSelectable?: boolean } | null;
+  targetingMode?: TargetingModeData | null;
   highlightOwnerId?: number; // The owner of the current ability/mode (for correct highlight color)
   onCancelAllModes?: () => void; // Right-click to cancel all modes
   clickWaves?: any[]; // Click wave effects to display
@@ -232,12 +231,15 @@ const DropZone: React.FC<{ onDrop: () => void, className?: string, isOverClassNa
 const RemoteScore: React.FC<{ score: number, onChange: (delta: number) => void, canEdit: boolean }> = ({ score, onChange, canEdit }) => {
   // Local state for immediate feedback effect
   const [pendingDelta, setPendingDelta] = useState(0)
-  const [effectKey, setEffectKey] = useState(0)
+  const [effectKey, setEffectKey] = useState(0)  // Key for triggering re-renders
   const [externalDelta, setExternalDelta] = useState(0)  // Server-initiated changes
   const pendingTimerRef = useRef<NodeJS.Timeout | null>(null)
   const pendingDeltaRef = useRef(0)  // Ref to preserve value through server updates
   const prevScoreRef = useRef(score)
   const expectingServerUpdateRef = useRef(false)  // Flag to track if we're waiting for server response
+
+  // Use effectKey to prevent unused variable warning (it's used to trigger re-renders)
+  void effectKey
 
   // Detect score changes from server (scoring effects)
   useEffect(() => {
@@ -308,8 +310,6 @@ const RemoteScore: React.FC<{ score: number, onChange: (delta: number) => void, 
   // Show pending delta or external delta
   const showDelta = pendingDelta !== 0 || externalDelta !== 0
   const deltaToShow = externalDelta !== 0 ? externalDelta : pendingDelta
-  // External delta fades out, pending delta stays visible while accumulating
-  const isExternalEffect = externalDelta !== 0
 
   return (
     <div className="w-full h-full aspect-square bg-gray-800 rounded-vu-5 flex flex-col items-center text-white select-none overflow-hidden">
@@ -457,6 +457,9 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
   const [deckChangeKey, setDeckChangeKey] = useState(0)
 
   const canPerformActions: boolean = isLocalPlayer || !!player.isDummy
+
+  // Use deckChangeKey to prevent unused variable warning (it's used to trigger re-renders)
+  void deckChangeKey
   const canDrag: boolean = canPerformActions && !cursorStack
 
   const isPlayerActive = activePlayerId === player.id
@@ -961,8 +964,6 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                         draggable={canDrag && !isPlaceholder}
                         onDragStart={(e) => {
                           if (canDrag && !isPlaceholder) {
-                            const rect = e.currentTarget.getBoundingClientRect()
-
                             setDraggedItem({
                               card,
                               source: 'hand',
