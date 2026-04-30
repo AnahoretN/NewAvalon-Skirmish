@@ -693,7 +693,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Preparation (0) → Setup (1) - automatic, handled in passTurn
   if (phase === 0) {
-    const newState = { ...stateAfterResurrected, currentPhase: 1 }
+    const newState = { ...stateAfterResurrected, currentPhase: 1, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -703,7 +703,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Setup (1) → Main (2) - happens when playing card
   if (phase === 1) {
-    const newState = { ...stateAfterResurrected, currentPhase: 2 }
+    const newState = { ...stateAfterResurrected, currentPhase: 2, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -713,7 +713,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Main (2) → Commit (3)
   if (phase === 2) {
-    const newState = { ...stateAfterResurrected, currentPhase: 3 }
+    const newState = { ...stateAfterResurrected, currentPhase: 3, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -786,7 +786,8 @@ function enterScoringPhase(state: GameState, playerId: number): GameState {
     ...state,
     currentPhase: 4,
     isScoringStep: true,
-    scoringLines
+    scoringLines,
+    floatingTexts: []  // Clear floating texts when entering scoring phase
   }
 }
 
@@ -797,7 +798,7 @@ function handlePreviousPhase(state: GameState, _playerId: number): GameState {
   const phase = state.currentPhase
 
   if (phase > 1) {
-    return { ...state, currentPhase: phase - 1 as any }
+    return { ...state, currentPhase: phase - 1 as any, floatingTexts: [] }
   }
 
   return state
@@ -864,7 +865,8 @@ function handlePassTurn(state: GameState, playerId: number, reason: string): Gam
     players: newPlayers,
     activePlayerId: nextPlayerId,
     currentPhase: 0,  // Preparation
-    scoringLines: []  // Clear scoring lines when passing turn
+    scoringLines: [],  // Clear scoring lines when passing turn
+    floatingTexts: []  // Clear floating texts when passing turn
   }
 
   // Check full cycle (returned to starting player)
@@ -923,6 +925,9 @@ function handleSetPhase(state: GameState, phaseNumber: number): GameState {
     newState.scoringLines = []
   }
 
+  // Clear floating texts when changing phase
+  newState.floatingTexts = []
+
   recalculateAllReadyStatuses(newState)
   return newState
 }
@@ -955,6 +960,9 @@ function executePreparationPhase(state: GameState, activePlayerId: number): Game
 
   // Transition to Setup
   newState.currentPhase = 1
+
+  // Clear floating texts when transitioning to Setup
+  newState.floatingTexts = []
 
   // Recalculate ready statuses for new active player in Setup phase
   recalculateAllReadyStatuses(newState)

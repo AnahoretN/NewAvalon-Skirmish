@@ -452,6 +452,14 @@ function handleGlobalAutoApply(
   // Note: SACRIFICE_AND_BUFF_LINES (Centurion Commit) and CENSOR_SWAP (Censor Commit)
   // are now handled in modeHandlers.ts, not here
 
+  // Handle cleanupCommand - send command card to discard after all steps complete
+  if (action.payload?.cleanupCommand && action.payload.card && props.sendAction) {
+    const commandCard = action.payload.card as Card
+    const ownerId = action.payload.ownerId as number
+    props.sendAction('MOVE_ANNOUNCED_TO_DISCARD', { playerId: ownerId })
+    return
+  }
+
   // Standard global apply with targets
   if (action.payload && !action.payload.cleanupCommand) {
     const { tokenType, filter } = action.payload
