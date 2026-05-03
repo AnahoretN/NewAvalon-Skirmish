@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 import type { Card, GameState, AbilityAction, CommandContext, DragItem, CounterSelectionData } from '@/types'
-import { getCommandAction } from '@server/utils/commandLogic'
+import { getCommandActionByOption, getCommandOptions, isCommandCard } from '@/utils/autoAbilities'
 import { logger } from '@/utils/logger'
 
 interface UseAppCommandProps {
@@ -50,45 +50,39 @@ export const useAppCommand = ({
     // Reset context
     setCommandContext({})
 
-    const baseId = (card.baseId || card.id.split('_')[1] || card.id).toLowerCase()
-    const complexCommands = [
-      'overwatch',
-      'tacticalmaneuver',
-      'repositioning',
-      'inspiration',
-      'datainterception',
-      'falseorders',
-      'experimentalstimulants',
-      'logisticschain',
-      'quickresponseteam',
-      'temporaryshelter',
-      'enhancedinterrogation',
-    ]
+    const baseId = card.baseId || card.id.split('_')[1] || card.id
+    console.log('[playCommandCard] card.id:', card.id, 'card.baseId:', card.baseId, 'extracted baseId:', baseId)
 
-    // 2. Check type
-    // If it's one of the complex commands, ALWAYS open the modal.
-    if (complexCommands.some(id => baseId.includes(id))) {
-      // CRITICAL: Set ownerId on the card so handleCommandConfirm uses the correct player ID
-      // This fixes dummy player command cards not showing hand targeting effects
+    // 2. Check if this is a command card using the new system
+    // Note: baseId is already camelCase from database, don't convert to lowercase
+    if (isCommandCard(baseId)) {
+      console.log('[playCommandCard] Is command card, opening modal')
+      // Command card with options - open modal
       setCommandModalCard({ ...card, ownerId: source.playerId! })
     } else {
-      // Simple Command (e.g. Mobilization)
-      // Just execute Main Logic
-      const actions = getCommandAction(card.id, -1, card as any, gameState as any, source.playerId!)
+      console.log('[playCommandCard] Not recognized as command card, checking options')
+      // Simple Command (e.g. Mobilization without options)
+      // For now, treat as single-option command
+      const options = getCommandOptions(baseId)
+      if (options.length === 1) {
+        // Single option - execute directly
+        const action = getCommandActionByOption(
+          baseId,
+          options[0].optionIndex,
+          { ...card, ownerId: source.playerId! },
+          gameState,
+          source.playerId!,
+          { row: -1, col: -1 }
+        )
 
-      // Queue actions + Cleanup
-      if (actions.length > 0) {
-        // If the first action has targets, queue it. If not, maybe skip?
-        // For safety, we queue it and let the processor handle "No Target".
-        setActionQueue([
-          ...(actions as any),
-          { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: source.playerId! }, sourceCard: card },
-        ])
+        // NOTE: Cleanup is now handled automatically as the final step in contentAbilities.ts
+        if (action) {
+          setActionQueue([action])
+        }
       } else {
-        // No actions defined (unlikely if in DB), just cleanup
-        setActionQueue([
-          { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: source.playerId! }, sourceCard: card },
-        ])
+        // No options found - fallback to old behavior or show modal anyway
+        console.log('[playCommandCard] No options found, showing modal anyway')
+        setCommandModalCard({ ...card, ownerId: source.playerId! })
       }
     }
   }, [gameState, localPlayerId, moveItem, setActionQueue, setCommandContext, setCommandModalCard])
@@ -99,69 +93,51 @@ export const useAppCommand = ({
     }
 
     const ownerId = commandModalCard.ownerId || localPlayerId
+    const baseId = commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id
+
+    console.log('[handleCommandConfirm] INPUT:', {
+      optionIndex,
+      commandModalCardId: commandModalCard.id,
+      commandModalCardBaseId: commandModalCard.baseId,
+      extractedBaseId: baseId,
+      ownerId
+    })
+
+    // Get the action for the selected option using the new system
+    // Note: baseId is already camelCase from database, don't convert to lowercase
+    const action = getCommandActionByOption(
+      baseId,
+      optionIndex + 1, // Convert 0-based to 1-based
+      { ...commandModalCard, selectedOption: optionIndex + 1 },
+      gameState,
+      ownerId,
+      { row: -1, col: -1 }
+    )
+
+    console.log('[handleCommandConfirm] action from getCommandActionByOption:', action)
+
+    // NOTE: Cleanup is now handled automatically as the final step in contentAbilities.ts
+    // No need to add cleanup action here anymore
+
     const queue: AbilityAction[] = []
 
-    // 1. Get ALL actions for this choice (actions may include main parts and selected option parts)
-    // We call -1 (main) and then the option index.
-    const mainActions = getCommandAction(commandModalCard.id, -1, commandModalCard as any, gameState as any, ownerId)
-
-    let rewardType: 'DRAW_REMOVED' | 'SCORE_REMOVED' | undefined
-
-    // Special Case: Inspiration (Main Action opens Counter Modal)
-    if (commandModalCard.baseId?.toLowerCase().includes('inspiration')) {
-      rewardType = optionIndex === 0 ? 'DRAW_REMOVED' : 'SCORE_REMOVED'
-      if (mainActions.length > 0 && mainActions[0].type === 'ENTER_MODE') {
-        // Pass the reward type to the next step (immutable update)
-        mainActions[0] = {
-          ...mainActions[0],
-          payload: { ...mainActions[0].payload, rewardType }
-        }
-      }
+    if (action) {
+      queue.push(action)
     }
 
-    // 2. Option Actions (get these first to check for chainedAction)
-    const optActions = getCommandAction(commandModalCard.id, optionIndex, commandModalCard as any, gameState as any, ownerId)
-
-    // CRITICAL FIX: If option action has chainedAction, merge it into mainActions instead of adding both
-    // This fixes Data Interception where both main and option had CREATE_STACK
-    // The chainedAction from optActions should be attached to mainActions, not executed separately
-    const optionHasChainedAction = optActions.some(a => a.chainedAction)
-
-    if (optionHasChainedAction && optActions.length > 0) {
-      // Pass chainedAction from optActions to mainActions
-      const chainedAction = optActions[0].chainedAction
-      mainActions.forEach(action => {
-        queue.push({ ...action, chainedAction })
-      })
-    } else {
-      // Add main actions to queue
-      mainActions.forEach(action => {
-        queue.push(action)
-      })
-
-      // Add option actions to queue (only if no chainedAction)
-      optActions.forEach(action => {
-        queue.push(action)
-      })
-    }
-
-    setActionQueue(queue)
-    setCommandModalCard(null)
-
-    // 3. Cleanup (Discard Card) - Inspiration handles this after modal
-    if (!commandModalCard.baseId?.toLowerCase().includes('inspiration')) {
-      queue.push({
-        type: 'GLOBAL_AUTO_APPLY',
-        payload: { cleanupCommand: true, card: commandModalCard, ownerId },
-        sourceCard: commandModalCard,
-      })
-    }
+    console.log('[handleCommandConfirm] final queue:', queue)
 
     setActionQueue(queue)
     setCommandModalCard(null)
   }, [gameState, localPlayerId, setActionQueue, setCommandModalCard])
 
   const handleCounterSelectionConfirm = useCallback((countsToRemove: Record<string, number>, data: CounterSelectionData) => {
+    console.log('[handleCounterSelectionConfirm] Called:', {
+      countsToRemove,
+      cardName: data.card.name,
+      callbackAction: data.callbackAction,
+      hasAutoStepsContext: !!data.autoStepsContext,
+    })
     if (localPlayerId === null) {
       return
     }
@@ -202,14 +178,88 @@ export const useAppCommand = ({
       }
     }
 
-    // Cleanup Command (Inspiration)
-    const player = gameState.players.find(p => p.id === ownerId)
-    if (player?.announcedCard) {
-      setActionQueue([{
-        type: 'GLOBAL_AUTO_APPLY',
-        payload: { cleanupCommand: true, card: player.announcedCard, ownerId },
-        sourceCard: player.announcedCard,
-      }])
+    // CRITICAL: Continue to AUTO_STEPS cleanup step if context exists
+    // This ensures the final cleanup step is executed for Inspiration command
+    if (data.autoStepsContext) {
+      const { steps, currentStepIndex, abilityAction } = data.autoStepsContext
+      const nextStepIndex = currentStepIndex + 1
+
+      console.log('[handleCounterSelectionConfirm] AUTO_STEPS context:', {
+        currentStepIndex,
+        nextStepIndex,
+        totalSteps: steps.length,
+        steps: steps.map((s, i) => `${i}: ${s.action}`),
+      })
+
+      if (nextStepIndex < steps.length) {
+        // Continue to next step (cleanup step)
+        const nextStep = steps[nextStepIndex]
+        console.log('[handleCounterSelectionConfirm] Continuing to next step:', {
+          currentStepIndex,
+          nextStepIndex,
+          totalSteps: steps.length,
+          nextStepAction: nextStep.action,
+          nextStepDetails: nextStep.details,
+        })
+
+        // CRITICAL: Handle CLEANUP_COMMAND step directly instead of adding to queue
+        // This prevents the action from being routed through executeAction which causes errors
+        if (nextStep.action === 'GLOBAL_AUTO_APPLY' && nextStep.details?.customAction === 'CLEANUP_COMMAND') {
+          console.log('[handleCounterSelectionConfirm] Processing CLEANUP_COMMAND step directly')
+          // The cleanup will be handled by the normal App.tsx flow
+          // App.tsx will automatically re-queue if abilityMode is still active
+          const cleanupAction = {
+            type: 'GLOBAL_AUTO_APPLY',
+            payload: { cleanupCommand: true, ownerId },
+            sourceCard: abilityAction.sourceCard,
+            sourceCoords: abilityAction.sourceCoords,
+          }
+          console.log('[handleCounterSelectionConfirm] Adding cleanup action:', cleanupAction)
+          setActionQueue([cleanupAction])
+          // CRITICAL: Close the modal before returning
+          setCounterSelectionData(null)
+          return
+        } else {
+          // Add the next step to the action queue
+          const newAction = {
+            type: 'ENTER_MODE',
+            mode: 'AUTO_STEPS',
+            sourceCard: abilityAction.sourceCard,
+            sourceCoords: abilityAction.sourceCoords,
+            readyStatusToRemove: abilityAction.readyStatusToRemove,
+            payload: {
+              steps: steps,
+              currentStepIndex: nextStepIndex,
+              _autoStepsContext: {
+                steps: steps,
+                currentStepIndex: nextStepIndex,
+                originalType: abilityAction.payload?.originalType,
+                supportRequired: abilityAction.payload?.supportRequired,
+                readyStatusToRemove: abilityAction.readyStatusToRemove,
+                // CRITICAL: Include sourceCard and sourceCoords for CLEANUP_COMMAND step
+                // This fixes Inspiration command not discarding after execution
+                sourceCard: abilityAction.sourceCard,
+                sourceCoords: abilityAction.sourceCoords,
+              }
+            }
+          }
+          console.log('[handleCounterSelectionConfirm] Adding to action queue:', newAction)
+          setActionQueue([newAction])
+        }
+      } else {
+        console.log('[handleCounterSelectionConfirm] No more steps to process')
+        // Fallback: Add cleanup action if no cleanup step was found
+        const cleanupAction = {
+          type: 'GLOBAL_AUTO_APPLY',
+          payload: { cleanupCommand: true, ownerId },
+          sourceCard: abilityAction.sourceCard,
+          sourceCoords: abilityAction.sourceCoords,
+        }
+        console.log('[handleCounterSelectionConfirm] Adding cleanup action (fallback):', cleanupAction)
+        setActionQueue([cleanupAction])
+      }
+    } else {
+      console.log('[handleCounterSelectionConfirm] No autoStepsContext found')
     }
 
     setCounterSelectionData(null)

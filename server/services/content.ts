@@ -199,12 +199,16 @@ export function setDeckFiles(decks: any[]) {
  * Raw ability structure from contentDatabase.json
  */
 export interface ContentAbility {
-  type: 'deploy' | 'setup' | 'commit' | 'pass'
+  type: 'deploy' | 'setup' | 'commit' | 'pass' | 'command'
   supportRequired?: boolean
   action?: string
   mode?: string | null
   actionType?: string
   details?: Record<string, any>
+  // For command cards: option index (1-based)
+  optionIndex?: number
+  // For command cards: the text shown in the modal for this option
+  optionText?: string
   steps?: Array<{
     action: string
     mode?: string | null

@@ -41,6 +41,7 @@ export interface EmptyCellClickProps {
   openContextMenu: (e: React.MouseEvent, type: string, data: any) => void
   triggerDeckSelection: (playerId: number, selectedByPlayerId: number) => void
   isWebRTCMode?: boolean
+  setActionQueue?: React.Dispatch<React.SetStateAction<AbilityAction[]>>
 }
 
 /**
@@ -76,6 +77,7 @@ export function handleEmptyCellClick(
     modifyBoardCardPower,
     scoreLine,
     scoreDiagonal,
+    setActionQueue,
   } = props
 
   // Alias for backward compatibility
@@ -236,7 +238,7 @@ export function handleEmptyCellClick(
 
   // === ABILITY MODE - SELECT_CELL ===
   if (abilityMode && abilityMode.mode === 'SELECT_CELL') {
-    const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload } = abilityMode
+    const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload, chainedAction } = abilityMode
 
     // Find current card coordinates
     const currentCardCoords = (() => {
@@ -340,8 +342,8 @@ export function handleEmptyCellClick(
 
     markAbilityUsed(sourceCoords || boardCoords, isDeployAbility, false, readyStatusToRemove)
 
-    if (payload?.chainedAction) {
-      const nextAction = { ...payload.chainedAction }
+    if (chainedAction) {
+      const nextAction = { ...chainedAction }
       if (nextAction.targetOwnerId === -2) {
         nextAction.targetOwnerId = sourceCard.ownerId
       }
@@ -361,13 +363,53 @@ export function handleEmptyCellClick(
           nextAction.payload.contextCardId = movedCard.id
         }
       }
+      // Set sourceCoords for the chained action
+      nextAction.sourceCoords = boardCoords
+
       // CRITICAL: Clear targeting mode BEFORE setting abilityMode to null
       // This prevents targeting mode from being re-set after chained action
       clearTargetingMode()
       setAbilityMode(null)
-      setTimeout(() => {
-        handleActionExecution(nextAction, boardCoords)
-      }, TIMING.MODE_CLEAR_DELAY)
+
+      // CRITICAL: Add chainedAction to actionQueue, ensuring cleanupCommand stays at the end
+      if (setActionQueue) {
+        setActionQueue(prev => {
+          const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+          const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+          return [...otherActions, nextAction, ...cleanupActions]
+        })
+      }
+    } else if (payload?._autoStepsContext && setActionQueue) {
+      // CRITICAL FIX: Handle case where there's NO chainedAction but we're in AUTO_STEPS context
+      // This is for Data Interception option 2: CREATE_STACK → SELECT_UNIT_FOR_MOVE → SELECT_CELL → CLEANUP_COMMAND
+      // After the move completes, we need to continue AUTO_STEPS to trigger CLEANUP_COMMAND
+      const autoStepsContext = { ...payload._autoStepsContext }
+      const continueAction: any = {
+        type: 'CONTINUE_AUTO_STEPS',
+        sourceCard: abilityMode.sourceCard,
+        sourceCoords: boardCoords, // Use new coords as source
+        isDeployAbility: abilityMode.isDeployAbility,
+        readyStatusToRemove: abilityMode.readyStatusToRemove,
+        payload: {
+          _autoStepsContext: autoStepsContext,
+          stepContext: {
+            targetCoords: boardCoords,
+            targetCardId: movedCard?.id || sourceCard?.id
+          }
+        }
+      }
+
+      console.log('[handleEmptyCellClick] SELECT_CELL: No chainedAction, adding CONTINUE_AUTO_STEPS directly, stepIndex:', autoStepsContext.currentStepIndex)
+
+      setActionQueue(prev => {
+        const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+        const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+        return [...otherActions, continueAction, ...cleanupActions]
+      })
+
+      // CRITICAL: Clear targeting mode AND ability mode immediately (not via setTimeout)
+      clearTargetingMode()
+      setAbilityMode(null)
     } else {
       // CRITICAL: Clear targeting mode AND ability mode immediately (not via setTimeout)
       // This fixes the issue where targeting mode was being re-set after move completion

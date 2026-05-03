@@ -198,6 +198,7 @@ function routeMessage(ws, data) {
     'EXECUTE_PENDING_COMMAND': handleExecutePendingCommand,
     'FLIP_CARD': handleFlipCard,
     'REMOVE_COUNTERS_WITH_REWARD': handleRemoveCountersWithReward,
+    'CLEANUP_COMMAND': handleCleanupCommand,
     'START_READY_CHECK': handleStartReadyCheck,
     'CANCEL_READY_CHECK': handleCancelReadyCheck,
     'TRIGGER_HIGHLIGHT': handleTriggerHighlight,
@@ -411,6 +412,57 @@ const handleAddCommand = () => handleClientSideAction();
 const handleCancelPendingCommand = () => handleClientSideAction();
 const handleExecutePendingCommand = () => handleClientSideAction();
 const handleFlipCard = () => handleClientSideAction();
+
+// CLEANUP_COMMAND - discard command card from showcase to discard
+const handleCleanupCommand = (ws, data) => {
+  const gameId = getGameIdForClient(ws);
+  if (!gameId) {
+    sendErrorResponse(ws, 'No game associated with client');
+    return;
+  }
+
+  const gameState = getGameState(gameId);
+  if (!gameState) {
+    sendErrorResponse(ws, 'Game not found');
+    return;
+  }
+
+  const { playerId, cardId } = data;
+  if (playerId === undefined) {
+    sendErrorResponse(ws, 'No playerId provided');
+    return;
+  }
+
+  // Find the player and their announced card
+  const player = gameState.players.find(p => p.id === playerId);
+  if (!player) {
+    sendErrorResponse(ws, 'Player not found');
+    return;
+  }
+
+  const announcedCard = player.announcedCard;
+  if (!announcedCard) {
+    sendErrorResponse(ws, 'No announced card for player');
+    return;
+  }
+
+  // Move the announced card to discard
+  const newPlayers = gameState.players.map(p => {
+    if (p.id === playerId) {
+      const discard = [...(p.discard || []), announcedCard];
+      return {
+        ...p,
+        discard,
+        discardSize: discard.length,
+        announcedCard: null
+      };
+    }
+    return p;
+  });
+
+  const updatedState = { ...gameState, players: newPlayers };
+  broadcastToGame(gameId, updatedState, ws);
+};
 
 // Note: CHAT_MESSAGE is not yet implemented
 const handleChatMessage = () => {

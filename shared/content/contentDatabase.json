@@ -1130,7 +1130,51 @@
       "abilityText": "● Place 1 Aim counter on any card. Reveal 1 card from an opponent's hand for each of your Aim counters on the battlefield.\n● Place 1 Aim counter on any card. Draw 1 card for each of your Aim counters on the battlefield.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Place 1 Aim counter on any card. Reveal 1 card from an opponent's hand for each of your Aim counters on the battlefield.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Aim", "count": 1 }
+            },
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Revealed",
+                "dynamicCount": { "factor": "Aim", "ownerId": "source" },
+                "onlyOpponents": true,
+                "onlyFaceDown": true,
+                "targetOwnerId": -1
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Place 1 Aim counter on any card. Draw 1 card for each of your Aim counters on the battlefield.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Aim", "count": 1 }
+            },
+            {
+              "action": "GLOBAL_AUTO_APPLY",
+              "mode": null,
+              "details": {
+                "dynamicResource": { "type": "draw", "factor": "Aim", "baseCount": 0 }
+              }
+            }
+          ]
+        }
+      ]
     },
     "tacticalManeuver": {
       "name": "Tactical Maneuver",
@@ -1140,7 +1184,53 @@
       "abilityText": "● Move one of your units to an empty cell in its line. Draw cards equal to that unit's power.\n● Move one of your units to an empty cell in its line. Gain points equal to that unit's power.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Move one of your units to an empty cell in its line. Draw cards equal to that unit's power.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_UNIT_FOR_MOVE",
+              "details": {
+                "range": "line",
+                "filter": "isOwner",
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "GLOBAL_AUTO_APPLY",
+                "details": {
+                  "contextReward": "DRAW_MOVED_POWER"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Move one of your units to an empty cell in its line. Gain points equal to that unit's power.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_UNIT_FOR_MOVE",
+              "details": {
+                "range": "line",
+                "filter": "isOwner",
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "GLOBAL_AUTO_APPLY",
+                "details": {
+                  "contextReward": "SCORE_MOVED_POWER"
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "inspiration": {
       "name": "Inspiration",
@@ -1150,7 +1240,41 @@
       "abilityText": "● Remove any number of counters from one of your units. Draw 1 card for each counter removed.\n● Remove any number of counters from one of your units. Gain 1 point for each counter removed.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Remove any number of counters from one of your units. Draw 1 card for each counter removed.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_TARGET",
+              "details": {
+                "actionType": "OPEN_COUNTER_MODAL",
+                "rewardType": "DRAW_REMOVED",
+                "filter": "isOwner"
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Remove any number of counters from one of your units. Gain 1 point for each counter removed.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_TARGET",
+              "details": {
+                "actionType": "OPEN_COUNTER_MODAL",
+                "rewardType": "SCORE_REMOVED",
+                "filter": "isOwner"
+              }
+            }
+          ]
+        }
+      ]
     },
     "dataInterception": {
       "name": "Data Interception",
@@ -1160,7 +1284,52 @@
       "abilityText": "● Place 1 Exploit counter on any card. Reveal 1 card from an opponent's hand for each of your Exploit counters on the battlefield.\n● Place 1 Exploit counter on any card. Move a unit with your Exploit counter 1 or 2 cells.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Place 1 Exploit counter on any card. Reveal 1 card from an opponent's hand for each of your Exploit counters on the battlefield.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Exploit", "count": 1 }
+            },
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Revealed",
+                "dynamicCount": { "factor": "Exploit", "ownerId": "source" },
+                "onlyOpponents": true,
+                "onlyFaceDown": true,
+                "targetOwnerId": -1
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Place 1 Exploit counter on any card. Move a unit with your Exploit counter 1 or 2 cells.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Exploit", "count": 1 }
+            },
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_UNIT_FOR_MOVE",
+              "details": {
+                "range": 2,
+                "filter": "hasCounterOwner_Exploit"
+              }
+            }
+          ]
+        }
+      ]
      },
     "falseOrders": {
       "name": "False Orders",
@@ -1170,7 +1339,83 @@
       "abilityText": "● Place 1 Exploit counter on an opponent's card. Move that opponent unit with your Exploit counter 1 or 2 cells. Reveal up to 2 cards from that opponent's hand.\n● Place 1 Exploit counter on an opponent's card. Move that opponent unit with your Exploit counter 1 or 2 cells. Place 2 Stun counters on it.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Place 1 Exploit counter on an opponent's card. Move that opponent unit with your Exploit counter 1 or 2 cells. Reveal up to 2 cards from that opponent's hand.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Exploit",
+                "count": 1,
+                "targetType": "Unit",
+                "onlyOpponents": true,
+                "recordContext": true
+              }
+            },
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_CELL",
+              "details": {
+                "range": 2,
+                "useContextCard": true,
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "CREATE_STACK",
+                "mode": null,
+                "details": {
+                  "tokenType": "Revealed",
+                  "count": 2,
+                  "onlyOpponents": true,
+                  "onlyFaceDown": true,
+                  "excludeOwnerId": "source"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Place 1 Exploit counter on an opponent's card. Move that opponent unit with your Exploit counter 1 or 2 cells. Place 2 Stun counters on it.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Exploit",
+                "count": 1,
+                "targetType": "Unit",
+                "onlyOpponents": true,
+                "recordContext": true
+              }
+            },
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_CELL",
+              "details": {
+                "range": 2,
+                "useContextCard": true,
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "GLOBAL_AUTO_APPLY",
+                "mode": null,
+                "details": {
+                  "tokenType": "Stun",
+                  "count": 2,
+                  "ownerId": "source"
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "experimentalStimulants": {
       "name": "Experimental Stimulants",
@@ -1180,7 +1425,39 @@
       "abilityText": "● A non-device unit you control on the battlefield may activate its Deploy ability one additional time.\n● Move one of your units to an empty cell in its line.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "A non-device unit you control on the battlefield may activate its Deploy ability one additional time.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_TARGET",
+              "details": {
+                "actionType": "RESET_DEPLOY",
+                "filter": "hasType_Unit_and_not_Device"
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Move one of your units to an empty cell in its line.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_UNIT_FOR_MOVE",
+              "details": {
+                "range": "line",
+                "filter": "isOwner"
+              }
+            }
+          ]
+        }
+      ]
     },
     "logisticsChain": {
       "name": "Logistics Chain",
@@ -1190,7 +1467,39 @@
       "abilityText": "● Score points in a diagonal. Gain +1 point for each of your cards with Support in that diagonal.\n● Score points in a diagonal. Draw 1 card for each of your cards with Support in that diagonal.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Score points in a diagonal. Gain +1 point for each of your cards with Support in that diagonal.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_DIAGONAL",
+              "details": {
+                "actionType": "SCORE_DIAGONAL",
+                "bonusType": "point_per_support"
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Score points in a diagonal. Draw 1 card for each of your cards with Support in that diagonal.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_DIAGONAL",
+              "details": {
+                "actionType": "SCORE_DIAGONAL",
+                "bonusType": "draw_per_support"
+              }
+            }
+          ]
+        }
+      ]
     },
     "quickResponseTeam": {
       "name": "Quick Response Team",
@@ -1200,7 +1509,39 @@
       "abilityText": "● Play a unit from your hand into an empty cell.\n● Search your deck for a unit card and put it into your hand. Then shuffle your deck.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Play a unit from your hand into an empty cell.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_TARGET",
+              "details": {
+                "actionType": "SELECT_HAND_FOR_DEPLOY",
+                "filter": "hasType_Unit"
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Search your deck for a unit card and put it into your hand. Then shuffle your deck.",
+          "steps": [
+            {
+              "action": "OPEN_MODAL",
+              "mode": "SEARCH_DECK",
+              "details": {
+                "filterType": "Unit",
+                "shuffleOnClose": true
+              }
+            }
+          ]
+        }
+      ]
     },
     "temporaryShelter": {
       "name": "Temporary Shelter",
@@ -1210,7 +1551,58 @@
       "abilityText": "● Place 1 Shield counter on one of your cards. Remove all Aim counters from that card.\n● Place 1 Shield counter on one of your cards. Move that card 1 or 2 cells.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Place 1 Shield counter on one of your cards. Remove all Aim counters from that card.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Shield",
+                "count": 1,
+                "targetOwnerId": "source",
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "GLOBAL_AUTO_APPLY",
+                "mode": null,
+                "details": {
+                  "customAction": "REMOVE_ALL_AIM_FROM_CONTEXT"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Place 1 Shield counter on one of your cards. Move that card 1 or 2 cells.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Shield",
+                "count": 1,
+                "targetOwnerId": "source",
+                "recordContext": true
+              },
+              "chainedAction": {
+                "action": "ENTER_MODE",
+                "mode": "SELECT_CELL",
+                "details": {
+                  "range": 2,
+                  "useContextCard": true
+                }
+              }
+            }
+          ]
+        }
+      ]
     },
     "enhancedInterrogation": {
       "name": "Enhanced Interrogation",
@@ -1220,7 +1612,52 @@
       "abilityText": "● Place 1 Aim counter on any card. Reveal 1 card from an opponent's hand for each of your Aim counters on the battlefield.\n● Place 1 Aim counter on any card. Move any card with your Aim counter 1 or 2 cells.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": ["DECK_BUILDER"]
+      "allowedPanels": ["DECK_BUILDER"],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Place 1 Aim counter on any card. Reveal 1 card from an opponent's hand for each of your Aim counters on the battlefield.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Aim", "count": 1 }
+            },
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": {
+                "tokenType": "Revealed",
+                "dynamicCount": { "factor": "Aim", "ownerId": "source" },
+                "onlyOpponents": true,
+                "onlyFaceDown": true,
+                "targetOwnerId": -1
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Place 1 Aim counter on any card. Move any card with your Aim counter 1 or 2 cells.",
+          "steps": [
+            {
+              "action": "CREATE_STACK",
+              "mode": null,
+              "details": { "tokenType": "Aim", "count": 1 }
+            },
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_UNIT_FOR_MOVE",
+              "details": {
+                "range": 2,
+                "filter": "hasCounterOwner_Aim"
+              }
+            }
+          ]
+        }
+      ]
     },
     "mobilization1": {
       "name": "Line Breach",
@@ -1230,7 +1667,23 @@
       "abilityText": "Gain points in a chosen line of the battlefield.",
       "types": ["Command"],
       "faction": "Command",
-      "allowedPanels": []
+      "allowedPanels": [],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Gain points in a chosen line of the battlefield.",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_LINE_START",
+              "details": {
+                "actionType": "SCORE_LINE"
+              }
+            }
+          ]
+        }
+      ]
     }
   },
 

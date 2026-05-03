@@ -555,6 +555,12 @@ export function applyAction(
       newState = handleRemoveCountersWithReward(newState, playerId, data)
       break
 
+    case 'CLEANUP_COMMAND':
+      // CRITICAL: Use data.playerId (command card owner) instead of playerId (local player)
+      // This fixes cleanup for command cards played by local player but owned by other players (e.g., dummy control)
+      newState = handleCleanupCommandAction(newState, data.playerId || playerId, data)
+      break
+
     case 'ADD_STATUS_TO_BOARD_CARD':
       newState = handleAddStatusToBoardCard(newState, playerId, data)
       break
@@ -2247,6 +2253,17 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
     ownerId: actualPlayerId  // CRITICAL: Set ownerId so command cards know which player owns them
   }
 
+  // Debug: Log announced card creation for command cards
+  if (announcedCard.deck === 'Command' || announcedCard.types?.includes('Command')) {
+    console.log('[handleAnnounceCard] Created announced command card:', {
+      id: announcedCard.id,
+      baseId: announcedCard.baseId,
+      hasABILITIES: !!(announcedCard as any).ABILITIES,
+      abilitiesCount: (announcedCard as any).ABILITIES?.length || 0,
+      ownerId: announcedCard.ownerId
+    })
+  }
+
   const newPlayers = state.players.map(p => {
     if (p.id === actualPlayerId) {
       return {
@@ -3083,7 +3100,9 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
 
   // Calculate amount from card power
   const amount = Math.max(0, card.power + (card.powerModifier || 0) + (card.bonusPower || 0))
-  const rewardOwnerId = sourceCard.ownerId || playerId
+  // CRITICAL: Use originalOwnerId for command card rewards (Tactical Maneuver, False Orders)
+  // sourceCard might be the selected unit, not the command card
+  const rewardOwnerId = data.originalOwnerId ?? sourceCard.ownerId ?? playerId
 
   if (rewardType === 'DRAW_MOVED_POWER' || rewardType === 'DRAW_EQUAL_POWER') {
     // Draw cards for the reward owner
@@ -3152,6 +3171,55 @@ function handleCleanupCommand(state: GameState, playerId: number, commandCard: C
   // No need to switch phase here - command goes to discard without changing phase
 
   return newState
+}
+
+/**
+ * Handle CLEANUP_COMMAND action - discard command card from showcase to discard
+ * This is the final step of all command cards
+ */
+function handleCleanupCommandAction(state: GameState, playerId: number, data: any): GameState {
+  const { cardId } = data || {}
+
+  if (!cardId) {
+    console.warn('[handleCleanupCommandAction] No cardId provided')
+    return state
+  }
+
+  // Find the player and their announced card
+  const player = state.players.find(p => p.id === playerId)
+  if (!player) {
+    console.warn('[handleCleanupCommandAction] Player not found:', playerId)
+    return state
+  }
+
+  const announcedCard = player.announcedCard
+  if (!announcedCard) {
+    console.warn('[handleCleanupCommandAction] No announced card for player:', playerId)
+    return state
+  }
+
+  console.log('[handleCleanupCommandAction] Discarding command card:', {
+    playerId,
+    cardId,
+    announcedCardId: announcedCard.id,
+    announcedCardName: announcedCard.name
+  })
+
+  // Move the announced card to discard
+  const newPlayers = state.players.map(p => {
+    if (p.id === playerId) {
+      const discard = [...(p.discard || []), announcedCard]
+      return {
+        ...p,
+        discard,
+        discardSize: discard.length,
+        announcedCard: null
+      }
+    }
+    return p
+  })
+
+  return { ...state, players: newPlayers }
 }
 
 /**

@@ -109,6 +109,7 @@ interface UseVisualEffectsProps {
   // Local refs
   gameStateRef: React.MutableRefObject<GameState>
   localPlayerIdRef: React.MutableRefObject<number | null>
+  targetingModeLocallyClearedRef: React.MutableRefObject<boolean>
 
   // State setters (accept union types for P2P compatibility)
   setLatestHighlight: React.Dispatch<React.SetStateAction<HighlightData | { row: number; col: number; color: string; duration?: number; timestamp: number } | null>>
@@ -130,6 +131,7 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     simpleGuest,
     gameStateRef,
     localPlayerIdRef,
+    targetingModeLocallyClearedRef,
     setLatestHighlight,
     setLatestFloatingTexts,
     setLatestNoTarget,
@@ -389,6 +391,14 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
       return
     }
 
+    // CRITICAL: Prevent race condition where old targetingMode updates arrive after clear
+    // If targetingMode was recently cleared locally, ignore remote updates
+    const currentTargetingMode = currentGameState.targetingMode
+    if (!currentTargetingMode && targetingModeClearRef.current > 0 && !isLocal) {
+      console.log('[useVisualEffects] setTargetingMode: Blocking restore of recently cleared mode')
+      return
+    }
+
     // CRITICAL: For command cards like Tactical Maneuver, chainedAction is in action.payload.chainedAction
     // For other abilities, it might be at action.chainedAction. Check both.
     const actualChainedAction = action.chainedAction || action.payload?.chainedAction
@@ -411,14 +421,25 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
 
     // CRITICAL: Check if targeting mode is already set with the same values
     // This prevents infinite loops when setTargetingMode is called repeatedly
-    const currentTargetingMode = currentGameState.targetingMode
     const isAlreadySet = currentTargetingMode &&
                          currentTargetingMode.playerId === playerId &&
                          currentTargetingMode.action?.mode === action.mode &&
                          currentTargetingMode.action?.type === action.type &&
-                         JSON.stringify(currentTargetingMode.handTargets) === JSON.stringify(preCalculatedHandTargets)
+                         JSON.stringify(currentTargetingMode.handTargets) === JSON.stringify(preCalculatedHandTargets) &&
+                         JSON.stringify(currentTargetingMode.boardTargets) === JSON.stringify(preCalculatedTargets)
+
+    console.log('[useVisualEffects] setTargetingMode:', {
+      playerId,
+      actionMode: action.mode,
+      actionType: action.type,
+      preCalculatedTargetsCount: preCalculatedTargets?.length || 0,
+      currentTargetingModeMode: currentTargetingMode?.action?.mode,
+      isAlreadySet,
+      localPlayerId,
+    })
 
     if (isAlreadySet) {
+      console.log('[useVisualEffects] setTargetingMode: Already set, returning early')
       return
     }
 
@@ -430,20 +451,37 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
       }
     })
 
+    // CRITICAL: Reset the clear timestamp when targetingMode is successfully set
+    // This allows future targetingMode updates to work normally
+    targetingModeClearRef.current = 0
+
+    console.log('[useVisualEffects] setTargetingMode: Local state updated, boardTargets:', targetingModeData.boardTargets)
+
     // Broadcast via SimpleHost if available (P2P mode)
     // CRITICAL: Broadcast if we are HOST OR if owner is DUMMY (to sync across all clients)
     // When setting targetingMode for dummy player, any player can broadcast to ensure sync
     const currentSimpleHost = getSimpleHost()
     const currentSimpleGuest = getSimpleGuest()
     const shouldBroadcast = currentSimpleHost && (localPlayerId === 1 || isOwnerDummy)
+
+    console.log('[useVisualEffects] setTargetingMode: Broadcast check:', {
+      hasSimpleHost: !!currentSimpleHost,
+      hasSimpleGuest: !!currentSimpleGuest,
+      localPlayerId,
+      isOwnerDummy,
+      shouldBroadcast,
+    })
+
     if (shouldBroadcast) {
       // CRITICAL: When HOST sets targeting mode, update SimpleHost state directly
       // This ensures targetingMode is included in state broadcasts to all clients
       // including the host itself (via notifyStateUpdate callback)
       if (localPlayerId === 1) {
+        console.log('[useVisualEffects] setTargetingMode: Calling host.setTargetingMode')
         currentSimpleHost.setTargetingMode(targetingModeData)
       } else {
         // Non-host player setting targeting mode for dummy player - broadcast via SimpleVisualEffects
+        console.log('[useVisualEffects] setTargetingMode: Broadcasting via SimpleVisualEffects')
         const effects = new SimpleVisualEffects(currentSimpleHost)
         effects.setTargetingMode(targetingModeData)
       }
@@ -451,8 +489,11 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
       // CRITICAL: Guests must send targetingMode to host for broadcast
       // This fixes abilities like Faber that require hand card targeting
       // SANITIZE: Remove non-serializable properties (functions) before sending
+      console.log('[useVisualEffects] setTargetingMode: Sending TARGETING_MODE to host')
       const sanitizedTargetingMode = sanitizeTargetingModeForP2P(targetingModeData)
       currentSimpleGuest.sendAction('TARGETING_MODE', sanitizedTargetingMode)
+    } else {
+      console.log('[useVisualEffects] setTargetingMode: No broadcast (not host, not guest)')
     }
   }, [getSimpleHost, getSimpleGuest, gameStateRef, setGameState])
 
@@ -462,11 +503,14 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
    * RULES:
    * 1. OWNER (ownerId === localPlayerId) can clear their own targetingMode
    * 2. HOST (localPlayerId === 1) can clear any targetingMode (controls gameState)
-   * 3. ANY PLAYER can clear targetingMode if the owner is a DUMMY player (dummies are controlled by all players)
-   * 4. When cleared, HOST broadcasts to all clients
-   * 5. GUEST clearing their own targeting mode sends action to HOST for broadcasting
+   * 3. ANY PLAYER can clear targeting mode if force=true (for right-click cancel)
+   * 4. ANY PLAYER can clear targetingMode if the owner is a DUMMY player (dummies are controlled by all players)
+   * 5. When cleared, HOST broadcasts to all clients
+   * 6. GUEST clearing their own targeting mode sends action to HOST for broadcasting
+   *
+   * @param force - If true, bypass ownership checks (used for right-click cancel)
    */
-  const clearTargetingMode = useCallback(() => {
+  const clearTargetingMode = useCallback((force: boolean = false) => {
     const currentGameState = gameStateRef.current
     const localPlayerId = currentGameState?.localPlayerId
     const targetingMode = currentGameState?.targetingMode
@@ -483,12 +527,16 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     const ownerPlayer = currentGameState?.players?.find(p => p.id === targetingMode.ownerId)
     const isOwnerDummy = ownerPlayer?.isDummy ?? false
 
-    // Only OWNER, HOST, or ANYONE (if owner is dummy) can clear targetingMode
-    if (!isOwner && !isHost && !isOwnerDummy) {
+    // Only OWNER, HOST, ANYONE (if force=true), or ANYONE (if owner is dummy) can clear targetingMode
+    if (!force && !isOwner && !isHost && !isOwnerDummy) {
       return
     }
 
-    // Clear local state
+    // CRITICAL: Set flag to prevent onStateUpdate from restoring targetingMode from host
+    targetingModeLocallyClearedRef.current = true
+    targetingModeClearRef.current = Date.now()
+
+    // Clear local state IMMEDIATELY (synchronous)
     setGameState((prev: any) => {
       return {
         ...prev,
@@ -499,26 +547,27 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     // Broadcast via SimpleHost if available (P2P mode)
     // CRITICAL: Broadcast if we are HOST OR if owner is DUMMY (to sync across all clients)
     // OR if we are the OWNER (guest clearing their own targeting mode - needs to notify host)
+    // OR if force=true (right-click cancel - needs to notify host)
     const currentSimpleHost = getSimpleHost()
     const currentSimpleGuest = getSimpleGuest()
 
-    if (currentSimpleHost && (isHost || isOwnerDummy)) {
+    if (currentSimpleHost && (isHost || isOwnerDummy || force)) {
       // CRITICAL: When HOST clears targeting mode, update SimpleHost state directly
       // This ensures the cleared targetingMode is reflected in state broadcasts
       if (isHost) {
         currentSimpleHost.clearTargetingMode()
       } else {
-        // Non-host player clearing targeting mode for dummy player - broadcast via SimpleVisualEffects
+        // Non-host player clearing targeting mode - broadcast via SimpleVisualEffects
         const effects = new SimpleVisualEffects(currentSimpleHost)
         effects.clearTargetingMode()
       }
-    } else if (isOwner && !isHost && currentSimpleGuest) {
-      // CRITICAL FIX: Guest clearing their own targeting mode
+    } else if ((isOwner || force) && !isHost && currentSimpleGuest) {
+      // CRITICAL FIX: Guest clearing targeting mode
       // Send action to host so host can broadcast to all clients
       // This ensures targeting mode is cleared for everyone, not just locally
       currentSimpleGuest.sendAction('CLEAR_TARGETING_MODE')
     }
-  }, [getSimpleHost, getSimpleGuest, gameStateRef, setGameState])
+  }, [getSimpleHost, getSimpleGuest, gameStateRef, setGameState, targetingModeLocallyClearedRef])
 
   return {
     triggerHighlight,

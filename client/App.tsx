@@ -45,7 +45,7 @@ import { DeckType } from './types'
 import { STATUS_ICONS, STATUS_DESCRIPTIONS, PLAYER_COLOR_RGB } from './constants'
 import { getCountersDatabase, fetchContentDatabase } from './content'
 import { validateTarget, calculateValidTargets, checkActionHasTargets } from '@shared/utils/targeting'
-import { getCommandAction } from '@server/utils/commandLogic'
+import { getCommandActionByOption, getCommandOptions, isCommandCard } from './utils/autoAbilities'
 import { createTargetingActionFromCursorStack, createTargetingActionFromAbilityMode, determineTargetingPlayerId } from './utils/targetingActionUtils'
 import { getTokenTargetingRules } from './utils/tokenTargeting'
 import { useLanguage } from './contexts/LanguageContext'
@@ -71,6 +71,8 @@ const AppInner = function AppInner() {
 
   // Declare ability state early (needed by useGameState)
   const [abilityMode, setAbilityMode] = useState<AbilityAction | null>(null)
+  // CRITICAL: Track pending command card that needs cleanup after abilityMode completes
+  const pendingCommandCleanupRef = useRef<{ card: Card; ownerId: number } | null>(null)
   // CRITICAL: Track pending chained actions to prevent race condition
   // When a chained action is being processed, the action queue should wait
   const pendingChainedActionRef = useRef<boolean>(false)
@@ -219,6 +221,15 @@ const AppInner = function AppInner() {
     tokensModalAnchor: null as { top: number; left: number } | null,
     countersModalAnchor: null as { top: number; left: number } | null,
   })
+
+  // Memoize command options to avoid recalculating on every render
+  // This prevents repeated getCommandOptions calls when commandModalCard is open
+  const commandOptionsCache = React.useMemo(() => {
+    if (!commandModalCard) return { baseId: null, options: [] }
+    const baseId = commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id
+    const options = getCommandOptions(baseId)
+    return { baseId, options }
+  }, [commandModalCard?.id, commandModalCard?.baseId])
 
   const [viewingDiscard, setViewingDiscard] = useState<{
     player: Player;
@@ -1378,28 +1389,35 @@ const AppInner = function AppInner() {
     // We've been waiting for this card - open the modal
     pendingCommandFromTokenPanelRef.current = null
 
-    const baseId = (card.baseId || card.id.split('_')[1] || card.id).toLowerCase()
-    const complexCommands = [
-      'overwatch', 'tacticalmaneuver', 'repositioning', 'inspiration',
-      'datainterception', 'falseorders', 'experimentalstimulants',
-      'logisticschain', 'quickresponseteam', 'temporaryshelter', 'enhancedinterrogation',
-    ]
+    // Note: baseId is already camelCase from database, don't convert to lowercase
+    const baseId = card.baseId || card.id.split('_')[1] || card.id
+    const commandOptions = getCommandOptions(baseId)
 
-    const isComplexCommand = complexCommands.some((id) => baseId.includes(id))
-
-    if (isComplexCommand && !commandModalCard) {
-      // Open modal for complex command
+    // Check if command has options using the new system
+    // CRITICAL: Don't reopen modal if actionQueue is active (still processing current command)
+    if (commandOptions.length > 0 && !commandModalCard && actionQueue.length === 0) {
+      // Command with options - open modal
       // CRITICAL: Use the card's actual owner, NOT localPlayerId
       // This fixes dummy player command activation where local player controls dummy's cards
       setCommandModalCard({ ...card, ownerId: card.ownerId ?? localPlayerId })
-    } else if (!isComplexCommand && !commandModalCard) {
-      // Simple command - execute directly
-      const actions = getCommandAction(card.id, -1, card as any, gameState as any, localPlayerId)
-      if (actions.length > 0) {
-        setActionQueue([
-          ...(actions as any),
-          { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: localPlayerId }, sourceCard: card },
-        ])
+    } else if (!commandModalCard) {
+      // Command without options (shouldn't happen with current data, but handle gracefully)
+      // Execute with first option if available
+      if (commandOptions.length === 1) {
+        const action = getCommandActionByOption(
+          baseId,
+          commandOptions[0].optionIndex,
+          { ...card, ownerId: card.ownerId ?? localPlayerId },
+          gameState,
+          card.ownerId ?? localPlayerId,
+          { row: -1, col: -1 }
+        )
+        if (action) {
+          setActionQueue([
+            action,
+            { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: localPlayerId }, sourceCard: card },
+          ])
+        }
       }
     }
   }, [gameState?.players, localPlayerId, commandModalCard, setCommandModalCard, setActionQueue])
@@ -1573,35 +1591,30 @@ const AppInner = function AppInner() {
     if (commandModalCard && !abilityMode && !cursorStack) {
       const player = gameState.players.find(p => p.id === commandModalCard.ownerId)
       if (player?.announcedCard?.id === commandModalCard.id) {
-        // Command is in announced zone, get its actions
-        const baseId = (commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id).toLowerCase()
-        const complexCommands = [
-          'overwatch',
-          'tacticalmaneuver',
-          'repositioning',
-          'inspiration',
-          'datainterception',
-          'falseorders',
-          'experimentalstimulants',
-          'logisticschain',
-          'quickresponseteam',
-          'temporaryshelter',
-          'enhancedinterrogation',
-        ]
+        // Use cached command options to avoid repeated database lookups
+        const { baseId, options: commandOptions } = commandOptionsCache
 
-        if (complexCommands.some(id => baseId.includes(id))) {
-          // For complex commands, we need to get the actions that will be available
+        if (commandOptions.length > 0) {
+          // For commands with options, calculate targets for ALL options
           const freshGameState = getFreshGameState ? getFreshGameState() : gameState
-          // Try option 0 (first option) to see what targets it needs
           try {
-            const optionActions = getCommandAction(commandModalCard.id, 0, commandModalCard as any, freshGameState as any, commandModalCard.ownerId!)
-            optionActions.forEach((action: any) => {
-              const targets = calculateValidTargets(action as any, freshGameState as any, commandModalCard.ownerId!, commandContext)
-              targets.forEach(t => {
-                if (!boardTargets.some(bt => bt.row === t.row && bt.col === t.col)) {
-                  boardTargets.push(t)
-                }
-              })
+            commandOptions.forEach((option) => {
+              const action = getCommandActionByOption(
+                baseId,
+                option.optionIndex,
+                commandModalCard,
+                freshGameState,
+                commandModalCard.ownerId!,
+                { row: -1, col: -1 }
+              )
+              if (action) {
+                const targets = calculateValidTargets(action as any, freshGameState as any, commandModalCard.ownerId!, commandContext)
+                targets.forEach(t => {
+                  if (!boardTargets.some(bt => bt.row === t.row && bt.col === t.col)) {
+                    boardTargets.push(t)
+                  }
+                })
+              }
             })
           } catch (e) {
             // If we can't calculate targets, that's ok - modal is open for selection
@@ -2092,7 +2105,8 @@ const AppInner = function AppInner() {
           for (let c = 0; c < boardSize; c++) {
             const cell = gameState.board[r]?.[c]
             const card = cell?.card
-            if (card?.statuses?.some((s: CardStatus) => s.type === 'LastPlayed' && s.addedByPlayerId === activePlayerId)) {
+            // Check that card belongs to active player AND has LastPlayed status from that player
+            if (card?.ownerId === activePlayerId && card?.statuses?.some((s: CardStatus) => s.type === 'LastPlayed' && s.addedByPlayerId === activePlayerId)) {
               lastPlayedCoords = { row: r, col: c }
               found = true
               break
@@ -2217,6 +2231,16 @@ const AppInner = function AppInner() {
     // wait for it to complete before processing the next action in the queue
     if (actionQueue.length > 0 && !abilityMode && !cursorStack && !pendingChainedActionRef.current) {
       const nextAction = actionQueue[0]
+      // DEBUG: Log actionQueue processing
+      console.log('[actionQueue] Processing action:', {
+        actionQueueLength: actionQueue.length,
+        actionType: nextAction.type,
+        actionMode: nextAction.mode,
+        hasCleanupCommand: nextAction.payload?.cleanupCommand,
+        abilityMode,
+        cursorStack,
+        pendingChainedAction: pendingChainedActionRef.current
+      })
       setActionQueue(prev => prev.slice(1))
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
@@ -2261,18 +2285,122 @@ const AppInner = function AppInner() {
               count += cell.card.statuses.filter(s => s.type === 'Aim' && s.addedByPlayerId === ownerId).length
             }
           }))
+          // CRITICAL: Also count Aim token from commandContext.lastPlacedToken
+          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+          const justPlaced = commandContext.lastPlacedToken
+          if (justPlaced && justPlaced.tokenType === 'Aim' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
+            // Check if this token is already counted on the board (it might not be synced yet)
+            const alreadyCounted = gameState.board.some(row =>
+              row.some(cell => {
+                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
+                  // Count Aim tokens at this location
+                  const aimCount = cell.card.statuses.filter(s =>
+                    s.type === 'Aim' &&
+                    s.addedByPlayerId === ownerId
+                  ).length
+                  // If we found the card, check if we're at the right coords
+                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
+                    return aimCount > 0
+                  }
+                }
+                return false
+              })
+            )
+            if (!alreadyCounted) {
+              console.log('[calculateDynamicCount] Adding lastPlaced Aim token to count:', {
+                tokenType: justPlaced.tokenType,
+                boardCoords: justPlaced.boardCoords,
+                addedByPlayerId: justPlaced.addedByPlayerId,
+                countBefore: count,
+                countAfter: count + 1
+              })
+              count += 1
+            }
+          }
         } else if (factor === 'Exploit') {
           gameState.board.forEach(row => row.forEach(cell => {
             if (cell.card?.statuses) {
               count += cell.card.statuses.filter(s => s.type === 'Exploit' && s.addedByPlayerId === ownerId).length
             }
           }))
+          // CRITICAL: Also count Exploit token from commandContext.lastPlacedToken
+          const justPlaced = commandContext.lastPlacedToken
+          if (justPlaced && justPlaced.tokenType === 'Exploit' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
+            const alreadyCounted = gameState.board.some(row =>
+              row.some(cell => {
+                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
+                  const exploitCount = cell.card.statuses.filter(s =>
+                    s.type === 'Exploit' &&
+                    s.addedByPlayerId === ownerId
+                  ).length
+                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
+                    return exploitCount > 0
+                  }
+                }
+                return false
+              })
+            )
+            if (!alreadyCounted) {
+              console.log('[calculateDynamicCount] Adding lastPlaced Exploit token to count:', {
+                tokenType: justPlaced.tokenType,
+                boardCoords: justPlaced.boardCoords,
+                addedByPlayerId: justPlaced.addedByPlayerId,
+                countBefore: count,
+                countAfter: count + 1
+              })
+              count += 1
+            }
+          }
         }
         return count
       }
 
       if (actionToProcess.type === 'GLOBAL_AUTO_APPLY') {
         if (actionToProcess.payload?.cleanupCommand) {
+          // CRITICAL: Don't cleanup if there's an active ability mode (AUTO_STEPS, SELECT_TARGET, etc.)
+          // The cleanup will be triggered after the ability mode completes
+          if (abilityMode) {
+            console.log('[cleanupCommand] Skipping cleanup - abilityMode is active:', abilityMode.mode)
+            // CRITICAL: Move cleanup to the end of the queue instead of removing it
+            // This ensures it will be processed after abilityMode clears
+            const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
+            if (cleanupSkipCount < 5) {
+              ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
+              setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
+              return
+            } else {
+              console.log('[cleanupCommand] Processing cleanup after 5 skips (abilityMode not clearing)')
+            }
+          }
+
+          // CRITICAL: Also check if there are still pending non-cleanup actions in the queue
+          // This prevents cleanup from executing before command card abilities complete
+          // EXCEPTION: Allow cleanup if all remaining actions are from chained actions (detected by missing cleanupCommand in original queue)
+          const remainingQueue = actionQueue.slice(1)
+          const hasPendingActions = remainingQueue.some(a =>
+            !a.payload?.cleanupCommand && // Not a cleanup action
+            (a.type !== 'GLOBAL_AUTO_APPLY' || !a.payload?.cleanupCommand)
+          )
+          // CRITICAL: If cleanup has been skipped multiple times (5+), just process it to prevent infinite loop
+          const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
+          if (hasPendingActions && cleanupSkipCount < 5) {
+            console.log('[cleanupCommand] Skipping cleanup - pending actions in queue:', remainingQueue.map(a => ({ type: a.type, mode: a.mode, hasCleanup: !!a.payload?.cleanupCommand })))
+            // Move cleanup to the end of the queue and increment skip count on the actual action object
+            ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
+            setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
+            return
+          }
+          if (cleanupSkipCount >= 5) {
+            console.log('[cleanupCommand] Processing cleanup after 5 skips (breaking potential infinite loop)')
+          }
+
+          console.log('[cleanupCommand] Processing cleanupCommand:', {
+            targetPlayerId: actionToProcess.payload.ownerId,
+            sourceCardOwnerId: actionToProcess.sourceCard?.ownerId,
+            localPlayerId,
+            actionQueueLength: actionQueue.length
+          })
+
           // Robust cleanup: determine target player and use current announced card
           const targetPlayerId = actionToProcess.payload.ownerId !== undefined
             ? actionToProcess.payload.ownerId
@@ -2283,7 +2411,14 @@ const AppInner = function AppInner() {
             // Prefer the card actually sitting in the announced slot
             const cardToDiscard = playerState?.announcedCard || actionToProcess.sourceCard
 
+            console.log('[cleanupCommand] Player and card:', {
+              playerState,
+              cardToDiscard,
+              announcedCard: playerState?.announcedCard
+            })
+
             if (cardToDiscard && cardToDiscard.id !== 'dummy') {
+              console.log('[cleanupCommand] Moving card to discard')
               moveItem({
                 card: cardToDiscard,
                 source: 'announced',
@@ -2292,7 +2427,13 @@ const AppInner = function AppInner() {
                 target: 'discard',
                 playerId: targetPlayerId,
               })
+            } else {
+              console.log('[cleanupCommand] No valid card to discard')
             }
+            // CRITICAL: Return after cleanupCommand to prevent double-processing
+            return
+          } else {
+            console.log('[cleanupCommand] No targetPlayerId found')
           }
         } else if (actionToProcess.payload?.dynamicResource) {
           const { type, factor, baseCount, ownerId: payloadOwnerId } = actionToProcess.payload.dynamicResource
@@ -2314,19 +2455,40 @@ const AppInner = function AppInner() {
               updatePlayerScoreWithLogging(activePlayerId, score)
             }
           }
-        } else if (actionToProcess.payload?.contextReward && actionToProcess.sourceCard) {
+        } else if (actionToProcess.payload?.contextReward && (actionToProcess.sourceCard || actionToProcess.originalOwnerId || actionToProcess.sourceCoords)) {
           // This is handled inside useAppAbilities now for better access to board state
           // but we call executeAction to trigger it
+          // CRITICAL: contextReward (DRAW_MOVED_POWER, SCORE_MOVED_POWER) doesn't require sourceCard
+          // It finds the moved card via commandContext and uses its power
+          console.log('[actionQueue] Processing contextReward action:', {
+            contextReward: actionToProcess.payload.contextReward,
+            sourceCardName: actionToProcess.sourceCard?.name || '(no sourceCard)',
+            sourceCoords: actionToProcess.sourceCoords,
+            originalOwnerId: actionToProcess.originalOwnerId,
+            _tempContextId: actionToProcess.payload._tempContextId,
+            _sourceCoordsBeforeMove: actionToProcess.payload._sourceCoordsBeforeMove
+          })
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else if (actionToProcess.payload?.customAction && actionToProcess.sourceCard) {
           // Handle custom actions like FINN_SCORING
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
+        } else {
+          // CRITICAL: Unknown GLOBAL_AUTO_APPLY action - don't let it fall through to executeAction
+          // This prevents cleanupCommand and other special actions from being routed incorrectly
+          console.warn('[actionQueue] Unknown GLOBAL_AUTO_APPLY action, skipping:', actionToProcess)
+          setActionQueue(prev => prev.slice(1))
+          return
         }
       } else if (actionToProcess.type === 'CREATE_STACK' ||
                  actionToProcess.type === 'OPEN_MODAL' ||
-                 actionToProcess.type === 'ENTER_MODE') {
+                 actionToProcess.type === 'ENTER_MODE' ||
+                 // Note: GLOBAL_AUTO_APPLY is now handled above with explicit return
+                 // actionToProcess.type === 'GLOBAL_AUTO_APPLY' ||
+                 actionToProcess.type === 'CONTINUE_AUTO_STEPS') {
         // DIRECTLY EXECUTE the action from the queue.
         // This ensures setTargetingMode is called for hand targeting effects
+        // Also handles GLOBAL_AUTO_APPLY (e.g., False Orders Stun x2) correctly
+        // Also handles CONTINUE_AUTO_STEPS for command card cleanup
         executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
       } else {
         // Ensure we check targets before blindly setting mode from queue
@@ -2591,13 +2753,14 @@ const AppInner = function AppInner() {
     if (playMode) {
       setPlayMode(null)
     }
-    // Clear targeting mode for all players
-    clearTargetingMode()
+    // CRITICAL: Force clear targeting mode with bypass for right-click cancel
+    // This ensures targetingMode is cleared immediately regardless of ownership
+    clearTargetingMode(true)
     // Clear valid hand targets
     setValidHandTargets([])
     // Clear valid board targets
     setValidTargets([])
-  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState])
+  }, [abilityMode, cursorStack, playMode, clearTargetingMode])
 
   const handleDoubleClickHandCard = (player: Player, card: Card, cardIndex: number) => {
     if (abilityMode || cursorStack) {

@@ -3,11 +3,12 @@
  * @file A generic, reusable tooltip component and the specific card content renderer.
  */
 
-import React, { useRef, useLayoutEffect, useState } from 'react'
+import React, { useRef, useLayoutEffect, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { Card } from '@/types'
 import { formatAbilityText } from '@/utils/textFormatters'
 import { useLanguage } from '@/contexts/LanguageContext'
+import { getCommandOptions } from '@/utils/autoAbilities'
 
 /**
  * Props for the Tooltip component.
@@ -26,6 +27,29 @@ interface TooltipProps {
 export const Tooltip: React.FC<TooltipProps> = ({ x, y, children }) => {
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ top: y + 20, left: x + 20 })
+  const [isVisible, setIsVisible] = useState(true)
+  const isDraggingRef = useRef(false)
+
+  // Hide tooltip when drag starts anywhere on the page
+  // Keep hidden until drag ends - prevent ANY tooltips during drag
+  useEffect(() => {
+    const handleDragStart = () => {
+      isDraggingRef.current = true
+      setIsVisible(false)
+    }
+
+    const handleDragEnd = () => {
+      isDraggingRef.current = false
+    }
+
+    window.addEventListener('dragstart', handleDragStart)
+    window.addEventListener('dragend', handleDragEnd)
+
+    return () => {
+      window.removeEventListener('dragstart', handleDragStart)
+      window.removeEventListener('dragend', handleDragEnd)
+    }
+  }, [])
 
   // useLayoutEffect ensures that the position is calculated after render but before the browser paints,
   // preventing visual flickering.
@@ -62,6 +86,11 @@ export const Tooltip: React.FC<TooltipProps> = ({ x, y, children }) => {
       setPosition({ top: newTop, left: newLeft })
     }
   }, [x, y, children]) // Rerun when content changes, as its size might change.
+
+  // Don't show tooltip if hidden OR if drag is in progress (anywhere on page)
+  if (!isVisible || isDraggingRef.current) {
+    return null
+  }
 
   return createPortal(
     <div
@@ -133,6 +162,36 @@ export const CardTooltipContent: React.FC<CardTooltipContentProps> = ({ card, st
   // Constraint set to 35 characters to trigger wrapping
   const isLongContent = abilityLen > 35 || statusLen > 35
 
+  // Render ability text with grayed-out unselected options for command cards
+  // Note: baseId is already camelCase from database, don't convert to lowercase
+  const renderAbilityText = (card: Card, displayAbility: string, abilityKeywords: any) => {
+    const baseId = card.baseId || card.id.split('_')[1] || card.id
+    const commandOptions = getCommandOptions(baseId)
+
+    // If this is a command card with selectedOption, show options with selected one highlighted
+    if (commandOptions.length > 0 && card.selectedOption) {
+      return (
+        <div className="flex flex-col gap-vu-sm">
+          {commandOptions.map((option) => {
+            const isSelected = option.optionIndex === card.selectedOption
+            return (
+              <div
+                key={option.optionIndex}
+                className={isSelected ? 'text-gray-200 font-medium' : 'text-gray-600'}
+              >
+                <span className="mr-vu-min">{option.optionIndex}.</span>
+                {formatAbilityText(option.optionText, abilityKeywords)}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+
+    // Default formatting for non-command cards or command cards without selection
+    return formatAbilityText(displayAbility, abilityKeywords)
+  }
+
   // Default base classes
   const baseClasses = className || 'relative flex flex-col text-left w-max max-w-[90vw]'
 
@@ -179,7 +238,7 @@ export const CardTooltipContent: React.FC<CardTooltipContentProps> = ({ card, st
         {/* Ability Text */}
         {displayAbility && (
           <div className="text-gray-200 leading-snug text-vu-14">
-            {formatAbilityText(displayAbility, abilityKeywords)}
+            {renderAbilityText(card, displayAbility, abilityKeywords)}
           </div>
         )}
 

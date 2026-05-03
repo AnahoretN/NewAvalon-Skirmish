@@ -84,6 +84,10 @@ export interface Card {
   allowedPanels?: string[]; // Controls visibility in UI panels (e.g. 'DECK_BUILDER', 'TOKEN_PANEL')
   enteredThisTurn?: boolean; // True if the card entered the battlefield during the current turn
   isPlaceholder?: boolean; // True if this is a placeholder card (for WebRTC optimization)
+  // For command cards: the selected option index (1-based) when player chooses an option
+  selectedOption?: number;
+  // ABILITIES array from contentDatabase.json (used for both units and command cards)
+  ABILITIES?: any[];
 }
 
 /**
@@ -394,7 +398,12 @@ export interface CommandContext {
     sourceOwnerId?: number; // Owner of the ability source (e.g., Centurion's owner for BUFF_LINES_FROM_CONTEXT)
     selectedHandCard?: { playerId: number, cardIndex: number }; // For Quick Response Team
     pendingCommandCard?: { sourceCoords: { row: number; col: number }; isDeployAbility?: boolean; readyStatusToRemove?: string }; // For Quick Response Team - marks command as used when play completes
-    lastPlacedToken?: { boardCoords: { row: number; col: number } }; // For Data Interception - tracks token placement
+    lastPlacedToken?: {
+        boardCoords: { row: number; col: number };
+        cardId: string;
+        tokenType: string;
+        addedByPlayerId: number;
+    }; // For Data Interception, Overwatch - tracks token placement for dynamic count calculations
 }
 
 /**
@@ -408,6 +417,12 @@ export interface CounterSelectionData {
     sourceCoords?: {row: number, col: number};
     isDeployAbility?: boolean;
     readyStatusToRemove?: string[];
+    // AUTO_STEPS context for continuing to cleanup step after modal confirmation
+    autoStepsContext?: {
+      steps: any[];
+      currentStepIndex: number;
+      abilityAction: AbilityAction;
+    };
 }
 
 /**

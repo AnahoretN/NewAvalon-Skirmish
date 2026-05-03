@@ -109,6 +109,9 @@ export {
   buildFilterFromString,
   buildDetailsFromContent,
   buildActionFromContentAbility,
+  getCommandOptions,
+  isCommandCard,
+  getCommandActionByOption,
   type ContentAbility,
   type TriggerEventType,
 } from './contentAbilities.js'

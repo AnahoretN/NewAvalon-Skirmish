@@ -20,7 +20,7 @@ export const checkAdj = (r1: number, c1: number, r2: number, c2: number): boolea
 /**
  * Get the activation type from ability mode string
  */
-export type AbilityActivationType = 'deploy' | 'setup' | 'commit' | 'pass'
+export type AbilityActivationType = 'deploy' | 'setup' | 'commit' | 'pass' | 'command'
 
 /**
  * Interface for card ability definition

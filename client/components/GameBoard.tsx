@@ -89,6 +89,7 @@ interface GridCellProps {
   targetingModePlayerId?: number;
   targetingModeOriginalOwnerId?: number; // The command card owner (for correct highlight color)
   targetingModeActionMode?: string | undefined; // The mode from targetingMode.action.mode
+  targetingMode?: TargetingModeData | null; // Full targeting mode object for checking if active
   showNoTarget?: boolean;
   disableActiveHighlights?: boolean;
   preserveDeployAbilities?: boolean;
@@ -114,6 +115,7 @@ const GridCell = memo((props: GridCellProps) => {
       currentPhase, activePlayerId, onCardClick, onEmptyCellClick,
       isValidTarget, isTargetingModeValidTarget, targetingModePlayerId,
       targetingModeOriginalOwnerId, targetingModeActionMode,
+      targetingMode,
       showNoTarget, disableActiveHighlights, preserveDeployAbilities,
       abilitySourceCoords, abilityCheckKey, abilityMode, scoringLines, activePlayerIdForScoring,
       setCursorStack: _setCursorStack, onCancelAllModes,
@@ -247,14 +249,25 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
       }, [setHoveredCell])
 
       const handleContextMenu = useCallback((e: React.MouseEvent) => {
+        // Prevent browser context menu
+        e.preventDefault()
+        e.stopPropagation()
+
+        // Check if any mode was active BEFORE cancelling (to prevent context menu from opening)
+        const wasCursorStackActive = !!cursorStack
+        const wasPlayModeActive = !!playMode
+        const wasAbilityModeActive = !!abilityMode
+        const wasTargetingModeActive = !!targetingMode || !!targetingModeActionMode
+
         // Right-click cancels all targeting/ability modes for all players
         if (onCancelAllModes) {
           onCancelAllModes()
         }
-        if (!cell.card) {
+        // Only open context menu if no mode was active
+        if (!cell.card && !wasCursorStackActive && !wasPlayModeActive && !wasAbilityModeActive && !wasTargetingModeActive) {
           openContextMenu(e, 'emptyBoardCell', { boardCoords: { row, col } })
         }
-      }, [cell.card, openContextMenu, row, col, onCancelAllModes])
+      }, [cell.card, openContextMenu, row, col, onCancelAllModes, cursorStack, playMode, abilityMode, targetingMode, targetingModeActionMode])
 
       const handleDoubleClick = useCallback(() => {
         if (!cell.card) {
@@ -286,14 +299,25 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
       }, [cell.card, setDraggedItem, row, col, cursorStack, activeGridSize])
 
       const handleCardContextMenu = useCallback((e: React.MouseEvent) => {
+        // Prevent browser context menu
+        e.preventDefault()
+        e.stopPropagation()
+
+        // Check if any mode was active BEFORE cancelling (to prevent context menu from opening)
+        const wasCursorStackActive = !!cursorStack
+        const wasPlayModeActive = !!playMode
+        const wasAbilityModeActive = !!abilityMode
+        const wasTargetingModeActive = !!targetingMode || !!targetingModeActionMode
+
         // Right-click cancels all targeting/ability modes for all players
         if (onCancelAllModes) {
           onCancelAllModes()
         }
-        if (cell.card) {
+        // Only open context menu if no mode was active
+        if (cell.card && !wasCursorStackActive && !wasPlayModeActive && !wasAbilityModeActive && !wasTargetingModeActive) {
           openContextMenu(e, 'boardItem', { card: cell.card, boardCoords: { row, col } })
         }
-      }, [cell.card, openContextMenu, row, col, onCancelAllModes])
+      }, [cell.card, openContextMenu, row, col, onCancelAllModes, cursorStack, playMode, abilityMode, targetingMode, targetingModeActionMode])
 
       const handleCardDoubleClick = useCallback((e: React.MouseEvent) => {
         e.stopPropagation()
@@ -487,7 +511,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
 
           {/* Targeting mode highlight - shows valid targets from another player's targeting mode */}
           {/* NOT shown for line selection modes - they have their own highlight below */}
-          {isTargetingModeValidTarget && (targetingModePlayerId || targetingModeOriginalOwnerId) && !isLineSelectionMode(targetingModeActionMode) && (() => {
+          {(isTargetingModeValidTarget || isValidTarget) && (targetingModePlayerId || targetingModeOriginalOwnerId) && !isLineSelectionMode(targetingModeActionMode) && !isLineSelectionMode(abilityMode?.mode) && (() => {
             // Prefer originalOwnerId (command card owner) for highlight color, fallback to playerId
             const highlightOwnerId = targetingModeOriginalOwnerId ?? targetingModePlayerId
             const targetingPlayerColor = highlightOwnerId !== undefined ? playerColorMap.get(highlightOwnerId) : undefined
@@ -870,12 +894,31 @@ export const GameBoard = memo<GameBoardProps>(({
     // Get target coords from ability mode for line selection
     const lineSelectionTargetCoords = isLineSelectionModeAbility ? (abilityMode?.payload?.targetCoords || abilityMode?.payload?.firstCoords) : null
 
-    // A cell is valid if it's in GLOBAL targeting mode targets OR line selection mode
+    // A cell is valid if it's in GLOBAL targeting mode targets OR line selection mode OR ability mode targets
     // NO LOCAL effects - all highlights must be synchronized across all players
     const isValidTargetCell = (row: number, col: number) => {
       // For line selection modes (including SELECT_DIAGONAL), skip GLOBAL targeting mode check
       // because these modes have their own highlighting logic
       if (!isLineSelectionModeAbility && targetingModeTargetsSet.has(`${row}-${col}`)) {
+        return true
+      }
+
+      // CRITICAL: Also check abilityMode for AUTO_STEPS compatibility
+      // In AUTO_STEPS, abilityMode is set with the mode, and targetingMode is set with boardTargets
+      // This ensures highlights work correctly for modes like SELECT_UNIT_FOR_MOVE
+      if (!isLineSelectionModeAbility && abilityMode?.mode &&
+          (abilityMode.mode === 'SELECT_TARGET' ||
+           abilityMode.mode === 'SELECT_UNIT_FOR_MOVE' ||
+           abilityMode.mode === 'SWAP_POSITIONS' ||
+           abilityMode.mode === 'SWAP_ADJACENT' ||
+           abilityMode.mode === 'PUSH' ||
+           abilityMode.mode === 'PUSH_MOVE' ||
+           abilityMode.mode === 'PATROL_MOVE' ||
+           abilityMode.mode === 'RIOT_PUSH' ||
+           abilityMode.mode === 'REVEAL_ENEMY' ||
+           abilityMode.mode === 'TRANSFER_STATUS_SELECT' ||
+           abilityMode.mode === 'CREATE_STACK') &&
+          targetingModeTargetsSet.has(`${row}-${col}`)) {
         return true
       }
 
@@ -1031,6 +1074,7 @@ export const GameBoard = memo<GameBoardProps>(({
                 targetingModePlayerId={targetingMode?.playerId}
                 targetingModeOriginalOwnerId={targetingMode?.originalOwnerId}
                 targetingModeActionMode={targetingModeActionMode}
+                targetingMode={targetingMode}
                 showNoTarget={isNoTarget}
                 disableActiveHighlights={disableActiveHighlights}
                 preserveDeployAbilities={preserveDeployAbilities}

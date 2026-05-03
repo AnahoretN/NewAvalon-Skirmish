@@ -39,7 +39,7 @@ export interface TriggerEffect {
  * Raw ability structure from contentDatabase.json
  */
 export interface ContentAbility {
-  type: 'deploy' | 'setup' | 'commit' | 'pass'
+  type: 'deploy' | 'setup' | 'commit' | 'pass' | 'command'
   supportRequired?: boolean
   action?: string
   mode?: string | null
@@ -50,6 +50,10 @@ export interface ContentAbility {
     mode?: string | null
     details: Record<string, any>
   }>
+  // For command cards: option index (1-based)
+  optionIndex?: number
+  // For command cards: the text shown in the modal for this option
+  optionText?: string
 }
 
 /**
@@ -143,6 +147,15 @@ export function buildFilterFromString(
     return (_target: Card) => _target.types?.includes(typeName) === true
   }
 
+  // hasType_Type1_and_not_Type2 - composite filter
+  if (filter.startsWith('hasType_') && filter.includes('_and_not_')) {
+    const parts = filter.replace('hasType_', '').split('_and_not_')
+    const hasType = parts[0]
+    const notType = parts[1]
+    return (_target: Card) =>
+      _target.types?.includes(hasType) === true && !_target.types?.includes(notType)
+  }
+
   return undefined
 }
 
@@ -208,6 +221,23 @@ export function buildDetailsFromContent(
     }
   }
 
+  // Handle dynamicCount with ownerId: "source" - replace with actual ownerId
+  if (details.dynamicCount && details.dynamicCount.ownerId === 'source') {
+    details.dynamicCount = {
+      ...details.dynamicCount,
+      ownerId: ownerId
+    }
+  }
+
+  // Handle dynamicResource with factor using "source" - replace with actual ownerId
+  if (details.dynamicResource && details.dynamicResource.factor) {
+    // For command cards, the factor references token type, and we need to ensure
+    // the ownerId is properly set
+    if (details.dynamicCount && details.dynamicCount.ownerId === 'source') {
+      details.dynamicCount.ownerId = ownerId
+    }
+  }
+
   return details
 }
 
@@ -228,23 +258,46 @@ export function buildActionFromContentAbility(
 
     // Determine which ready status to remove based on ability type
     let readyStatusToRemove: string | undefined
+    let isDeployAbility = false
     if (ability.type === 'deploy') {
       readyStatusToRemove = READY_STATUS.DEPLOY
+      isDeployAbility = true
     } else if (ability.type === 'setup') {
       readyStatusToRemove = READY_STATUS.SETUP
     } else if (ability.type === 'commit') {
       readyStatusToRemove = READY_STATUS.COMMIT
+    } else if (ability.type === 'command') {
+      // Command cards don't use ready statuses
+      readyStatusToRemove = undefined
+      isDeployAbility = false
     }
 
-    return {
+    // CRITICAL: For command cards, add a final cleanup step to discard the card
+    // This ensures all command cards are discarded after their steps complete
+    let stepsWithCleanup = ability.steps
+    if (ability.type === 'command') {
+      stepsWithCleanup = [
+        ...ability.steps,
+        {
+          action: 'GLOBAL_AUTO_APPLY',
+          mode: null,
+          details: {
+            customAction: 'CLEANUP_COMMAND',
+            isFinalStep: true
+          }
+        }
+      ]
+    }
+
+    const action: AbilityAction = {
       type: 'ENTER_MODE',
       mode: 'AUTO_STEPS',
       sourceCard: card,
       sourceCoords: coords,
       readyStatusToRemove,
-      isDeployAbility: ability.type === 'deploy',
+      isDeployAbility,
       payload: {
-        steps: ability.steps,
+        steps: stepsWithCleanup,
         currentStepIndex: 0,
         // Store original ability type for ready status tracking
         originalType: ability.type,
@@ -252,6 +305,14 @@ export function buildActionFromContentAbility(
         supportRequired: ability.supportRequired
       }
     } as AbilityAction
+
+    // For command cards, add optionIndex and mark as command
+    if (ability.type === 'command' && ability.optionIndex !== undefined) {
+      ;(action.payload as any).optionIndex = ability.optionIndex
+      ;(action.payload as any).isCommand = true
+    }
+
+    return action
   }
 
   // Handle single action abilities
@@ -273,6 +334,11 @@ export function buildActionFromContentAbility(
         mustBeAdjacentToSource = true
       }
 
+      // CRITICAL: Convert "source" string to actual owner ID for targetOwnerId and excludeOwnerId
+      // This fixes Temporary Shelter and other commands that use "source" placeholder
+      const targetOwnerId = details.targetOwnerId === 'source' ? ownerId : details.targetOwnerId
+      const excludeOwnerId = details.excludeOwnerId === 'source' ? ownerId : details.excludeOwnerId
+
       return {
         type: 'CREATE_STACK',
         tokenType: details.tokenType,
@@ -288,7 +354,19 @@ export function buildActionFromContentAbility(
         sourceCard: card,
         placeAllAtOnce: details.placeAllAtOnce,
         onlyFaceDown: details.onlyFaceDown,
-        excludeOwnerId: details.excludeOwnerId,
+        // CRITICAL: Include targetOwnerId and convert "source" to actual ID
+        targetOwnerId,
+        excludeOwnerId,
+        targetType: details.targetType,
+        // Pass through other properties needed for chained actions
+        recordContext: details.recordContext,
+        // CRITICAL: chainedAction is at ability level, not in details
+        // Convert "action" to "type" and "details" to "payload" for compatibility
+        chainedAction: (ability as any).chainedAction ? {
+          ...(ability as any).chainedAction,
+          type: (ability as any).chainedAction.action || (ability as any).chainedAction.type,
+          payload: (ability as any).chainedAction.details || (ability as any).chainedAction.payload,
+        } : undefined,
       } as AbilityAction
     }
 
@@ -697,4 +775,75 @@ export function buildActionFromContentAbility(
       console.warn(`Unknown action type: ${actionType}`)
       return null
   }
+}
+
+/**
+ * Get command options for a command card.
+ * Returns array of { optionIndex, optionText } for display in modal.
+ *
+ * @param baseId - The baseId of the command card
+ * @param getCardAbilitiesFn - Function to get abilities from content database
+ * @returns Array of command options or empty array if not a command card
+ */
+export function getCommandOptions(
+  baseId: string,
+  getCardAbilitiesFn: (baseId: string) => ContentAbility[]
+): Array<{ optionIndex: number; optionText: string }> {
+  const abilities = getCardAbilitiesFn(baseId)
+  const commandAbilities = abilities.filter(a => a.type === 'command' && a.optionIndex !== undefined && a.optionText)
+  return commandAbilities
+    .map(a => ({
+      optionIndex: a.optionIndex!,
+      optionText: a.optionText || ''
+    }))
+    .sort((a, b) => a.optionIndex - b.optionIndex)
+}
+
+/**
+ * Check if a card is a command card (has command abilities).
+ *
+ * @param baseId - The baseId of the card
+ * @param getCardAbilitiesFn - Function to get abilities from content database
+ * @returns true if card has command abilities
+ */
+export function isCommandCard(
+  baseId: string,
+  getCardAbilitiesFn: (baseId: string) => ContentAbility[]
+): boolean {
+  const abilities = getCardAbilitiesFn(baseId)
+  return abilities.some(a => a.type === 'command')
+}
+
+/**
+ * Get command ability action by option index.
+ *
+ * @param baseId - The baseId of the command card
+ * @param optionIndex - The selected option index (1-based)
+ * @param card - The card object
+ * @param gameState - Current game state
+ * @param ownerId - The owner player ID
+ * @param coords - Board coordinates (not used for commands from hand, use {-1, -1})
+ * @param getCardAbilitiesFn - Function to get abilities from content database
+ * @returns AbilityAction or null if not found
+ */
+export function getCommandActionByOption(
+  baseId: string,
+  optionIndex: number,
+  card: Card,
+  gameState: GameState,
+  ownerId: number,
+  coords: { row: number; col: number },
+  getCardAbilitiesFn: (baseId: string) => ContentAbility[]
+): AbilityAction | null {
+  const abilities = getCardAbilitiesFn(baseId)
+  const commandAbility = abilities.find(
+    a => a.type === 'command' && a.optionIndex === optionIndex
+  )
+
+  if (!commandAbility) {
+    console.warn(`[getCommandActionByOption] Command option ${optionIndex} not found for card ${baseId}`)
+    return null
+  }
+
+  return buildActionFromContentAbility(commandAbility, card, gameState, ownerId, coords)
 }

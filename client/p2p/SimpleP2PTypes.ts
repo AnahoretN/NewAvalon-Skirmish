@@ -79,6 +79,7 @@ export type ActionType =
 
   // Global actions
   | 'GLOBAL_AUTO_APPLY'
+  | 'CLEANUP_COMMAND'  // Final step for command cards - discard from showcase to discard
 
   // Game settings
   | 'SET_GAME_MODE'

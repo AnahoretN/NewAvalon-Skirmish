@@ -87,6 +87,10 @@ export interface Card {
   abilityUsedInPhase?: number; // Stores the phase index where the ability was last used
   deployAbilityConsumed?: boolean; // True if the card's Deploy ability has already been used while on the board
   deployAttempted?: boolean; // True if Deploy was attempted but had no targets (allows skipping to phase abilities)
+  // For command cards: the selected option index (1-based) when player chooses an option
+  selectedOption?: number;
+  // ABILITIES array from contentDatabase.json (used for both units and command cards)
+  ABILITIES?: any[];
 }
 
 /**

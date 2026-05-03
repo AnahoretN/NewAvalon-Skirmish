@@ -455,3 +455,61 @@ export const canActivateAbility = (
 
   return false
 }
+
+// ============================================================================
+// Command Card Utilities
+// ============================================================================
+
+import { getCommandOptions as getCommandOptionsShared, isCommandCard as isCommandCardShared, getCommandActionByOption as getCommandActionByOptionShared, type ContentAbility } from '@shared/abilities/index.js'
+import { getCardAbilities } from '@/content'
+
+/**
+ * Get command options for a command card from contentDatabase.
+ * Returns array of { optionIndex, optionText } for display in modal.
+ *
+ * @param baseId - The baseId of the command card
+ * @returns Array of command options or empty array if not a command card
+ */
+export function getCommandOptions(baseId: string): Array<{ optionIndex: number; optionText: string }> {
+  return getCommandOptionsShared(baseId, getCardAbilities as (baseId: string) => ContentAbility[])
+}
+
+/**
+ * Check if a card is a command card (has command abilities).
+ *
+ * @param baseId - The baseId of the card
+ * @returns true if card has command abilities
+ */
+export function isCommandCard(baseId: string): boolean {
+  return isCommandCardShared(baseId, getCardAbilities as (baseId: string) => ContentAbility[])
+}
+
+/**
+ * Get command ability action by option index.
+ *
+ * @param baseId - The baseId of the command card
+ * @param optionIndex - The selected option index (1-based)
+ * @param card - The card object
+ * @param gameState - Current game state
+ * @param ownerId - The owner player ID
+ * @param coords - Board coordinates (use {-1, -1} for commands from hand)
+ * @returns AbilityAction or null if not found
+ */
+export function getCommandActionByOption(
+  baseId: string,
+  optionIndex: number,
+  card: Card,
+  gameState: GameState,
+  ownerId: number,
+  coords: { row: number; col: number }
+): AbilityAction | null {
+  return getCommandActionByOptionShared(
+    baseId,
+    optionIndex,
+    card,
+    gameState,
+    ownerId,
+    coords,
+    getCardAbilities as (baseId: string) => ContentAbility[]
+  )
+}
