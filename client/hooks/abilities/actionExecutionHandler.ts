@@ -231,7 +231,7 @@ function handleContinueAutoSteps(
   sourceCoords: { row: number; col: number },
   props: ActionHandlerProps
 ): void {
-  const { gameState, setAbilityMode, setTargetingMode, commandContext, localPlayerId, markAbilityUsed, addBoardCardStatus, modifyBoardCardPower } = props
+  const { gameState, getFreshGameState, setAbilityMode, setTargetingMode, commandContext, localPlayerId, markAbilityUsed, addBoardCardStatus, modifyBoardCardPower, handleActionExecution } = props
 
   const autoStepsContext = action.payload?._autoStepsContext
   if (!autoStepsContext || !autoStepsContext.steps) {
@@ -275,12 +275,14 @@ function handleContinueAutoSteps(
       setAbilityMode,
       markAbilityUsed,
       gameState,
+      getFreshGameState,
       commandContext,
       setTargetingMode,
       calculateValidTargets,
       localPlayerId,
       addBoardCardStatus,
       modifyBoardCardPower,
+      handleActionExecution,
     } as any,
     sourceCoords,
     currentStepIndex,
@@ -297,6 +299,11 @@ function handleGlobalAutoApply(
   props: ActionHandlerProps
 ): void {
   const { gameState, getFreshGameState, localPlayerId, commandContext, markAbilityUsed, triggerNoTarget, triggerFloatingText, updatePlayerScore, applyGlobalEffect, addBoardCardStatus, removeStatusByType, handleActionExecution: execAction, sendAction } = props
+
+  // CRITICAL: Use _commandContext from payload if available (from AUTO_STEPS)
+  // This ensures that lastPlacedToken from stepContext is available
+  const effectiveCommandContext = (action.payload as any)?._commandContext || commandContext
+
   // P2P: Token placement on moved card (False Orders Option 1: Stun x2)
   // Send to host for processing since client can't directly modify shared state
   if (action.payload?.contextCardId && action.payload?.tokenType && action.payload?.count && sendAction) {
@@ -368,8 +375,8 @@ function handleGlobalAutoApply(
   if (action.payload?.customAction === 'REMOVE_ALL_AIM_FROM_CONTEXT') {
     if (action.sourceCoords && action.sourceCoords.row >= 0) {
       removeStatusByType(action.sourceCoords, 'Aim')
-    } else if (commandContext.lastMovedCardCoords) {
-      removeStatusByType(commandContext.lastMovedCardCoords, 'Aim')
+    } else if (effectiveCommandContext.lastMovedCardCoords) {
+      removeStatusByType(effectiveCommandContext.lastMovedCardCoords, 'Aim')
     }
     return
   }
@@ -449,8 +456,118 @@ function handleGlobalAutoApply(
     return
   }
 
+  // Handle dynamicResource (Overwatch Option 2: draw cards for each token)
+  if (action.payload?.dynamicResource) {
+    const { type, factor, baseCount = 0 } = action.payload.dynamicResource
+    if (type === 'draw') {
+      const ownerId = action.sourceCard?.ownerId ?? localPlayerId ?? 0
+      const freshState = getFreshGameState()
+      let tokenCount = 0
+
+      // Count tokens of specified type owned by this player on battlefield
+      freshState.board.forEach((row: any[]) => {
+        row.forEach((cell: any) => {
+          if (cell.card?.statuses) {
+            const matchingTokens = cell.card.statuses.filter((s: any) =>
+              s.type === factor && s.addedByPlayerId === ownerId
+            )
+            tokenCount += matchingTokens.length
+          }
+        })
+      })
+
+      const totalToDraw = baseCount + tokenCount
+
+      console.log('dynamicResource draw:', { factor, baseCount, tokenCount, totalToDraw, ownerId })
+
+      if (totalToDraw > 0 && props.drawCardsBatch) {
+        // Draw cards using batch method
+        props.drawCardsBatch(ownerId, totalToDraw)
+
+        // Show floating text
+        triggerFloatingText([{
+          row: sourceCoords.row,
+          col: sourceCoords.col,
+          text: `+${totalToDraw}`,
+          playerId: ownerId,
+        }])
+      }
+
+      markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+
+      // CRITICAL: Continue AUTO_STEPS if this was part of a multi-step command
+      // This ensures CLEANUP_COMMAND is executed after dynamicResource step
+      const autoStepsContext = (action.payload as any)?._autoStepsContext
+      if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
+        console.log('[dynamicResource] Continuing AUTO_STEPS after draw:', {
+          currentStepIndex: autoStepsContext.currentStepIndex,
+          totalSteps: autoStepsContext.steps.length,
+        })
+        // Create CONTINUE_AUTO_STEPS action to advance to the next step
+        const continueAction: AbilityAction = {
+          type: 'CONTINUE_AUTO_STEPS',
+          mode: 'AUTO_STEPS',
+          payload: {
+            _autoStepsContext: {
+              ...autoStepsContext,
+              currentStepIndex: autoStepsContext.currentStepIndex + 1,
+            },
+          },
+          sourceCard: action.sourceCard,
+          sourceCoords: action.sourceCoords || sourceCoords,
+        }
+        if (props.setActionQueue) {
+          setTimeout(() => {
+            props.setActionQueue((prev: any[]) => [...prev, continueAction])
+          }, 0)
+        } else {
+          setTimeout(() => {
+            execAction(continueAction, sourceCoords)
+          }, 100)
+        }
+      }
+
+      // Execute chained action if present (for non-AUTO_STEPS commands)
+      if (action.chainedAction && !autoStepsContext) {
+        setTimeout(() => {
+          if (props.pendingChainedActionRef) {
+            props.pendingChainedActionRef.current = true
+          }
+          execAction(action.chainedAction!, sourceCoords)
+          setTimeout(() => {
+            if (props.pendingChainedActionRef) {
+              props.pendingChainedActionRef.current = false
+            }
+          }, 50)
+        }, 500)
+      }
+      return
+    }
+  }
+
   // Note: SACRIFICE_AND_BUFF_LINES (Centurion Commit) and CENSOR_SWAP (Censor Commit)
   // are now handled in modeHandlers.ts, not here
+
+  // Handle CLEANUP_COMMAND customAction - send command card to discard after all steps complete
+  // This is added automatically by contentAbilities.ts for all command cards
+  if (action.payload?.customAction === 'CLEANUP_COMMAND') {
+    console.log('[handleGlobalAutoApply] CLEANUP_COMMAND triggered, discarding command card')
+    markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+
+    // Send to discard pile
+    const ownerId = action.sourceCard?.ownerId ?? localPlayerId ?? 0
+    const cardId = action.sourceCard?.id
+
+    console.log('[handleGlobalAutoApply] Sending CLEANUP_COMMAND:', { ownerId, cardId, sourceCard: action.sourceCard })
+
+    if (props.sendAction) {
+      // Use CLEANUP_COMMAND action for P2P mode (requires cardId)
+      props.sendAction('CLEANUP_COMMAND', { playerId: ownerId, cardId })
+    } else if (props.moveAnnouncedToDiscard) {
+      props.moveAnnouncedToDiscard(ownerId)
+    }
+    return
+  }
 
   // Handle cleanupCommand - send command card to discard after all steps complete
   if (action.payload?.cleanupCommand && action.payload.card && props.sendAction) {
@@ -490,8 +607,8 @@ function handleGlobalAutoApply(
         targets.push(action.sourceCoords)
       } else if (sourceCoords && sourceCoords.row >= 0) {
         targets.push(sourceCoords)
-      } else if (commandContext.lastMovedCardCoords) {
-        targets.push(commandContext.lastMovedCardCoords)
+      } else if (effectiveCommandContext.lastMovedCardCoords) {
+        targets.push(effectiveCommandContext.lastMovedCardCoords)
       }
     }
 
@@ -748,6 +865,38 @@ function handleCreateStack(
               }
             }, 50)
           }
+        }
+
+        // CRITICAL: Continue AUTO_STEPS even when no hand targets found
+        // This ensures CLEANUP_COMMAND is executed after the step completes
+        const autoStepsContext = (action.payload as any)?._autoStepsContext
+        if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
+          console.log('[No hand targets specific] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
+            currentStepIndex: autoStepsContext.currentStepIndex,
+            totalSteps: autoStepsContext.steps.length,
+          })
+          // Create CONTINUE_AUTO_STEPS action to advance to the next step
+          const continueAction: AbilityAction = {
+            type: 'CONTINUE_AUTO_STEPS',
+            mode: 'AUTO_STEPS',
+            payload: {
+              _autoStepsContext: {
+                ...autoStepsContext,
+                currentStepIndex: autoStepsContext.currentStepIndex + 1,
+              },
+            },
+            sourceCard: action.sourceCard,
+            sourceCoords: action.sourceCoords || sourceCoords,
+          }
+          if (props.setActionQueue) {
+            setTimeout(() => {
+              props.setActionQueue((prev: any[]) => [...prev, continueAction])
+            }, 100)
+          } else if (execAction) {
+            setTimeout(() => {
+              execAction(continueAction, sourceCoords)
+            }, 100)
+          }
         } else if (action.readyStatusToRemove) {
           markAbilityUsed(action.sourceCoords || sourceCoords, action.isDeployAbility, false, action.readyStatusToRemove)
         }
@@ -936,6 +1085,38 @@ function handleCreateStack(
               props.pendingChainedActionRef.current = false
             }
           }, 50)
+        }
+
+        // CRITICAL: Continue AUTO_STEPS even when no hand targets found
+        // This ensures CLEANUP_COMMAND is executed after the step completes
+        const autoStepsContext = (action.payload as any)?._autoStepsContext
+        if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
+          console.log('[No hand targets] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
+            currentStepIndex: autoStepsContext.currentStepIndex,
+            totalSteps: autoStepsContext.steps.length,
+          })
+          // Create CONTINUE_AUTO_STEPS action to advance to the next step
+          const continueAction: AbilityAction = {
+            type: 'CONTINUE_AUTO_STEPS',
+            mode: 'AUTO_STEPS',
+            payload: {
+              _autoStepsContext: {
+                ...autoStepsContext,
+                currentStepIndex: autoStepsContext.currentStepIndex + 1,
+              },
+            },
+            sourceCard: action.sourceCard,
+            sourceCoords: action.sourceCoords || sourceCoords,
+          }
+          if (props.setActionQueue) {
+            setTimeout(() => {
+              props.setActionQueue((prev: any[]) => [...prev, continueAction])
+            }, 100)
+          } else if (execAction) {
+            setTimeout(() => {
+              execAction(continueAction, sourceCoords)
+            }, 100)
+          }
         } else if (action.readyStatusToRemove) {
           markAbilityUsed(action.sourceCoords || sourceCoords, action.isDeployAbility, false, action.readyStatusToRemove)
         }
@@ -1539,6 +1720,95 @@ function handleEnterMode(
     if (steps && steps.length > 0) {
       const firstStep = steps[0]
 
+      // CRITICAL: CREATE_STACK always requires user interaction, even with mode: null
+      // Set up token cursor stack and targeting mode for CREATE_STACK as first step
+      if (firstStep.action === 'CREATE_STACK') {
+        const ownerId = getSafePlayerId(action, localPlayerId)
+        const mustBeInLineWithSource = firstStep.mode === 'LINE_TARGET' ? true : undefined
+        const mustBeAdjacentToSource = firstStep.mode === 'ADJACENT_TARGET' ? true : undefined
+
+        const stackAction: AbilityAction = {
+          type: 'CREATE_STACK',
+          tokenType: firstStep.details?.tokenType,
+          count: firstStep.details?.count || 1,
+          mustBeInLineWithSource,
+          mustBeAdjacentToSource,
+          onlyOpponents: firstStep.details?.onlyOpponents,
+          onlyFaceDown: firstStep.details?.onlyFaceDown,
+          targetOwnerId: firstStep.details?.targetOwnerId,
+          excludeOwnerId: firstStep.details?.excludeOwnerId,
+          sourceCard: action.sourceCard,
+          sourceCoords: action.sourceCoords,
+          isDeployAbility: action.isDeployAbility,
+          readyStatusToRemove: action.readyStatusToRemove,
+          payload: {
+            ...firstStep.details,
+            _autoStepsContext: {
+              steps: steps,
+              currentStepIndex: 1,
+              originalType: action.payload?.originalType,
+              supportRequired: action.payload?.supportRequired,
+              readyStatusToRemove: action.readyStatusToRemove
+            }
+          }
+        }
+        handleCreateStack(stackAction, sourceCoords, props)
+
+        // Also set abilityMode to SELECT_TARGET so handleSelectTargetWithToken
+        // is called when target is clicked, which handles AUTO_STEPS continuation
+        const selectTargetAction: AbilityAction = {
+          type: 'ENTER_MODE',
+          mode: 'SELECT_TARGET',
+          sourceCard: action.sourceCard,
+          sourceCoords: action.sourceCoords,
+          isDeployAbility: action.isDeployAbility,
+          readyStatusToRemove: action.readyStatusToRemove,
+          payload: {
+            ...firstStep.details,
+            actionType: firstStep.action,
+            tokenType: firstStep.details?.tokenType,
+            count: firstStep.details?.count || 1,
+            mustBeInLineWithSource,
+            mustBeAdjacentToSource,
+            filter: firstStep.details?.filter,
+            _autoStepsContext: {
+              steps: steps,
+              currentStepIndex: 1,
+              originalType: action.payload?.originalType,
+              supportRequired: action.payload?.supportRequired,
+              readyStatusToRemove: action.readyStatusToRemove
+            }
+          }
+        }
+        const targets = calculateValidTargets(selectTargetAction, gameState, ownerId, commandContext)
+
+        // If no valid targets for CREATE_STACK, skip this step
+        if (targets.length === 0) {
+          props.clearTargetingMode?.()
+          // If this was the only step, mark ability as used and clear ability mode
+          if (steps.length === 1) {
+            markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+            setAbilityMode(null)
+          } else {
+            // Continue to next step
+            const updatedAction = {
+              ...action,
+              payload: {
+                ...action.payload,
+                currentStepIndex: 1
+              }
+            }
+            setTimeout(() => {
+              handleEnterMode(updatedAction, sourceCoords, props)
+            }, 50)
+          }
+          return
+        }
+
+        setTargetingMode(selectTargetAction, ownerId, sourceCoords, targets, commandContext)
+        return
+      }
+
       // If first step is instant (no mode), execute it immediately
       if (!firstStep.mode) {
         // Use the universal instant step handler
@@ -1570,7 +1840,95 @@ function handleEnterMode(
 
         const nextStep = steps[nextStepIndex]
 
-        // If next step is also instant, execute it recursively
+        // CRITICAL: CREATE_STACK always requires user interaction, even with mode: null
+        // Set up token cursor stack and targeting mode for CREATE_STACK as next step
+        if (nextStep.action === 'CREATE_STACK') {
+          const mustBeInLineWithSource = nextStep.mode === 'LINE_TARGET' ? true : undefined
+          const mustBeAdjacentToSource = nextStep.mode === 'ADJACENT_TARGET' ? true : undefined
+
+          const stackAction: AbilityAction = {
+            type: 'CREATE_STACK',
+            tokenType: nextStep.details?.tokenType,
+            count: nextStep.details?.count || 1,
+            mustBeInLineWithSource,
+            mustBeAdjacentToSource,
+            onlyOpponents: nextStep.details?.onlyOpponents,
+            onlyFaceDown: nextStep.details?.onlyFaceDown,
+            targetOwnerId: nextStep.details?.targetOwnerId,
+            excludeOwnerId: nextStep.details?.excludeOwnerId,
+            sourceCard: action.sourceCard,
+            sourceCoords: action.sourceCoords,
+            isDeployAbility: action.isDeployAbility,
+            readyStatusToRemove: action.readyStatusToRemove,
+            payload: {
+              ...nextStep.details,
+              _autoStepsContext: {
+                steps: steps,
+                currentStepIndex: nextStepIndex + 1,
+                originalType: action.payload?.originalType,
+                supportRequired: action.payload?.supportRequired,
+                readyStatusToRemove: action.readyStatusToRemove
+              }
+            }
+          }
+          handleCreateStack(stackAction, sourceCoords, props)
+
+          // Also set abilityMode to SELECT_TARGET so handleSelectTargetWithToken
+          // is called when target is clicked, which handles AUTO_STEPS continuation
+          const selectTargetAction: AbilityAction = {
+            type: 'ENTER_MODE',
+            mode: 'SELECT_TARGET',
+            sourceCard: action.sourceCard,
+            sourceCoords: action.sourceCoords,
+            isDeployAbility: action.isDeployAbility,
+            readyStatusToRemove: action.readyStatusToRemove,
+            payload: {
+              ...nextStep.details,
+              actionType: nextStep.action,
+              tokenType: nextStep.details?.tokenType,
+              count: nextStep.details?.count || 1,
+              mustBeInLineWithSource,
+              mustBeAdjacentToSource,
+              filter: nextStep.details?.filter,
+              _autoStepsContext: {
+                steps: steps,
+                currentStepIndex: nextStepIndex + 1,
+                originalType: action.payload?.originalType,
+                supportRequired: action.payload?.supportRequired,
+                readyStatusToRemove: action.readyStatusToRemove
+              }
+            }
+          }
+          const targets = calculateValidTargets(selectTargetAction, gameState, ownerId, commandContext)
+
+          // If no valid targets for CREATE_STACK, skip this step
+          if (targets.length === 0) {
+            props.clearTargetingMode?.()
+            // If this was the last step, mark ability as used and clear ability mode
+            if (nextStepIndex + 1 >= steps.length) {
+              markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+              setAbilityMode(null)
+            } else {
+              // Continue to next step
+              const updatedAction = {
+                ...action,
+                payload: {
+                  ...action.payload,
+                  currentStepIndex: nextStepIndex + 1
+                }
+              }
+              setTimeout(() => {
+                handleEnterMode(updatedAction, sourceCoords, props)
+              }, 50)
+            }
+            return
+          }
+
+          setTargetingMode(selectTargetAction, ownerId, sourceCoords, targets, commandContext)
+          return
+        }
+
+        // If next step is also instant (no mode), execute it recursively
         if (!nextStep.mode) {
           const updatedAction = {
             ...action,

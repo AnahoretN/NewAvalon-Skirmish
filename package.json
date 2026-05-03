@@ -1,6 +1,6 @@
 {
   "name": "new-avalon-skirmish",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "A virtual tabletop for the New Avalon: Skirmish card game with WebRTC P2P support.",
   "type": "module",
   "homepage": "https://github.com/AnahoretN/NewAvalon-Skirmish",

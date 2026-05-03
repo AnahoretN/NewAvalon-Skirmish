@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-05-03
+
+### Fixed
+- **Overwatch Command**: Fixed both options now working correctly
+  - Option 1: Fixed command card not discarding after revealing cards
+  - Option 2: Fixed draw cards mechanic now properly counts Aim tokens
+  - Added CLEANUP_COMMAND handling for proper command discard flow
+  - Added dynamicResource processing for draw effects
+  - Fixed AUTO_STEPS continuation when no hand targets available
+
+- **Ability Execution**: Fixed `handleActionExecution is not a function` error
+  - Added missing props to `handleContinueAutoSteps` function
+  - Added `getFreshGameState` and `handleActionExecution` to props
+
 ## [0.3.4] - 2026-04-25
 
 ### Added
