@@ -41,6 +41,7 @@ export interface EmptyCellClickProps {
   scoreDiagonal?: (r1: number, c1: number, r2: number, c2: number, pid: number, bonusType?: 'point_per_support' | 'draw_per_support') => void
   openContextMenu: (e: React.MouseEvent, type: string, data: any) => void
   triggerDeckSelection: (playerId: number, selectedByPlayerId: number) => void
+  setViewingDiscard?: React.Dispatch<React.SetStateAction<any>>
   isWebRTCMode?: boolean
   setActionQueue?: React.Dispatch<React.SetStateAction<AbilityAction[]>>
   // CRITICAL: Props needed for AUTO_STEPS continuation (Logistics Chain, etc.)

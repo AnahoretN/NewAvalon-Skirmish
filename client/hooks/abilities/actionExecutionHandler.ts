@@ -7,6 +7,7 @@
 
 import type { AbilityAction, GameState, CommandContext, DragItem } from '@/types'
 import { checkActionHasTargets, calculateValidTargets, calculateHandTargets } from '@shared/utils/targeting'
+import { buildFilterFromString } from '@shared/abilities/contentAbilities.js'
 import { TIMING } from '@/utils/common'
 import { createTokenCursorStack } from '@/utils/tokenTargeting'
 import { executeInstantAutoStep, advanceToNextStepWithCoords, type AutoStep } from './modeHandlers.js'
@@ -46,6 +47,7 @@ export interface ActionHandlerProps {
   resetDeployStatus: (coords: {row: number; col: number}) => void
   updatePlayerScore: (playerId: number, delta: number) => void
   triggerFloatingText: (data: any) => void
+  triggerDeckSelection: (playerId: number, selectedByPlayerId: number) => void
   setCounterSelectionData: React.Dispatch<React.SetStateAction<any>>
   setViewingDiscard: React.Dispatch<React.SetStateAction<any>>
   validTargets?: {row: number, col: number}[]
@@ -2586,6 +2588,74 @@ function handleEnterMode(
           return
         }
 
+        // Special handling for OPEN_MODAL as first step (Quick Response Team option 2, etc.)
+        if (firstStep.action === 'OPEN_MODAL' && firstStep.mode === 'SEARCH_DECK') {
+          console.log('[handleEnterMode] OPEN_MODAL SEARCH_DECK step:', {
+            filterType: firstStep.details?.filterType,
+            shuffleOnClose: firstStep.details?.shuffleOnClose,
+          })
+
+          // Set abilityMode with AUTO_STEPS context for continuation after modal closes
+          const modalAction: AbilityAction = {
+            type: 'ENTER_MODE',
+            mode: 'SEARCH_DECK',
+            sourceCard: action.sourceCard,
+            sourceCoords: action.sourceCoords,
+            isDeployAbility: action.isDeployAbility,
+            readyStatusToRemove: action.readyStatusToRemove,
+            payload: {
+              ...firstStep.details,
+              _autoStepsContext: {
+                steps: steps,
+                currentStepIndex: 1,
+                originalType: action.payload?.originalType,
+                supportRequired: action.payload?.supportRequired,
+                readyStatusToRemove: action.readyStatusToRemove,
+                commandCardId: action.payload?.commandCardId || action.sourceCard?.id
+              }
+            }
+          }
+          setAbilityMode(modalAction)
+
+          // Open the deck view modal with pickConfig
+          const sourceOwnerId = action.sourceCard?.ownerId ?? ownerId
+          const player = gameState.players.find(p => p.id === sourceOwnerId)
+          if (player && props.setViewingDiscard) {
+            const autoStepsContext = {
+              steps: steps,
+              currentStepIndex: 1,
+              originalType: action.payload?.originalType,
+              supportRequired: action.payload?.supportRequired,
+              readyStatusToRemove: action.readyStatusToRemove,
+              commandCardId: action.payload?.commandCardId || action.sourceCard?.id,
+              // Store additional info for AUTO_STEPS continuation
+              sourceCoords: action.sourceCoords,
+              isDeployAbility: action.isDeployAbility,
+            }
+            props.setViewingDiscard({
+              player,
+              isDeckView: true,
+              pickConfig: {
+                filterType: firstStep.details?.filterType || 'Unit',
+                action: 'recover', // Default action for deck search
+                isDeck: true
+              },
+              shuffleOnClose: firstStep.details?.shuffleOnClose,
+              // Store AUTO_STEPS context for continuation after card selection
+              _autoStepsContext: autoStepsContext,
+              sourceCard: action.sourceCard,
+              sourceCoords: action.sourceCoords,
+              isDeployAbility: action.isDeployAbility,
+              readyStatusToRemove: action.readyStatusToRemove
+            })
+            // Trigger deck selection effect
+            if (props.triggerDeckSelection) {
+              props.triggerDeckSelection(player.id, gameState.activePlayerId ?? ownerId)
+            }
+          }
+          return
+        }
+
         // Default handling for other interactive first steps
         // CRITICAL: Normalize LINE_TARGET and ADJACENT_TARGET to SELECT_TARGET
         const normalizedMode = (firstStep.mode === "LINE_TARGET" || firstStep.mode === "ADJACENT_TARGET")
@@ -2649,8 +2719,45 @@ function handleEnterMode(
         // Calculate targets for the interactive mode
         const targets = calculateValidTargets(stepAction, gameState, ownerId, commandContext)
 
-        // If no valid targets, skip this step and check if there are more steps
-        if (targets.length === 0) {
+        // CRITICAL: Handle hand-only actions (SELECT_HAND_FOR_DEPLOY, etc.)
+        // These return empty board targets but need hand targets calculated
+        const isHandOnlyAction = stepAction.payload?.actionType === 'SELECT_HAND_FOR_DEPLOY' ||
+                                stepAction.payload?.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_SPAWN' ||
+                                stepAction.payload?.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN' ||
+                                stepAction.payload?.actionType === 'LUCIUS_SETUP' ||
+                                stepAction.payload?.handOnly
+
+        let handTargets: {playerId: number, cardIndex: number}[] = []
+
+        if (isHandOnlyAction) {
+          // Calculate valid hand targets for this action
+          const sourceOwnerId = stepAction.sourceCard?.ownerId ?? ownerId
+          const player = gameState.players.find(p => p.id === sourceOwnerId)
+
+          if (player && player.hand) {
+            // Build filter function from string if needed
+            let filterFn = stepAction.payload.filter
+            if (typeof filterFn !== 'function' && typeof filterFn === 'string') {
+              filterFn = buildFilterFromString(filterFn, sourceOwnerId, sourceCoords || { row: 0, col: 0 })
+            }
+
+            // Find all cards in hand that pass the filter
+            for (let i = 0; i < player.hand.length; i++) {
+              const card = player.hand[i]
+              if (filterFn) {
+                if (filterFn(card)) {
+                  handTargets.push({ playerId: player.id, cardIndex: i })
+                }
+              } else {
+                // No filter means all cards are valid
+                handTargets.push({ playerId: player.id, cardIndex: i })
+              }
+            }
+          }
+        }
+
+        // If no valid targets (board or hand), skip this step
+        if (targets.length === 0 && handTargets.length === 0) {
           props.clearTargetingMode?.()
           // If this was the only step, mark ability as used and clear ability mode
           if (steps.length === 1) {
@@ -2660,7 +2767,7 @@ function handleEnterMode(
           return
         }
 
-        setTargetingMode(stepAction, ownerId, sourceCoords, targets, commandContext)
+        setTargetingMode(stepAction, ownerId, sourceCoords, targets, commandContext, handTargets)
       }
     } else {
       setAbilityMode(action)

@@ -26,6 +26,15 @@ export function generateGameId(): string {
 }
 
 /**
+ * Generate a unique card instance ID
+ * Combines baseId, playerId, and random suffix for uniqueness
+ */
+function generateCardInstanceId(baseId: string, playerId: number, instanceIndex: number): string {
+  const randomSuffix = Math.random().toString(36).substring(2, 8)
+  return `${baseId}_p${playerId}_${instanceIndex}_${randomSuffix}`
+}
+
+/**
  * Create a shuffled deck for a player
  */
 export function createDeck(deckType: DeckType, playerId: number, playerName: string): Card[] {
@@ -59,7 +68,18 @@ export function createDeck(deckType: DeckType, playerId: number, playerName: str
     })
   }
 
-  const deckWithOwner = [...deck].map(card => ({ ...card, ownerId: playerId, ownerName: playerName }))
+  // Create cards with unique instance IDs to prevent conflicts between players
+  const deckWithOwner = [...deck].map((card, index) => {
+    const baseId = card.baseId || card.id
+    const uniqueId = generateCardInstanceId(baseId, playerId, index)
+    return {
+      ...card,
+      id: uniqueId,
+      baseId: baseId, // Store original baseId for lookups
+      ownerId: playerId,
+      ownerName: playerName
+    }
+  })
   return shuffleDeck(deckWithOwner)
 }
 

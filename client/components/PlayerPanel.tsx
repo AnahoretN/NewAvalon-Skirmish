@@ -213,7 +213,12 @@ const DropZone: React.FC<{ onDrop: () => void, className?: string, isOverClassNa
       }}
       onDragLeave={(e) => {
         e.stopPropagation()
-        setIsOver(false)
+        // Only clear if we're actually leaving this zone (not entering a child element)
+        const relatedTarget = e.relatedTarget as Element
+        const currentTarget = e.currentTarget
+        if (!relatedTarget || !currentTarget.contains(relatedTarget)) {
+          setIsOver(false)
+        }
       }}
       onDrop={(e) => {
         e.preventDefault()
@@ -1485,7 +1490,7 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                     }}
                     onDragOver={(e) => {
                       e.preventDefault()
-                      e.stopPropagation()
+                      // Don't stop propagation - let parent handlers also receive the event
                     }}
                     onDrop={(e) => {
                       e.preventDefault()

@@ -1523,6 +1523,13 @@
                 "actionType": "SELECT_HAND_FOR_DEPLOY",
                 "filter": "hasType_Unit"
               }
+            },
+            {
+              "action": "GLOBAL_AUTO_APPLY",
+              "mode": null,
+              "details": {
+                "customAction": "CLEANUP_COMMAND"
+              }
             }
           ]
         },
@@ -1537,6 +1544,13 @@
               "details": {
                 "filterType": "Unit",
                 "shuffleOnClose": true
+              }
+            },
+            {
+              "action": "GLOBAL_AUTO_APPLY",
+              "mode": null,
+              "details": {
+                "customAction": "CLEANUP_COMMAND"
               }
             }
           ]

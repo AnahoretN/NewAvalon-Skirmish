@@ -9,6 +9,7 @@ import { TIMING } from '@/utils/common'
 import { validateTarget } from '@shared/utils/targeting'
 import { READY_STATUS } from '@shared/abilities/readySystem.js'
 import { hasReadyStatus } from '@shared/abilities/readySystem.js'
+import { buildFilterFromString } from '@shared/abilities/contentAbilities.js'
 import { flushSync } from 'react-dom'
 
  
@@ -210,13 +211,21 @@ export function handleHandCardClick(
     // Trigger hand card selection effect visible to all players via WebSocket (before any filtering)
     triggerHandCardSelection(player.id, cardIndex, gameState.activePlayerId ?? localPlayerId ?? 1)
 
+    // Convert filter string to function if needed (for Quick Response Team, Faber, etc.)
+    // The filter from contentDatabase.json is a string like "hasType_Unit" that needs conversion
+    let filterFn = payload.filter
+    if (typeof filterFn !== 'function' && typeof filterFn === 'string') {
+      const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
+      filterFn = buildFilterFromString(filterFn, sourceOwnerId, sourceCoords || { row: 0, col: 0 })
+    }
+
     // SELECT_HAND_FOR_DEPLOY (Quick Response Team)
     if (payload.actionType === 'SELECT_HAND_FOR_DEPLOY') {
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
 
-      // Store command card info to mark as used when play completes
+      // Store command card info and AUTO_STEPS context for cleanup
       // Store selected card info for reference
       setCommandContext((prev: any) => ({
         ...prev,
@@ -224,6 +233,7 @@ export function handleHandCardClick(
           sourceCoords: abilityMode.sourceCoords,
           isDeployAbility: abilityMode.isDeployAbility,
           readyStatusToRemove: abilityMode.readyStatusToRemove,
+          _autoStepsContext: abilityMode.payload?._autoStepsContext,
         },
         selectedHandCard: { playerId: player.id, cardIndex, card }
       }))
@@ -250,7 +260,7 @@ export function handleHandCardClick(
     // SELECT_HAND_FOR_DISCARD_THEN_SPAWN (Faber)
     if (payload.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_SPAWN') {
       // Apply filter to validate the card
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
       // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
@@ -294,7 +304,7 @@ export function handleHandCardClick(
       console.log('[HAND_CARD_CLICK] SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN matched!')
 
       // Apply filter to validate the card
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
       // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
@@ -363,7 +373,7 @@ export function handleHandCardClick(
 
     // DESTROY Hand Card
     if (payload.actionType === 'DESTROY') {
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
       moveItem({ card, source: 'hand', playerId: player.id, cardIndex, bypassOwnershipCheck: true }, { target: 'discard', playerId: player.id })

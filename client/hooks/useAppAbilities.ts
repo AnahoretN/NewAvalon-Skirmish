@@ -515,7 +515,8 @@ export const useAppAbilities = ({
       scoreLine,
       scoreDiagonal,
       openContextMenu: () => {},
-      triggerDeckSelection: () => {},
+      triggerDeckSelection,
+      setViewingDiscard,
       isWebRTCMode,
       setActionQueue,
     })
@@ -547,6 +548,8 @@ export const useAppAbilities = ({
     modifyBoardCardPower,
     scoreLine,
     scoreDiagonal,
+    triggerDeckSelection,
+    setViewingDiscard,
   ])
 
   /**

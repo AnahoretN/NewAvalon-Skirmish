@@ -1370,10 +1370,41 @@ const AppInner = function AppInner() {
   useEffect(() => {
     // When playMode goes from non-null to null and there's a pending command card
     if (prevPlayModeRef.current && !playMode && commandContext.pendingCommandCard) {
-      const { sourceCoords, isDeployAbility, readyStatusToRemove } = commandContext.pendingCommandCard
-      if (sourceCoords && sourceCoords.row >= 0) {
+      const { sourceCoords, isDeployAbility, readyStatusToRemove, _autoStepsContext } = commandContext.pendingCommandCard
+
+      // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
+      if (_autoStepsContext && setActionQueue) {
+        console.log('[App.tsx] Continuing AUTO_STEPS after playMode completes:', {
+          currentStepIndex: _autoStepsContext.currentStepIndex,
+          totalSteps: _autoStepsContext.steps.length,
+          commandCardId: _autoStepsContext.commandCardId,
+        })
+
+        // Find the command card for sourceCard
+        // CRITICAL: Player has announcedCard (singular), not announced (array)
+        const commandCard = gameState.players
+          .map(p => p.announcedCard)
+          .filter((c): c is Card => c !== undefined && c !== null)
+          .find(c => c.id === _autoStepsContext.commandCardId)
+
+        // Add CONTINUE_AUTO_STEPS action to queue to execute CLEANUP_COMMAND
+        const continueAction: any = {
+          type: 'CONTINUE_AUTO_STEPS',
+          sourceCard: commandCard,
+          sourceCoords: sourceCoords,
+          isDeployAbility: isDeployAbility,
+          readyStatusToRemove: readyStatusToRemove,
+          payload: {
+            _autoStepsContext: _autoStepsContext,
+            completedCoords: sourceCoords || { row: -1, col: -1 },
+          }
+        }
+        setActionQueue((prev: any[]) => [...prev, continueAction])
+      } else if (sourceCoords && sourceCoords.row >= 0) {
+        // No AUTO_STEPS context, just mark ability as used (for non-command cards)
         markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
       }
+
       // Clear the pending command card
       setCommandContext((prev: any) => {
         const { pendingCommandCard, ...rest } = prev
@@ -1381,7 +1412,7 @@ const AppInner = function AppInner() {
       })
     }
     prevPlayModeRef.current = playMode
-  }, [playMode, commandContext.pendingCommandCard, markAbilityUsed, setCommandContext])
+  }, [playMode, commandContext.pendingCommandCard, markAbilityUsed, setCommandContext, setActionQueue, gameState.players])
 
   // Handle command card from token panel - open modal when card appears in announced
   const pendingCommandFromTokenPanelRef = useRef<string | null>(null)
@@ -2912,7 +2943,9 @@ const AppInner = function AppInner() {
   }, [viewingDiscard?.pickConfig?.filterType])
 
   // Shared handler for closing deck/discard view with shuffle support
-  const handleDeckViewClose = useCallback(() => {
+  // cardSelected: true when a card was actually selected (to continue AUTO_STEPS), false otherwise
+  const handleDeckViewClose = useCallback((cardSelected = false) => {
+    console.log('[App.tsx] handleDeckViewClose called:', { cardSelected, hasViewingDiscard: !!viewingDiscard })
     if (!viewingDiscard) {
       return
     }
@@ -2920,6 +2953,42 @@ const AppInner = function AppInner() {
     // Shuffle deck if required by the search ability (even when cancelling without selection)
     if (viewingDiscard.shuffleOnClose) {
       shufflePlayerDeckWithLogging(viewingDiscard.player.id)
+    }
+
+    // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
+    // Only continue if a card was actually selected
+    const { _autoStepsContext } = viewingDiscard as any
+    console.log('[App.tsx] Checking AUTO_STEPS continuation:', { hasAutoStepsContext: !!_autoStepsContext, cardSelected })
+    if (_autoStepsContext && setActionQueue && cardSelected) {
+      console.log('[App.tsx] Continuing AUTO_STEPS after deck view closes:', {
+        currentStepIndex: _autoStepsContext.currentStepIndex,
+        totalSteps: _autoStepsContext.steps.length,
+        commandCardId: _autoStepsContext.commandCardId,
+      })
+
+      // Find the command card for sourceCard
+      const commandCard = gameState.players
+        .map(p => p.announcedCard)
+        .filter((c): c is Card => c !== undefined && c !== null)
+        .find(c => c.id === _autoStepsContext.commandCardId)
+
+      // Add CONTINUE_AUTO_STEPS action to queue to execute CLEANUP_COMMAND
+      const continueAction: any = {
+        type: 'CONTINUE_AUTO_STEPS',
+        sourceCard: commandCard,
+        sourceCoords: _autoStepsContext.sourceCoords || { row: -1, col: -1 },
+        isDeployAbility: _autoStepsContext.isDeployAbility,
+        readyStatusToRemove: _autoStepsContext.readyStatusToRemove,
+        payload: {
+          _autoStepsContext: _autoStepsContext,
+          completedCoords: _autoStepsContext.sourceCoords || { row: -1, col: -1 },
+        }
+      }
+      setActionQueue((prev: any[]) => [...prev, continueAction])
+
+      setViewingDiscard(null)
+      setAbilityMode(null)
+      return
     }
 
     // If closing during a card pick/search ability without selecting a card, cancel the ability
@@ -2941,7 +3010,7 @@ const AppInner = function AppInner() {
 
     setViewingDiscard(null)
     setAbilityMode(null)
-  }, [viewingDiscard, shufflePlayerDeck, drawCard, markAbilityUsed, setAbilityMode])
+  }, [viewingDiscard, shufflePlayerDeck, drawCard, markAbilityUsed, setActionQueue, gameState.players])
 
   const handleDiscardCardClick = (cardIndex: number) => {
     if (!viewingDiscard || !viewingDiscardPlayer) {
@@ -2957,10 +3026,12 @@ const AppInner = function AppInner() {
     }
 
     const { action, isDeck: pickIsDeck } = pickConfig
+    console.log('[App.tsx] handleDiscardCardClick:', { cardIndex, action, pickIsDeck })
 
     if (action === 'recover') {
       // Add to hand
       if (pickIsDeck) {
+        console.log('[App.tsx] Moving card from deck to hand:', { cardIndex, playerId: viewingDiscardPlayer.id })
         moveItem({
           card: viewingDiscardPlayer.deck[cardIndex],
           source: 'deck',
@@ -2974,7 +3045,9 @@ const AppInner = function AppInner() {
         recoverDiscardedCard(viewingDiscardPlayer.id, cardIndex)
       }
       // Use shared close handler (handles shuffle if required)
-      handleDeckViewClose()
+      // Pass true to indicate a card was selected (for AUTO_STEPS continuation)
+      console.log('[App.tsx] Card moved, calling handleDeckViewClose(true)')
+      handleDeckViewClose(true)
     } else if (action === 'resurrect') {
       // For Immunis: Select card, then close modal to allow cell selection
       if (abilityMode?.mode === 'IMMUNIS_RETRIEVE') {

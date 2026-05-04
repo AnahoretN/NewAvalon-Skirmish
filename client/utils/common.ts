@@ -66,7 +66,7 @@ export const TIMING = {
   /** Duration for link copy success message (ms) */
   LINK_COPY_SUCCESS_DURATION: 2000,
   /** Fallback delay for drag end reset (ms) */
-  DRAG_END_FALLBACK: 500,
+  DRAG_END_FALLBACK: 100,
   /** Short debounce delay for checks (ms) */
   DEBOUNCE_SHORT: 100,
 } as const
