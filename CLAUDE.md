@@ -18,6 +18,15 @@ This version uses a **split deployment** strategy:
 
 Players configure the WebSocket URL in Settings to connect to any game server.
 
+## Active Development Mode
+
+**IMPORTANT**: Currently, **only WebRTC P2P Mode is under active development**.
+
+- **WebRTC P2P Mode**: Fully functional, actively developed and maintained
+- **WebSocket Server Mode**: Currently disabled in settings, not under active development
+
+The "Server Settings" section in the Settings modal is permanently disabled. All development efforts are focused on the WebRTC P2P architecture.
+
 ## Workflow
 
 ### Development

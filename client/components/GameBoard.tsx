@@ -221,9 +221,11 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
       // Drag handlers - immediate update for responsive feedback
       const onDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()
+        e.stopPropagation() // Prevent bubbling to parent cells
         const isCounter = draggedItem?.source === 'counter_panel'
+        const isBoardCardMove = draggedItem?.source === 'board'
         const cellIsEmpty = !cell.card
-        const canDrop = cellIsEmpty || (cell.card && isCounter)
+        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove)
 
         if (canDrop) {
           // Set immediately for instant visual feedback - using state to trigger re-render
@@ -239,11 +241,13 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
       }, [draggedItem, cell.card, row, col, hoveredCell, setHoveredCell, activeGridSize])
 
       const onDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-        // Only clear if we're leaving this cell (not entering a child element)
-        const rect = e.currentTarget.getBoundingClientRect()
-        const x = e.clientX
-        const y = e.clientY
-        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+        // Only clear if we're actually leaving this cell (not entering a child element)
+        // Use relatedTarget to check if the drag is moving to a child or staying within the cell
+        const relatedTarget = e.relatedTarget as Element
+        const currentTarget = e.currentTarget
+
+        // If relatedTarget is null (left the window) or not contained within currentTarget, we're leaving
+        if (!relatedTarget || !currentTarget.contains(relatedTarget)) {
           setHoveredCell(null)
         }
       }, [setHoveredCell])
@@ -297,6 +301,45 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
           }
         }
       }, [cell.card, setDraggedItem, row, col, cursorStack, activeGridSize])
+
+      // Handle drag over card - bubble to parent cell for proper highlighting
+      const handleCardDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const isCounter = draggedItem?.source === 'counter_panel'
+        const isBoardCardMove = draggedItem?.source === 'board'
+        const cellIsEmpty = !cell.card
+        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove)
+
+        if (canDrop) {
+          setHoveredCell({ row, col })
+          e.dataTransfer.dropEffect = 'move'
+        } else {
+          e.dataTransfer.dropEffect = 'none'
+        }
+      }, [draggedItem, cell.card, row, col, setHoveredCell])
+
+      // Handle drag leave from card element
+      const handleCardDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+        const relatedTarget = e.relatedTarget as Element
+        const currentTarget = e.currentTarget
+
+        // Only clear if we're actually leaving the cell
+        if (!relatedTarget || !currentTarget.parentElement?.contains(relatedTarget)) {
+          setHoveredCell(null)
+        }
+      }, [setHoveredCell])
+
+      // Handle drop on card - delegate to parent cell's drop handler
+      const handleCardDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault()
+        e.stopPropagation()
+
+        if (draggedItem) {
+          handleDrop(draggedItem, { target: 'board', boardCoords: { row, col } })
+        }
+        setHoveredCell(null)
+      }, [draggedItem, handleDrop, row, col, setHoveredCell])
 
       const handleCardContextMenu = useCallback((e: React.MouseEvent) => {
         // Prevent browser context menu
@@ -562,6 +605,9 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?
               key={cell.card.id}
               draggable={isGameStarted && !cursorStack}
               onDragStart={handleCardDragStart}
+              onDragOver={handleCardDragOver}
+              onDragLeave={handleCardDragLeave}
+              onDrop={handleCardDrop}
               onDragEnd={() => {
                 // Don't reset here - let the drop handler do it
                 // Fallback: clear after delay if no drop happened

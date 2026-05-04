@@ -5,7 +5,7 @@
  * Replaces scattered useState for modal visibility
  */
 
-import { createContext, useContext, useState, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useMemo, ReactNode } from 'react'
 
 // All modal types in the application
 export type ModalType =
@@ -72,7 +72,9 @@ export const ModalsProvider = ({ children }: { children: ReactNode }) => {
 
   const getSize = useCallback(() => modalSize, [modalSize])
 
-  const value: ModalState = {
+  // CRITICAL: Memoize value to prevent infinite re-renders
+  // Without this, consumers re-render on every parent render
+  const value: ModalState = useMemo(() => ({
     openModal,
     modalData,
     modalSize,
@@ -81,7 +83,7 @@ export const ModalsProvider = ({ children }: { children: ReactNode }) => {
     isOpen,
     getData,
     getSize,
-  }
+  }), [openModal, modalData, modalSize, open, close, isOpen, getData, getSize])
 
   return <ModalsContext.Provider value={value}>{children}</ModalsContext.Provider>
 }

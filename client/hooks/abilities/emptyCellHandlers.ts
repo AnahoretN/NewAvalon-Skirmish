@@ -8,6 +8,7 @@ import type { AbilityAction, CursorStackState, CommandContext, Card } from '@/ty
 import { validateTarget } from '@shared/utils/targeting'
 import { TIMING } from '@/utils/common'
 import { handleLineSelection as handleLineSelectionModule } from './lineSelectionHandlers.js'
+import { advanceToNextStepWithCoords, type ModeHandlersProps } from './modeHandlers.js'
 
 export interface EmptyCellClickProps {
   gameState: any
@@ -42,6 +43,10 @@ export interface EmptyCellClickProps {
   triggerDeckSelection: (playerId: number, selectedByPlayerId: number) => void
   isWebRTCMode?: boolean
   setActionQueue?: React.Dispatch<React.SetStateAction<AbilityAction[]>>
+  // CRITICAL: Props needed for AUTO_STEPS continuation (Logistics Chain, etc.)
+  getFreshGameState?: () => any
+  setTargetingMode?: (action: AbilityAction, playerId: number, sourceCoords?: { row: number; col: number }, preCalculatedTargets?: {row: number, col: number}[], commandContext?: CommandContext, preCalculatedHandTargets?: {playerId: number, cardIndex: number}[]) => void
+  calculateValidTargets?: (action: AbilityAction, gameState: any, ownerId: number, commandContext?: CommandContext) => {row: number, col: number}[]
 }
 
 /**
@@ -78,6 +83,10 @@ export function handleEmptyCellClick(
     scoreLine,
     scoreDiagonal,
     setActionQueue,
+    // CRITICAL: Props needed for AUTO_STEPS continuation
+    getFreshGameState,
+    setTargetingMode,
+    calculateValidTargets,
   } = props
 
   // Alias for backward compatibility
@@ -342,14 +351,89 @@ export function handleEmptyCellClick(
 
     markAbilityUsed(sourceCoords || boardCoords, isDeployAbility, false, readyStatusToRemove)
 
+    // CRITICAL: Check for AUTO_STEPS context FIRST, before handling chainedAction directly
+    // This fixes False Orders Option 1 where chainedAction (CREATE_STACK for Revealed tokens)
+    // should be executed as part of the next step (GLOBAL_AUTO_APPLY), not directly
+    if (payload?._autoStepsContext && setActionQueue) {
+      const autoStepsContext = { ...payload._autoStepsContext }
+      const continueAction: any = {
+        type: 'CONTINUE_AUTO_STEPS',
+        sourceCard: abilityMode.sourceCard,
+        sourceCoords: boardCoords, // Use new coords as source
+        isDeployAbility: abilityMode.isDeployAbility,
+        readyStatusToRemove: abilityMode.readyStatusToRemove,
+        payload: {
+          _autoStepsContext: autoStepsContext,
+          // CRITICAL: Pass stepContext with sourceOwnerId for False Orders Option 1
+          // This ensures the next step (GLOBAL_AUTO_APPLY with chainedAction) knows which player's hand to target
+          stepContext: {
+            targetCoords: boardCoords,
+            targetCard: movedCard,
+            // CRITICAL: Pass sourceOwnerId so chainedAction can resolve targetOwnerId: -2 correctly
+            sourceOwnerId: movedCard?.ownerId ?? sourceCard?.ownerId,
+          },
+          // CRITICAL: Pass chainedAction so advanceToNextStepWithCoords can execute it
+          // This fixes False Orders Option 2 where Stun x2 needs to be placed after move
+          ...(chainedAction ? { chainedAction } : {})
+        }
+      }
+
+      console.log('[handleEmptyCellClick] SELECT_CELL: Continuing AUTO_STEPS (with chainedAction), stepIndex:', autoStepsContext.currentStepIndex, {
+        hasChainedAction: !!chainedAction,
+        chainedActionType: chainedAction?.type,
+        sourceOwnerId: movedCard?.ownerId ?? sourceCard?.ownerId,
+      })
+
+      setActionQueue(prev => {
+        const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+        const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+        return [...otherActions, continueAction, ...cleanupActions]
+      })
+
+      // CRITICAL: Clear targeting mode AND ability mode immediately (not via setTimeout)
+      clearTargetingMode()
+      setAbilityMode(null)
+      return
+    }
+
+    // Only execute chainedAction directly if NOT in AUTO_STEPS context
+    // This handles single-step abilities with chainedAction (not multi-step commands)
     if (chainedAction) {
       const nextAction = { ...chainedAction }
-      if (nextAction.targetOwnerId === -2) {
-        nextAction.targetOwnerId = sourceCard.ownerId
-      }
-      // CRITICAL: Always set payload object if needed
+      // CRITICAL: Ensure payload exists for targetOwnerId check
       if (!nextAction.payload) {
         nextAction.payload = {}
+      }
+      // CRITICAL: Handle targetOwnerId === -2 (TARGET_MOVED_OWNER) for False Orders Option 1
+      // This restricts Revealed tokens to only the player whose card was moved
+      // NOTE: After normalizeChainedAction, targetOwnerId is in payload, not at action level
+      if (nextAction.payload.targetOwnerId === -2) {
+        // Use movedCard.ownerId (the opponent whose card we moved), not sourceCard (command card)
+        if (movedCard) {
+          nextAction.payload.targetOwnerId = movedCard.ownerId
+          // CRITICAL: Also set _sourceOwnerId to the moved card's owner
+          // This is used in actionExecutionHandler to determine which player's hand to target
+          // This fixes the bug where False Orders Option 1 targets the wrong player's hand on repeated uses
+          nextAction.payload._sourceOwnerId = movedCard.ownerId
+        } else {
+          // Fallback: if movedCard not available, try to find from context
+          console.warn('[emptyCellHandlers] TARGET_MOVED_OWNER (-2) used but movedCard not available')
+          nextAction.payload.targetOwnerId = sourceCard.ownerId
+          nextAction.payload._sourceOwnerId = sourceCard.ownerId
+        }
+      }
+      // CRITICAL: Set sourceCard for the chained action (False Orders command card)
+      // This ensures tokens are owned by the player who played the command card
+      // CRITICAL: Use _commandCard from payload if available (preserved command card), otherwise fall back to abilityMode.sourceCard
+      // For False Orders: _commandCard is the False Orders card owned by Player A, abilityMode.sourceCard is the unit with Exploit (Player B's card)
+      const commandCard = payload?._commandCard
+      if (!nextAction.sourceCard) {
+        nextAction.sourceCard = commandCard || abilityMode.sourceCard || sourceCard
+      }
+      // CRITICAL: Set originalOwnerId for chained action to ensure correct highlight color
+      // This fixes False Orders Option 1 where highlight should use command card owner's color (Player A), not target player's color (Player B)
+      if (!nextAction.originalOwnerId && commandCard) {
+        nextAction.originalOwnerId = commandCard.ownerId
       }
       // Set context identifiers for token placement (False Orders Stun x2)
       if (payload.recordContext) {
@@ -379,40 +463,8 @@ export function handleEmptyCellClick(
           return [...otherActions, nextAction, ...cleanupActions]
         })
       }
-    } else if (payload?._autoStepsContext && setActionQueue) {
-      // CRITICAL FIX: Handle case where there's NO chainedAction but we're in AUTO_STEPS context
-      // This is for Data Interception option 2: CREATE_STACK → SELECT_UNIT_FOR_MOVE → SELECT_CELL → CLEANUP_COMMAND
-      // After the move completes, we need to continue AUTO_STEPS to trigger CLEANUP_COMMAND
-      const autoStepsContext = { ...payload._autoStepsContext }
-      const continueAction: any = {
-        type: 'CONTINUE_AUTO_STEPS',
-        sourceCard: abilityMode.sourceCard,
-        sourceCoords: boardCoords, // Use new coords as source
-        isDeployAbility: abilityMode.isDeployAbility,
-        readyStatusToRemove: abilityMode.readyStatusToRemove,
-        payload: {
-          _autoStepsContext: autoStepsContext,
-          stepContext: {
-            targetCoords: boardCoords,
-            targetCardId: movedCard?.id || sourceCard?.id
-          }
-        }
-      }
-
-      console.log('[handleEmptyCellClick] SELECT_CELL: No chainedAction, adding CONTINUE_AUTO_STEPS directly, stepIndex:', autoStepsContext.currentStepIndex)
-
-      setActionQueue(prev => {
-        const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
-        const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
-        return [...otherActions, continueAction, ...cleanupActions]
-      })
-
-      // CRITICAL: Clear targeting mode AND ability mode immediately (not via setTimeout)
-      clearTargetingMode()
-      setAbilityMode(null)
     } else {
-      // CRITICAL: Clear targeting mode AND ability mode immediately (not via setTimeout)
-      // This fixes the issue where targeting mode was being re-set after move completion
+      // No chainedAction and no AUTO_STEPS - just clear modes
       clearTargetingMode()
       setAbilityMode(null)
     }
@@ -822,6 +874,28 @@ export function handleEmptyCellClick(
     const canSelect = localPlayerId === gameState.activePlayerId || isDummyActivePlayer
 
     if (canSelect) {
+      // CRITICAL: Create continueAutoSteps function for AUTO_STEPS continuation
+      // This fixes Logistics Chain not discarding after diagonal selection
+      const continueAutoSteps = (nextStepIndex: number) => {
+        // Build ModeHandlersProps from available props
+        const modeProps: Partial<ModeHandlersProps> = {
+          gameState,
+          getFreshGameState: getFreshGameState || (() => gameState),
+          localPlayerId,
+          abilityMode,
+          setAbilityMode,
+          markAbilityUsed,
+          commandContext,
+          setCommandContext,
+          setTargetingMode: setTargetingMode || (() => {}),
+          calculateValidTargets: calculateValidTargets || (() => []),
+          handleActionExecution,
+        }
+        // Use abilityMode.sourceCoords as sourceCoords
+        const sourceCoords = abilityMode.sourceCoords || { row: 0, col: 0 }
+        advanceToNextStepWithCoords(modeProps as ModeHandlersProps, sourceCoords, nextStepIndex)
+      }
+
       handleLineSelectionModule(boardCoords, {
         gameState,
         localPlayerId,
@@ -837,6 +911,7 @@ export function handleEmptyCellClick(
         scoreDiagonal: scoreDiagonal || (() => {}),
         commandContext,
         isWebRTCMode: props.isWebRTCMode,
+        continueAutoSteps,
       })
     } else {
       // Silently ignore clicks from non-active players

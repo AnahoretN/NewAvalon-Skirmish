@@ -1371,9 +1371,9 @@
                 "details": {
                   "tokenType": "Revealed",
                   "count": 2,
-                  "onlyOpponents": true,
                   "onlyFaceDown": true,
-                  "excludeOwnerId": "source"
+                  "targetOwnerId": -2,
+                  "allowHandTargets": true
                 }
               }
             }

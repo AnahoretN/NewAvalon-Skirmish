@@ -269,6 +269,11 @@ function buildFilterFromString(
     return (card: Card) => card.faction === faction
   }
 
+  // hasType_Unit_and_not_Device (Experimental Stimulants - special compound filter)
+  if (filter === 'hasType_Unit_and_not_Device') {
+    return (card: Card) => card.types?.includes('Unit') === true && card.types?.includes('Device') !== true
+  }
+
   // hasType_TypeName
   if (filter.startsWith('hasType_')) {
     const typeName = filter.replace('hasType_', '')
@@ -587,6 +592,7 @@ export const calculateValidTargets = (
 
   // SELECT_TARGET with tokenType (CREATE_STACK for tokens like Aim, Shield, etc.)
   // Used by Princeps/ABR Gawain Deploy: "Place an Aim token on a card in its line"
+  // Also used by Cautious Avenger Deploy: "Place an Aim counter on a card within 2 cells"
   if (mode === 'SELECT_TARGET' && payload.tokenType && !(payload.filter || payload.filterString)) {
     const ownerId = action.sourceCard?.ownerId || actorId || 0
 
@@ -600,7 +606,7 @@ export const calculateValidTargets = (
 
         const cell = board[r][c]
         if (cell.card) {
-          // Check constraints
+          // Check constraints - include maxOrthogonalDistance and maxDistanceFromSource
           const isValid = validateTarget(
             { card: cell.card, ownerId: cell.card.ownerId || 0, location: 'board', boardCoords: { row: r, col: c } },
             {
@@ -608,6 +614,8 @@ export const calculateValidTargets = (
               excludeOwnerId: action.excludeOwnerId,
               mustBeInLineWithSource: payload.mustBeInLineWithSource,
               mustBeAdjacentToSource: payload.mustBeAdjacentToSource,
+              maxDistanceFromSource: payload.maxDistanceFromSource,
+              maxOrthogonalDistance: payload.maxOrthogonalDistance,
               sourceCoords: sourceCoords,
             },
             ownerId,
@@ -1663,4 +1671,87 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
   }
 
   return false
+}
+
+/**
+ * Calculate hand targets for CREATE_STACK actions with allowHandTargets
+ * Returns array of {playerId, cardIndex} for valid hand targets
+ */
+export function calculateHandTargets(
+  action: AbilityAction | null,
+  currentGameState: GameState,
+  actorId: number | null,
+  commandContext?: CommandContext,
+): {playerId: number, cardIndex: number}[] {
+  // CRITICAL: Check allowHandTargets from action, payload, or details (chained actions from JSON use payload/details format)
+  // This fixes False Orders Option 1 where allowHandTargets is in payload after normalization
+  const allowHandTargets = action?.allowHandTargets ?? action?.payload?.allowHandTargets ?? (action as any)?.details?.allowHandTargets
+  if (!action || action.type !== 'CREATE_STACK' || !allowHandTargets) {
+    return []
+  }
+
+  const handTargets: {playerId: number, cardIndex: number}[] = []
+  const tokenOwnerId = action.sourceCard?.ownerId ?? actorId
+  // CRITICAL: Read targetOwnerId from action, payload, or details (chained actions use payload/details format)
+  const targetOwnerId = action.targetOwnerId ?? action.payload?.targetOwnerId ?? (action as any).details?.targetOwnerId
+  // CRITICAL: Read onlyOpponents from action or payload
+  const onlyOpponents = action.onlyOpponents ?? action.payload?.onlyOpponents
+  // CRITICAL: Read excludeOwnerId from action or payload
+  const excludeOwnerId = action.excludeOwnerId ?? action.payload?.excludeOwnerId
+  // CRITICAL: Read tokenType from action or payload
+  const tokenType = action.tokenType ?? action.payload?.tokenType
+  // CRITICAL: Read onlyFaceDown from action or payload
+  const onlyFaceDown = action.onlyFaceDown ?? action.payload?.onlyFaceDown
+
+  // Determine which players to check
+  const playersToCheck = targetOwnerId && targetOwnerId > 0
+    ? currentGameState.players.filter(p => p.id === targetOwnerId)
+    : currentGameState.players.filter(p => {
+        // Check onlyOpponents constraint
+        if (onlyOpponents) {
+          const effectiveOwnerId = tokenOwnerId ?? actorId
+          // Cannot be self
+          if (p.id === effectiveOwnerId) return false
+          // Cannot be teammate
+          const tokenOwner = currentGameState.players.find(tp => tp.id === effectiveOwnerId)
+          const targetPlayer = currentGameState.players.find(tp => tp.id === p.id)
+          if (tokenOwner && targetPlayer &&
+              tokenOwner.teamId != null &&
+              tokenOwner.teamId === targetPlayer.teamId) {
+            return false
+          }
+        }
+        // Check excludeOwnerId
+        if (excludeOwnerId && p.id === excludeOwnerId) {
+          return false
+        }
+        return true
+      })
+
+  // Check each player's hand
+  for (const player of playersToCheck) {
+    if (!player.hand) continue
+
+    for (let i = 0; i < player.hand.length; i++) {
+      const card = player.hand[i]
+
+      // Check if card already has this token (for Revealed)
+      if (tokenType === 'Revealed') {
+        const hasOurRevealed = card.statuses?.some(s =>
+          s.type === 'Revealed' && s.addedByPlayerId === tokenOwnerId
+        )
+        if (hasOurRevealed) continue
+      }
+
+      // Check onlyFaceDown constraint (for Revealed token)
+      if (onlyFaceDown) {
+        // Hand cards are considered face-down by default
+        // Just check if card doesn't have Revealed token (already checked above)
+      }
+
+      handTargets.push({ playerId: player.id, cardIndex: i })
+    }
+  }
+
+  return handTargets
 }

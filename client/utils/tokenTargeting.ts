@@ -98,6 +98,15 @@ export function createTokenCursorStack(
     }),
   }
 
+  // Debug logging for distance constraints
+  console.log('[createTokenCursorStack] Distance constraints:', {
+    tokenType,
+    maxDistanceFromSource: result.maxDistanceFromSource,
+    maxOrthogonalDistance: result.maxOrthogonalDistance,
+    sourceCoords: result.sourceCoords,
+    modificationsKeys: modifications ? Object.keys(modifications) : [],
+  })
+
   return result
 }
 

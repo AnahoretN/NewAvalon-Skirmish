@@ -7,6 +7,10 @@
 import type { AbilityAction, FloatingTextData } from '@/types'
 import { TIMING } from '@/utils/common'
 
+// Import advanceToNextStepWithCoords from modeHandlers
+// Note: This creates a circular dependency, but it's safe because we only use the function
+// We'll pass it as a prop instead to avoid the circular dependency
+
 export interface LineSelectionProps {
   gameState: any
   localPlayerId: number | null
@@ -22,6 +26,8 @@ export interface LineSelectionProps {
   scoreDiagonal: (r1: number, c1: number, r2: number, c2: number, pid: number, bonusType?: 'point_per_support' | 'draw_per_support') => void
   commandContext: any
   isWebRTCMode?: boolean  // Whether WebRTC P2P mode is enabled
+  // CRITICAL: Props for AUTO_STEPS continuation (for command cards like Logistics Chain)
+  continueAutoSteps?: (currentStepIndex: number) => void  // Callback to continue to next AUTO_STEPS
 }
 
 /**
@@ -47,6 +53,7 @@ export function handleLineSelection(
     scoreDiagonal,
     commandContext,
     isWebRTCMode = false,
+    continueAutoSteps,
   } = props
 
   if (!abilityMode) {
@@ -422,6 +429,10 @@ export function handleLineSelection(
   // SELECT_DIAGONAL (Logistics Chain)
   // Two-step selection: first click selects center, second click selects diagonal endpoint
   if (mode === 'SELECT_DIAGONAL') {
+    // CRITICAL: Check if this is part of AUTO_STEPS (command card)
+    const autoStepsContext = (payload as any)?._autoStepsContext
+    const isCommandCard = !!(autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined)
+
     // Step 1: First click - select center point
     // Use functional state update to avoid stale closure issues
     if (!payload?.firstCoords) {
@@ -448,21 +459,33 @@ export function handleLineSelection(
       return true
     }
 
-    // Execute diagonal scoring via scoreDiagonal action
-    const ownerId = payload?.playerId ?? localPlayerId ?? 0
+    // CRITICAL: Use sourceCard.ownerId for command cards (the player who owns the command card)
+    // This fixes dummy player control in P2P mode
+    const ownerId = payload?.playerId ?? sourceCard?.ownerId ?? localPlayerId ?? 0
     const bonusType = payload?.bonusType || 'point_per_support'
 
+    // Execute diagonal scoring via scoreDiagonal action
     if (scoreDiagonal) {
       scoreDiagonal(r1, c1, r2, c2, ownerId, bonusType)
     }
 
-    // Advance phase after scoring, unless skipNextPhase is set (e.g., Logistics Chain)
-    if (!payload.skipNextPhase) {
+    // CRITICAL: Do NOT advance phase for command cards (AUTO_STEPS)
+    // Command cards should stay in the same phase after execution
+    if (!isCommandCard && !payload.skipNextPhase) {
       nextPhase()
+      setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+    } else if (isCommandCard && continueAutoSteps) {
+      // For command cards, continue to next step (CLEANUP_COMMAND)
+      console.log('[lineSelectionHandlers] SELECT_DIAGONAL command card, continuing AUTO_STEPS:', {
+        currentStepIndex: autoStepsContext.currentStepIndex,
+        totalSteps: autoStepsContext.steps.length,
+      })
+      // Continue to next step (CLEANUP_COMMAND)
+      continueAutoSteps(autoStepsContext.currentStepIndex + 1)
+    } else {
+      // Clear ability mode
+      setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
     }
-
-    // Clear ability mode
-    setAbilityMode(null)
     return true
   }
 

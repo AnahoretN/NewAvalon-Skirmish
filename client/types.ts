@@ -460,6 +460,7 @@ export type AbilityAction = {
     targetLocation?: 'hand' | 'board'; // Specifies target location for abilities (e.g., Vigilant Spotter targets hand cards)
     replaceStatus?: boolean; // If true, replace the requiredTargetStatus with tokenType (e.g., Censor: Exploit -> Stun)
     originalOwnerId?: number; // The owner of the card that initiated this action (for multi-step commands like Data Interception)
+    _sourceOwnerId?: number; // Internal: Owner ID of the card that was targeted/moved (used for resolving targetOwnerId: -2)
     skipChainedActionOnNoTargets?: boolean; // If true, chained action won't execute when no valid targets exist (e.g., Recon Drone Commit)
     supportRequired?: boolean; // If true, requires source card to have Support status (e.g., Inventive Maker Setup)
 };

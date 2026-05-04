@@ -77,7 +77,7 @@ const AppInner = function AppInner() {
   // When a chained action is being processed, the action queue should wait
   const pendingChainedActionRef = useRef<boolean>(false)
 
-  const gameStateHook = useGameState({ abilityMode, setAbilityMode })
+  const gameStateHook = useGameState()
 
   const {
     gameState,
@@ -391,6 +391,9 @@ const AppInner = function AppInner() {
   // Track previous gameState.abilityMode for WebRTC host sync (separate from local abilityMode tracking)
   const prevGameStateAbilityModeRef = useRef<AbilityAction | null>(null)
 
+  // Track when handleCancelAllModes was called to prevent targetingMode restoration
+  const cancelAllModesTimestampRef = useRef<number>(0)
+
   // Lifted state for cursor stack to resolve circular dependency
   const [cursorStack, setCursorStack] = useState<CursorStackState | null>(null)
 
@@ -686,6 +689,9 @@ const AppInner = function AppInner() {
     triggerClickWave,
     clearTargetingMode,
     setActionQueue,
+    setValidHandTargets,
+    setTargetingMode,
+    abilityMode,
   })
 
   // ============================================================================
@@ -1001,15 +1007,29 @@ const AppInner = function AppInner() {
 
       // CRITICAL: Check for restrictions (e.g., False Orders Revealed token)
       // Note: These fields are in action.payload
+      const targetOwnerId = action?.payload?.targetOwnerId ?? action?.targetOwnerId
       const excludedOwnerId = action?.payload?.excludeOwnerId ?? action?.excludeOwnerId
       const onlyOpponents = action?.payload?.onlyOpponents ?? action?.onlyOpponents
 
-      // If targeting player is excluded, don't show their hand
-      if (targetingPlayerId === excludedOwnerId) {
-        setValidHandTargets([])
+      // Collect hand targets based on targeting mode
+      const freshHandTargets: {playerId: number, cardIndex: number}[] = []
+
+      // CRITICAL: Handle targetOwnerId (False Orders Option 1 - specific player's hand)
+      // If targetOwnerId is set and positive, ONLY target that player's hand
+      if (targetOwnerId && targetOwnerId > 0) {
+        const targetPlayer = gameState.players.find(p => p.id === targetOwnerId)
+        if (targetPlayer && targetPlayer.hand && targetPlayer.hand.length > 0) {
+          for (let i = 0; i < targetPlayer.hand.length; i++) {
+            freshHandTargets.push({ playerId: targetPlayer.id, cardIndex: i })
+          }
+        }
       } else {
-        // Collect hand targets from all non-excluded players
-        const freshHandTargets: {playerId: number, cardIndex: number}[] = []
+        // Original logic: all opponents (using excludedOwnerId)
+        // If targeting player is excluded, don't show their hand
+        if (targetingPlayerId === excludedOwnerId) {
+          setValidHandTargets([])
+          return
+        }
 
         for (const player of gameState.players) {
           // Skip excluded player
@@ -1030,9 +1050,9 @@ const AppInner = function AppInner() {
             }
           }
         }
-
-        setValidHandTargets(freshHandTargets)
       }
+
+      setValidHandTargets(freshHandTargets)
     } else if (!gameState.targetingMode?.handTargets && !hasLocalActiveMode) {
       // Clear validHandTargets when targetingMode is cleared (no longer has handTargets)
       // This ensures remote players see targeting highlights cleared when token is placed
@@ -1702,12 +1722,16 @@ const AppInner = function AppInner() {
     const hasActiveMode = cursorStack || abilityMode || hasPlayMode || hasCommandModal
     const isDeckSelectableMode = abilityMode?.mode === 'SELECT_DECK'
 
-    // CRITICAL: Don't override targetingMode if it's already set with handTargets (DISCARD_FROM_HAND abilities)
+    // CRITICAL: Don't override targetingMode if it's already set with handTargets (DISCARD_FROM_HAND abilities, Revealed token placement)
     // These abilities set targetingMode in actionExecutionHandler.ts with pre-calculated handTargets
     // We should preserve them instead of recalculating and potentially clearing them
+    // CRITICAL: Check action type OR mode to handle both CREATE_STACK (from actionExecutionHandler) and SELECT_TARGET (from useEffect)
     const isHandTargetingMode = gameState.targetingMode?.handTargets &&
                                 gameState.targetingMode.handTargets.length > 0 &&
-                                gameState.targetingMode.action?.payload?.actionType === abilityMode?.payload?.actionType
+                                (gameState.targetingMode.action?.payload?.actionType === abilityMode?.payload?.actionType ||
+                                 gameState.targetingMode.action?.mode === abilityMode?.mode ||
+                                 // Also check if the current targetingMode has targetOwnerId set (Revealed token targeting specific player)
+                                 !!gameState.targetingMode.action?.payload?.targetOwnerId)
 
     // Check if targets actually changed before setting state
     const boardTargetsChanged = JSON.stringify(boardTargets) !== JSON.stringify(prevBoardTargetsRef.current)
@@ -1777,7 +1801,8 @@ const AppInner = function AppInner() {
           gameState,
           localPlayerId,
           actorId,
-          boardSize
+          boardSize,
+          targetingAction
         )
 
         // CRITICAL: Line selection modes use abilityMode + handleLineSelection for their interaction
@@ -1792,8 +1817,33 @@ const AppInner = function AppInner() {
           // SELECT_CELL is for selecting empty cells on the board, NOT cards in hand
           const finalHandTargets = targetingAction.mode === 'SELECT_CELL' ? [] : handTargets
 
-          // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
-          setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
+          // CRITICAL: Don't override targetingMode if it already has handTargets
+          // This prevents CREATE_STACK handler's handTargets from being overwritten by useEffect
+          // When cursorStack is active, createTargetingActionFromCursorStack doesn't calculate handTargets,
+          // so we need to preserve the existing handTargets from gameState.targetingMode
+          const hasExistingHandTargets = gameState.targetingMode?.handTargets && gameState.targetingMode.handTargets.length > 0
+          if (hasExistingHandTargets && finalHandTargets.length === 0 && targetingAction.mode === 'SELECT_TARGET') {
+            // Preserve existing targetingMode with handTargets - don't overwrite with empty array
+            // Still update validTargets for UI highlights
+            if (boardTargetsChanged) {
+              setValidTargets(boardTargets)
+              prevBoardTargetsRef.current = boardTargets
+            }
+            const handTargetsToUse = gameState.targetingMode?.handTargets ?? []
+            if (JSON.stringify(handTargetsToUse) !== JSON.stringify(prevHandTargetsRef.current)) {
+              setValidHandTargets(handTargetsToUse)
+              prevHandTargetsRef.current = handTargetsToUse
+            }
+            return undefined
+          }
+
+          // CRITICAL: Don't restore targetingMode if handleCancelAllModes was just called (right-click cancel)
+          // Check if cancelAllModes was called within the last 100ms
+          const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
+          if (timeSinceCancel > 100) {
+            // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
+            setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
+          }
         } else {
           // For line selection modes, only set local validTargets - don't call setTargetingMode
           // The line selection is handled via handleLineSelection in lineSelectionHandlers.ts
@@ -1816,7 +1866,7 @@ const AppInner = function AppInner() {
 
     return undefined
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abilityMode, cursorStack, playMode, commandModalCard, gameState.board, gameState.players, localPlayerId, commandContext, gameState.activePlayerId, setTargetingMode, clearTargetingMode])
+  }, [abilityMode, cursorStack, playMode, commandModalCard, gameState.board, gameState.players, localPlayerId, commandContext, gameState.activePlayerId, setTargetingMode, clearTargetingMode, cancelAllModesTimestampRef])
 
 
   // Sync valid hand targets and deck selectability to other players
@@ -1977,8 +2027,14 @@ const AppInner = function AppInner() {
           const excludedOwnerId = cursorStack.excludeOwnerId
           const onlyOpponents = cursorStack.onlyOpponents || (cursorStack.targetOwnerId === -1)
           const tokenOwnerId = cursorStack.originalOwnerId
+          // CRITICAL: Check targetOwnerId for specific target player (False Orders Option 1, Recon Drone Commit)
+          const targetOwnerId = cursorStack.targetOwnerId
 
           for (const player of gameState.players) {
+            // CRITICAL: If targetOwnerId is set (specific player), only target that player's hand
+            if (targetOwnerId && targetOwnerId > 0 && player.id !== targetOwnerId) {
+              continue
+            }
             // Skip excluded player (token owner's own hand for Revealed)
             if (player.id === excludedOwnerId) {
               continue
@@ -2360,7 +2416,6 @@ const AppInner = function AppInner() {
           // CRITICAL: Don't cleanup if there's an active ability mode (AUTO_STEPS, SELECT_TARGET, etc.)
           // The cleanup will be triggered after the ability mode completes
           if (abilityMode) {
-            console.log('[cleanupCommand] Skipping cleanup - abilityMode is active:', abilityMode.mode)
             // CRITICAL: Move cleanup to the end of the queue instead of removing it
             // This ensures it will be processed after abilityMode clears
             const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
@@ -2368,8 +2423,6 @@ const AppInner = function AppInner() {
               ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
               setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
               return
-            } else {
-              console.log('[cleanupCommand] Processing cleanup after 5 skips (abilityMode not clearing)')
             }
           }
 
@@ -2384,22 +2437,11 @@ const AppInner = function AppInner() {
           // CRITICAL: If cleanup has been skipped multiple times (5+), just process it to prevent infinite loop
           const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
           if (hasPendingActions && cleanupSkipCount < 5) {
-            console.log('[cleanupCommand] Skipping cleanup - pending actions in queue:', remainingQueue.map(a => ({ type: a.type, mode: a.mode, hasCleanup: !!a.payload?.cleanupCommand })))
             // Move cleanup to the end of the queue and increment skip count on the actual action object
             ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
             setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
             return
           }
-          if (cleanupSkipCount >= 5) {
-            console.log('[cleanupCommand] Processing cleanup after 5 skips (breaking potential infinite loop)')
-          }
-
-          console.log('[cleanupCommand] Processing cleanupCommand:', {
-            targetPlayerId: actionToProcess.payload.ownerId,
-            sourceCardOwnerId: actionToProcess.sourceCard?.ownerId,
-            localPlayerId,
-            actionQueueLength: actionQueue.length
-          })
 
           // Robust cleanup: determine target player and use current announced card
           const targetPlayerId = actionToProcess.payload.ownerId !== undefined
@@ -2411,14 +2453,7 @@ const AppInner = function AppInner() {
             // Prefer the card actually sitting in the announced slot
             const cardToDiscard = playerState?.announcedCard || actionToProcess.sourceCard
 
-            console.log('[cleanupCommand] Player and card:', {
-              playerState,
-              cardToDiscard,
-              announcedCard: playerState?.announcedCard
-            })
-
             if (cardToDiscard && cardToDiscard.id !== 'dummy') {
-              console.log('[cleanupCommand] Moving card to discard')
               moveItem({
                 card: cardToDiscard,
                 source: 'announced',
@@ -2427,13 +2462,9 @@ const AppInner = function AppInner() {
                 target: 'discard',
                 playerId: targetPlayerId,
               })
-            } else {
-              console.log('[cleanupCommand] No valid card to discard')
             }
             // CRITICAL: Return after cleanupCommand to prevent double-processing
             return
-          } else {
-            console.log('[cleanupCommand] No targetPlayerId found')
           }
         } else if (actionToProcess.payload?.dynamicResource) {
           const { type, factor, baseCount, ownerId: payloadOwnerId } = actionToProcess.payload.dynamicResource
@@ -2471,6 +2502,18 @@ const AppInner = function AppInner() {
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else if (actionToProcess.payload?.customAction && actionToProcess.sourceCard) {
           // Handle custom actions like FINN_SCORING
+          executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
+        } else if (actionToProcess.payload?.tokenType && (actionToProcess.payload?.count || actionToProcess.payload?.count === 0)) {
+          // CRITICAL: Handle token placement on context card (False Orders option 2: Stun x2)
+          // This case has tokenType and count in payload for placing on the moved card
+          // Send to executeAction which will call handleGlobalAutoApply
+          console.log('[actionQueue] Processing token placement on context card:', {
+            tokenType: actionToProcess.payload.tokenType,
+            count: actionToProcess.payload.count,
+            contextCardId: actionToProcess.payload.contextCardId,
+            _tempContextId: actionToProcess.payload._tempContextId,
+            sourceCoords: actionToProcess.sourceCoords,
+          })
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else {
           // CRITICAL: Unknown GLOBAL_AUTO_APPLY action - don't let it fall through to executeAction
@@ -2700,6 +2743,9 @@ const AppInner = function AppInner() {
   // Cancels all active modes (abilityMode, cursorStack, playMode, targetingMode)
   // Called by right-click on board or cards
   const handleCancelAllModes = useCallback(() => {
+    // CRITICAL: Set timestamp to prevent targetingMode restoration in useEffect
+    cancelAllModesTimestampRef.current = Date.now()
+
     // Handle Deploy ability cancellation: remove readyDeploy and add phase-specific status
     if (abilityMode && abilityMode.isDeployAbility && abilityMode.sourceCoords) {
       const { row, col } = abilityMode.sourceCoords
@@ -2760,7 +2806,7 @@ const AppInner = function AppInner() {
     setValidHandTargets([])
     // Clear valid board targets
     setValidTargets([])
-  }, [abilityMode, cursorStack, playMode, clearTargetingMode])
+  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState, setAbilityMode, setCursorStack, setPlayMode, setValidHandTargets, setValidTargets, cancelAllModesTimestampRef])
 
   const handleDoubleClickHandCard = (player: Player, card: Card, cardIndex: number) => {
     if (abilityMode || cursorStack) {

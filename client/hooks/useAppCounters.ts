@@ -19,6 +19,9 @@ interface UseAppCountersProps {
     triggerClickWave: (location: 'board' | 'hand' | 'deck', boardCoords?: { row: number; col: number }, handTarget?: { playerId: number; cardIndex: number }) => void;
   clearTargetingMode: () => void;
   setActionQueue: React.Dispatch<React.SetStateAction<AbilityAction[]>>;
+  setValidHandTargets?: React.Dispatch<React.SetStateAction<{playerId: number, cardIndex: number}[]>>;
+  setTargetingMode?: (action: AbilityAction, playerId: number, sourceCoords?: { row: number; col: number }, boardTargets?: {row: number, col: number}[], commandContext?: CommandContext, handTargets?: {playerId: number, cardIndex: number}[]) => void;
+  abilityMode?: AbilityAction | null;
 }
 
 export const useAppCounters = ({
@@ -36,6 +39,9 @@ export const useAppCounters = ({
   triggerClickWave,
   clearTargetingMode,
   setActionQueue,
+  setValidHandTargets,
+  setTargetingMode,
+  abilityMode,
 }: UseAppCountersProps) => {
   const cursorFollowerRef = useRef<HTMLDivElement>(null)
   const mousePos = useRef({ x: 0, y: 0 })
@@ -176,6 +182,15 @@ export const useAppCounters = ({
                 return
               }
 
+              // CRITICAL: Check targetOwnerId constraint (for False Orders Option 1, Recon Drone Commit)
+              // If targetOwnerId is set, only allow placing on that specific player's hand cards
+              if (cursorStack.targetOwnerId !== undefined && cursorStack.targetOwnerId !== null && cursorStack.targetOwnerId > 0) {
+                if (playerId !== cursorStack.targetOwnerId) {
+                  // Not the target opponent - keep cursor stack active to allow retry
+                  return
+                }
+              }
+
               // CRITICAL: Clear targeting mode BEFORE handleDrop to ensure
               // the state update doesn't include the stale targetingMode
               // This fixes the issue where other players see persistent targeting highlights
@@ -199,6 +214,25 @@ export const useAppCounters = ({
 
               // Calculate remaining count AFTER this drop
               const remainingCount = cursorStack.count - 1
+
+              // CRITICAL: Update targeting mode to exclude the card that just received Revealed token
+              // This ensures the placed card is no longer highlighted as a valid target for all players
+              if (setTargetingMode && remainingCount > 0 && gameState.targetingMode) {
+                // Get current hand targets and filter out the card that just received the token
+                const currentHandTargets = gameState.targetingMode.handTargets || []
+                const updatedHandTargets = currentHandTargets.filter(t => !(t.playerId === playerId && t.cardIndex === cardIndex))
+
+                // Call setTargetingMode with updated hand targets to re-sync highlights across all players
+                // Use current targetingMode.action and other properties
+                setTargetingMode(
+                  gameState.targetingMode.action,
+                  gameState.targetingMode.playerId,
+                  gameState.targetingMode.sourceCoords,
+                  gameState.targetingMode.boardTargets,
+                  undefined, // commandContext
+                  updatedHandTargets
+                )
+              }
 
               if (remainingCount > 0) {
                 setCursorStack(prev => prev ? ({ ...prev, count: remainingCount }) : null)
@@ -242,7 +276,10 @@ export const useAppCounters = ({
                       _autoStepsContext: autoStepsContext,
                       stepContext: {
                         targetCoords: { row: -1, col: -1 },
-                        targetCard: null
+                        targetCard: null,
+                        // CRITICAL: Pass sourceOwnerId for False Orders Option 1
+                        // This ensures Revealed tokens target the correct player's hand
+                        sourceOwnerId: playerId, // Use the player whose hand card was targeted
                       }
                     }
                   }
@@ -348,7 +385,10 @@ export const useAppCounters = ({
                     _autoStepsContext: autoStepsContext,
                     stepContext: {
                       targetCoords: { row: -1, col: -1 },
-                      targetCard: null
+                      targetCard: null,
+                      // CRITICAL: Pass sourceOwnerId for False Orders Option 1
+                      // This ensures Revealed tokens target the correct player's hand
+                      sourceOwnerId: playerId, // Use the player whose hand card was targeted
                     }
                   }
                 }
@@ -394,6 +434,8 @@ export const useAppCounters = ({
                   requiredTargetStatus: cursorStack.requiredTargetStatus,
                   mustBeAdjacentToSource: cursorStack.mustBeAdjacentToSource,
                   mustBeInLineWithSource: cursorStack.mustBeInLineWithSource,
+                  maxDistanceFromSource: cursorStack.maxDistanceFromSource,
+                  maxOrthogonalDistance: cursorStack.maxOrthogonalDistance,
                   sourceCoords: cursorStack.sourceCoords,
                   tokenType: cursorStack.type,
                 }
@@ -454,6 +496,9 @@ export const useAppCounters = ({
                   ...(cursorStack.recordContext ? {
                     lastMovedCardCoords: { row, col },
                     lastMovedCardId: targetCard.id,
+                    // CRITICAL: Store target card's owner ID for False Orders Option 1
+                    // This allows Revealed tokens to target the correct player's hand
+                    sourceOwnerId: targetCard.ownerId,
                   } : {}),
                 }))
 
@@ -503,6 +548,11 @@ export const useAppCounters = ({
                         chained.sourceCoords = { row, col }
                       }
                     }
+                    // CRITICAL: Set _sourceOwnerId for False Orders Option 1 chainedAction
+                    // This ensures Revealed tokens target the correct player's hand when chainedAction is executed
+                    if (cursorStack.recordContext && targetCard.ownerId !== undefined) {
+                      chained._sourceOwnerId = targetCard.ownerId
+                    }
                     // For CREATE_STACK chained actions (e.g., False Orders Reveal), clear abilityMode to remove board highlights
                     if (chained.type === 'CREATE_STACK') {
                       setAbilityMode(null)
@@ -544,6 +594,9 @@ export const useAppCounters = ({
                               targetCoords: { row, col },
                               targetCard: targetCard,
                               lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                              // CRITICAL: Pass sourceOwnerId for False Orders Option 1
+                              // This ensures Revealed tokens target the correct player's hand
+                              sourceOwnerId: targetCard.ownerId,
                             }
                           }
                         }
@@ -563,6 +616,11 @@ export const useAppCounters = ({
                       })
                     } else {
                       // Fallback: execute directly if setActionQueue not available
+                      // CRITICAL: Add sourceOwnerId to chainedAction for False Orders Option 1
+                      // This ensures Revealed tokens target the correct player's hand
+                      if (cursorStack.recordContext && targetCard.ownerId !== undefined) {
+                        chained._sourceOwnerId = targetCard.ownerId
+                      }
                       onAction(chained, { row, col })
                       // Also continue AUTO_STEPS if applicable
                       if (cursorStack._autoStepsContext) {
@@ -580,6 +638,9 @@ export const useAppCounters = ({
                               targetCoords: { row, col },
                               targetCard: targetCard,
                               lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                              // CRITICAL: Pass sourceOwnerId for False Orders Option 1
+                              // This ensures Revealed tokens target the correct player's hand
+                              sourceOwnerId: targetCard.ownerId,
                             }
                           }
                         }
@@ -605,6 +666,9 @@ export const useAppCounters = ({
                           targetCoords: { row, col },
                           targetCard: targetCard,
                           lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                          // CRITICAL: Pass sourceOwnerId for False Orders Option 1
+                          // This ensures Revealed tokens target the correct player's hand
+                          sourceOwnerId: targetCard.ownerId,
                         }
                       }
                     }

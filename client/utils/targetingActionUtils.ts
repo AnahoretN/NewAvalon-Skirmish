@@ -24,6 +24,9 @@ export function createTargetingActionFromCursorStack(
     type: 'ENTER_MODE',
     mode: 'SELECT_TARGET',
     sourceCoords: cursorStack.sourceCoords,
+    // CRITICAL: Include sourceCard so sourceCardOwnerId is available for targeting mode
+    // This fixes False Orders Option 1 where the targeting mode needs to show the correct player color
+    sourceCard: cursorStack.sourceCard,
     payload: {
       filter: (card: Card) => {
         // Check if token allows hand targeting (universal rule)
@@ -87,13 +90,14 @@ export function createTargetingActionFromAbilityMode(abilityMode: AbilityAction)
 
 /**
  * Determine targeting player ID based on priority:
- * 1. commandModalCard.ownerId
- * 2. abilityMode.sourceCoords -> card.ownerId
- * 3. cursorStack.originalOwnerId (for token stacking - token owner, not card owner)
- * 4. cursorStack.sourceCard.ownerId (fallback for legacy cursorStack)
- * 5. gameState.activePlayerId
- * 6. localPlayerId
- * 7. actorId
+ * 1. cursorStack.originalOwnerId (for token stacking - token owner, not card owner)
+ * 2. targetingAction.originalOwnerId (for multi-step commands like False Orders)
+ * 3. commandModalCard.ownerId (for command cards)
+ * 4. abilityMode.sourceCoords -> card.ownerId (for abilities on cards)
+ * 5. cursorStack.sourceCard.ownerId (legacy fallback for abilities on cards)
+ * 6. gameState.activePlayerId
+ * 7. localPlayerId
+ * 8. actorId
  */
 export function determineTargetingPlayerId(
   commandModalCard: Card | null,
@@ -102,16 +106,32 @@ export function determineTargetingPlayerId(
   gameState: GameState,
   localPlayerId: number | null,
   actorId: number,
-  boardSize: number
+  boardSize: number,
+  targetingAction?: AbilityAction | null
 ): number {
   let targetingPlayerId: number | null = null
 
-  // Priority 1: commandModalCard.ownerId (for command cards)
-  if (commandModalCard?.ownerId !== undefined && typeof commandModalCard.ownerId === 'number') {
+  // Priority 1: cursorStack.originalOwnerId (for token stacking from counters)
+  // This ensures tokens like Revealed show the correct player's color (token owner)
+  // CRITICAL: This takes priority over targetingAction.originalOwnerId because cursorStack
+  // represents the actual token being placed, while targetingAction is a derived action
+  if (cursorStack?.originalOwnerId !== undefined && typeof cursorStack.originalOwnerId === 'number') {
+    targetingPlayerId = cursorStack.originalOwnerId
+  }
+
+  // Priority 2: targetingAction.originalOwnerId (for multi-step commands like False Orders)
+  // This ensures the targeting mode uses the token owner's color, not the local player's color
+  // Only used if cursorStack doesn't have originalOwnerId set
+  if (targetingPlayerId === null && targetingAction?.originalOwnerId !== undefined && typeof targetingAction.originalOwnerId === 'number') {
+    targetingPlayerId = targetingAction.originalOwnerId
+  }
+
+  // Priority 3: commandModalCard.ownerId (for command cards)
+  if (targetingPlayerId === null && commandModalCard?.ownerId !== undefined && typeof commandModalCard.ownerId === 'number') {
     targetingPlayerId = commandModalCard.ownerId
   }
 
-  // Priority 2: abilityMode.sourceCoords -> card.ownerId (for abilities on cards)
+  // Priority 4: abilityMode.sourceCoords -> card.ownerId (for abilities on cards)
   if (targetingPlayerId === null && abilityMode?.sourceCoords) {
     const { row, col } = abilityMode.sourceCoords
     if (row >= 0 && row < boardSize && col >= 0 && col < gameState.board[row].length) {
@@ -122,13 +142,7 @@ export function determineTargetingPlayerId(
     }
   }
 
-  // Priority 3: cursorStack.originalOwnerId (for token stacking from counters)
-  // This ensures tokens like Revealed show the correct player's color (token owner)
-  if (targetingPlayerId === null && cursorStack?.originalOwnerId !== undefined && typeof cursorStack.originalOwnerId === 'number') {
-    targetingPlayerId = cursorStack.originalOwnerId
-  }
-
-  // Priority 4: cursorStack.sourceCard.ownerId (legacy fallback for abilities on cards)
+  // Priority 5: cursorStack.sourceCard.ownerId (legacy fallback for abilities on cards)
   if (targetingPlayerId === null && cursorStack?.sourceCard?.ownerId !== undefined && typeof cursorStack.sourceCard.ownerId === 'number') {
     targetingPlayerId = cursorStack.sourceCard.ownerId
   }

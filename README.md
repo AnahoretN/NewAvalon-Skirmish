@@ -14,6 +14,8 @@ The game is available at: **[anahoretN.github.io/NewAvalon-Skirmish](https://ana
 
 The game uses **WebRTC Peer-to-Peer** architecture - no server required for gameplay!
 
+> **Note**: WebRTC P2P Mode is the only mode currently under active development. The traditional WebSocket Server Mode exists in the codebase but is not being maintained or developed at this time.
+
 ### Host a Game
 
 1. Open the game

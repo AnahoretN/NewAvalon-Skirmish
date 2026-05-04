@@ -651,7 +651,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           // Check AFTER personalToGameState, delete from fullState
           if (targetingModeLocallyClearedRef.current && fullState.targetingMode) {
             delete fullState.targetingMode
-            console.log('[useGameState] Preserving cleared targetingMode, removing from fullState')
           }
 
           // Defer state update to avoid flushSync during render cycle
@@ -1222,6 +1221,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   const drawCardsBatch = useCallback((playerId: number, count: number) => {
     // Draw multiple cards for a player
     // Used by Tactical Maneuver, Inspiration, and other abilities
+    console.log('[drawCardsBatch] Called:', { playerId, count, timestamp: Date.now() })
     sendAction('DRAW_CARDS_BATCH', { count, targetPlayerId: playerId })
   }, [sendAction])
 

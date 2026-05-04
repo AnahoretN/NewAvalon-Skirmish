@@ -148,15 +148,6 @@ function buildDecksData(): Record<string, Card[]> {
 
       const isCommandCard = _commandCardIds.has(deckEntry.cardId)
 
-      // Debug: Log command card definition
-      if (isCommandCard) {
-        console.log('[buildDecksData] Processing command card:', deckEntry.cardId, {
-          hasABILITIES: !!(cardDef as any).ABILITIES,
-          abilitiesCount: (cardDef as any).ABILITIES?.length || 0,
-          keys: Object.keys(cardDef)
-        })
-      }
-
       // Add the specified quantity of each card to the deck
       for (let i = 0; i < deckEntry.quantity; i++) {
         // Use a collision-safe key encoding (base64url-like)
@@ -171,13 +162,6 @@ function buildDecksData(): Record<string, Card[]> {
             baseId: deckEntry.cardId, // Set baseId for localization
             faction: cardDef.faction || 'Command',
           }
-          // Debug: Log command card creation
-          console.log('[buildDecksData] Created command card:', {
-            id: card.id,
-            baseId: card.baseId,
-            hasABILITIES: !!(card as any).ABILITIES,
-            abilitiesCount: (card as any).ABILITIES?.length || 0
-          })
           deckCardList.push(card)
         } else {
           deckCardList.push({

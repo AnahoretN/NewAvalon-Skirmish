@@ -63,21 +63,7 @@ export function handleHandCardClick(
     onAction,
   } = props
 
-  console.log('[HAND_CARD_CLICK] Clicked:', {
-    cardName: card.name,
-    cardIndex,
-    playerId: player.id,
-    interactionLock: interactionLock.current,
-    hasCursorStack: !!cursorStack,
-    cursorStackType: cursorStack?.type,
-    hasAbilityMode: !!abilityMode,
-    abilityModeType: abilityMode?.type,
-    abilityModeMode: abilityMode?.mode,
-    actionType: abilityMode?.payload?.actionType,
-  })
-
   if (interactionLock.current) {
-    console.log('[HAND_CARD_CLICK] BLOCKED by interactionLock')
     return
   }
 
@@ -110,8 +96,13 @@ export function handleHandCardClick(
       cursorStack.originalOwnerId // CRITICAL: Pass token owner ID for command cards
     )
 
-      // Apply the token/status to the card
-      if (cursorStack.type === 'Revealed') {
+    // CRITICAL: Only apply token if target is valid
+    if (!isValid) {
+      return
+    }
+
+    // Apply the token/status to the card
+    if (cursorStack.type === 'Revealed') {
         // For Revealed, we need to request reveal or add status
         const effectiveActorId = cursorStack.sourceCard?.ownerId ?? gameState.activePlayerId ?? localPlayerId ?? 1
         if (!card.statuses) {
@@ -216,8 +207,6 @@ export function handleHandCardClick(
   if (abilityMode?.type === 'ENTER_MODE' && abilityMode.mode === 'SELECT_TARGET') {
     const { payload, sourceCoords, isDeployAbility, sourceCard, readyStatusToRemove } = abilityMode
 
-    console.log('[HAND_CARD_CLICK] Inside SELECT_TARGET block, actionType:', payload.actionType)
-
     // Trigger hand card selection effect visible to all players via WebSocket (before any filtering)
     triggerHandCardSelection(player.id, cardIndex, gameState.activePlayerId ?? localPlayerId ?? 1)
 
@@ -306,23 +295,14 @@ export function handleHandCardClick(
 
       // Apply filter to validate the card
       if (payload.filter && !payload.filter(card)) {
-        console.log('[HAND_CARD_CLICK] Filter failed, card:', card.name)
         return
       }
       // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
       // This fixes the issue where sourceCard?.ownerId might be undefined
       const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
-      console.log('[HAND_CARD_CLICK] Owner check:', {
-        playerId: player.id,
-        sourceOwnerId,
-        sourceCardName: sourceCard?.name,
-        localPlayerId,
-      })
       if (player.id !== sourceOwnerId) {
-        console.log('[HAND_CARD_CLICK] Owner check FAILED')
         return
       } // Only discard own cards
-      console.log('[HAND_CARD_CLICK] All checks passed, discarding...')
 
       // 1. Discard the selected card
       moveItem({ card, source: 'hand', playerId: player.id, cardIndex, bypassOwnershipCheck: true }, { target: 'discard', playerId: player.id })

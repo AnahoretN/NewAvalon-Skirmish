@@ -274,10 +274,43 @@ export function buildActionFromContentAbility(
 
     // CRITICAL: For command cards, add a final cleanup step to discard the card
     // This ensures all command cards are discarded after their steps complete
-    let stepsWithCleanup = ability.steps
+    let stepsWithCleanup = ability.steps.map((step: any, index: number) => {
+      // CRITICAL: Convert chainedAction from {action, details} to {type, payload} format
+      // This fixes Tactical Maneuver where chainedAction uses old format
+      if (step.chainedAction && typeof step.chainedAction === 'object') {
+        console.log('[buildActionFromContentAbility] Converting chainedAction for step', index, ':', {
+          stepAction: step.action,
+          stepMode: step.mode,
+          hasChainedAction: !!step.chainedAction,
+          originalChainedAction: step.chainedAction,
+        })
+        // CRITICAL: Create new chainedAction without old {action, details} properties
+        // This prevents confusion between old and new formats
+        const convertedChainedAction: any = {
+          type: step.chainedAction.action || step.chainedAction.type,
+          payload: step.chainedAction.details || step.chainedAction.payload,
+        }
+        // Only copy other properties if they're not action/details
+        Object.keys(step.chainedAction).forEach(key => {
+          if (key !== 'action' && key !== 'details' && key !== 'type' && key !== 'payload') {
+            convertedChainedAction[key] = step.chainedAction[key]
+          }
+        })
+        const converted = {
+          ...step,
+          chainedAction: convertedChainedAction
+        }
+        console.log('[buildActionFromContentAbility] Converted chainedAction:', {
+          convertedType: converted.chainedAction.type,
+          convertedPayload: converted.chainedAction.payload,
+        })
+        return converted
+      }
+      return step
+    })
     if (ability.type === 'command') {
       stepsWithCleanup = [
-        ...ability.steps,
+        ...stepsWithCleanup,
         {
           action: 'GLOBAL_AUTO_APPLY',
           mode: null,
@@ -302,7 +335,10 @@ export function buildActionFromContentAbility(
         // Store original ability type for ready status tracking
         originalType: ability.type,
         // Copy supportRequired from ability level
-        supportRequired: ability.supportRequired
+        supportRequired: ability.supportRequired,
+        // CRITICAL: Store command card ID for cleanup (Tactical Maneuver, etc.)
+        // This ensures we can find the correct command card to discard after execution
+        commandCardId: card.id
       }
     } as AbilityAction
 
@@ -358,6 +394,8 @@ export function buildActionFromContentAbility(
         targetOwnerId,
         excludeOwnerId,
         targetType: details.targetType,
+        targetLocation: details.targetLocation,
+        allowHandTargets: details.allowHandTargets,
         // Pass through other properties needed for chained actions
         recordContext: details.recordContext,
         // CRITICAL: chainedAction is at ability level, not in details
@@ -499,13 +537,38 @@ export function buildActionFromContentAbility(
         payload
       } as AbilityAction
 
-      // IMPORTANT: Preserve these properties from original ability.details at the TOP LEVEL
+      // IMPORTANT: Preserve these properties at the TOP LEVEL (not in payload)
       // modeHandlers.ts expects abilityMode.chainedAction, not abilityMode.payload.chainedAction
+      // CRITICAL: Check ability object first (step-level props), then fall back to ability.details
+      // This fixes Tactical Manever where chainedAction is at step level, not in details
       const originalDetails = ability.details || {}
       const topLevelProps = ['chainedAction', 'skipChainedActionOnNoTargets']
       for (const prop of topLevelProps) {
-        if (originalDetails[prop] !== undefined) {
-          (action as any)[prop] = originalDetails[prop]
+        // First check if property exists on ability itself (step level)
+        if ((ability as any)[prop] !== undefined) {
+          let value = (ability as any)[prop]
+          // CRITICAL: Convert chainedAction from {action, details} to {type, payload} format
+          if (prop === 'chainedAction' && value && typeof value === 'object') {
+            value = {
+              ...value,
+              type: value.action || value.type,
+              payload: value.details || value.payload,
+            }
+          }
+          (action as any)[prop] = value
+        }
+        // Fall back to checking ability.details
+        else if (originalDetails[prop] !== undefined) {
+          let value = originalDetails[prop]
+          // Also convert format if coming from details
+          if (prop === 'chainedAction' && value && typeof value === 'object') {
+            value = {
+              ...value,
+              type: value.action || value.type,
+              payload: value.details || value.payload,
+            }
+          }
+          (action as any)[prop] = value
         }
       }
 
