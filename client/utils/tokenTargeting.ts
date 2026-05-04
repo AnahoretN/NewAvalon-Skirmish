@@ -99,12 +99,20 @@ export function createTokenCursorStack(
   }
 
   // Debug logging for distance constraints
-  console.log('[createTokenCursorStack] Distance constraints:', {
+  console.log('[createTokenCursorStack] Result properties:', {
     tokenType,
-    maxDistanceFromSource: result.maxDistanceFromSource,
-    maxOrthogonalDistance: result.maxOrthogonalDistance,
-    sourceCoords: result.sourceCoords,
+    type: result.type,
+    count: result.count,
+    targetOwnerId: result.targetOwnerId,
+    onlyOpponents: result.onlyOpponents,
+    onlyFaceDown: result.onlyFaceDown,
+    excludeOwnerId: result.excludeOwnerId,
     modificationsKeys: modifications ? Object.keys(modifications) : [],
+    modificationsValues: modifications ? {
+      targetOwnerId: modifications.targetOwnerId,
+      onlyOpponents: modifications.onlyOpponents,
+      onlyFaceDown: modifications.onlyFaceDown,
+    } : {},
   })
 
   return result

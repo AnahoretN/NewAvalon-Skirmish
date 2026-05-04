@@ -45,6 +45,10 @@ export const useAppCounters = ({
 }: UseAppCountersProps) => {
   const cursorFollowerRef = useRef<HTMLDivElement>(null)
   const mousePos = useRef({ x: 0, y: 0 })
+  // CRITICAL: Track when cursorStack was just created for hand-targeting to prevent premature clearing
+  // This fixes Data Interception/Enhanced Interrogation where new Revealed cursorStack
+  // is created but old useEffect sees previous cursorStack and clears it
+  const handTargetingCursorStackJustCreated = useRef(false)
 
   // Initial positioning layout effect
   useLayoutEffect(() => {
@@ -264,8 +268,10 @@ export const useAppCounters = ({
                     onAction(chained, { row: -1, col: -1 })
                   }
                 } else if (cursorStack._autoStepsContext) {
-                  // CRITICAL: currentStepIndex in _autoStepsContext already points to the NEXT step
+                  // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
+                  // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                   const autoStepsContext = { ...cursorStack._autoStepsContext }
+                  const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
                   const continueAction: any = {
                     type: 'CONTINUE_AUTO_STEPS',
                     sourceCard: cursorStack.sourceCard,
@@ -273,7 +279,10 @@ export const useAppCounters = ({
                     isDeployAbility: cursorStack.isDeployAbility,
                     readyStatusToRemove: cursorStack.readyStatusToRemove,
                     payload: {
-                      _autoStepsContext: autoStepsContext,
+                      _autoStepsContext: {
+                        ...autoStepsContext,
+                        currentStepIndex: completedStepIndex,
+                      },
                       stepContext: {
                         targetCoords: { row: -1, col: -1 },
                         targetCard: null,
@@ -373,8 +382,10 @@ export const useAppCounters = ({
                   onAction(chained, { row: -1, col: -1 })
                 }
               } else if (cursorStack._autoStepsContext) {
-                // CRITICAL: currentStepIndex in _autoStepsContext already points to the NEXT step
+                // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
+                // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                 const autoStepsContext = { ...cursorStack._autoStepsContext }
+                const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
                 const continueAction: any = {
                   type: 'CONTINUE_AUTO_STEPS',
                   sourceCard: cursorStack.sourceCard,
@@ -382,7 +393,10 @@ export const useAppCounters = ({
                   isDeployAbility: cursorStack.isDeployAbility,
                   readyStatusToRemove: cursorStack.readyStatusToRemove,
                   payload: {
-                    _autoStepsContext: autoStepsContext,
+                    _autoStepsContext: {
+                      ...autoStepsContext,
+                      currentStepIndex: completedStepIndex,
+                    },
                     stepContext: {
                       targetCoords: { row: -1, col: -1 },
                       targetCard: null,
@@ -579,9 +593,10 @@ export const useAppCounters = ({
                       // This ensures command cards are discarded after all steps complete
                       const actionsToQueue: any[] = [chained]
                       if (cursorStack._autoStepsContext) {
-                        // CRITICAL: currentStepIndex in _autoStepsContext already points to the NEXT step
-                        // (set to nextStepIndex + 1 in handleCreateStack), so we don't increment it here
+                        // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
+                        // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
+                        const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
                           sourceCard: cursorStack.sourceCard,
@@ -589,7 +604,10 @@ export const useAppCounters = ({
                           isDeployAbility: cursorStack.isDeployAbility,
                           readyStatusToRemove: cursorStack.readyStatusToRemove,
                           payload: {
-                            _autoStepsContext: autoStepsContext,
+                            _autoStepsContext: {
+                              ...autoStepsContext,
+                              currentStepIndex: completedStepIndex,
+                            },
                             stepContext: {
                               targetCoords: { row, col },
                               targetCard: targetCard,
@@ -601,7 +619,7 @@ export const useAppCounters = ({
                           }
                         }
                         actionsToQueue.push(continueAction)
-                        console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS after chainedAction, stepIndex:', autoStepsContext.currentStepIndex)
+                        console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS after chainedAction, stepIndex:', completedStepIndex)
                       }
 
                       setActionQueue(prev => {
@@ -624,8 +642,10 @@ export const useAppCounters = ({
                       onAction(chained, { row, col })
                       // Also continue AUTO_STEPS if applicable
                       if (cursorStack._autoStepsContext) {
-                        // CRITICAL: currentStepIndex in _autoStepsContext already points to the NEXT step
+                        // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
+                        // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
+                        const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
                           sourceCard: cursorStack.sourceCard,
@@ -633,7 +653,10 @@ export const useAppCounters = ({
                           isDeployAbility: cursorStack.isDeployAbility,
                           readyStatusToRemove: cursorStack.readyStatusToRemove,
                           payload: {
-                            _autoStepsContext: autoStepsContext,
+                            _autoStepsContext: {
+                              ...autoStepsContext,
+                              currentStepIndex: completedStepIndex,
+                            },
                             stepContext: {
                               targetCoords: { row, col },
                               targetCard: targetCard,
@@ -649,9 +672,13 @@ export const useAppCounters = ({
                     }
                   } else if (cursorStack._autoStepsContext) {
                     // AUTO_STEPS continuation after cursorStack completes (Zius Setup, Centurion Commit, etc.)
-                    // CRITICAL: currentStepIndex in _autoStepsContext already points to the NEXT step
-                    // (set to nextStepIndex + 1 in handleCreateStack), so we don't increment it here
+                    // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
+                    // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                     const autoStepsContext = { ...cursorStack._autoStepsContext }
+                    const originalStepIndex = autoStepsContext.currentStepIndex
+                    // Use currentStepIndex - 1 as the completed step index for CREATE_STACK
+                    // This fixes Enhanced Interrogation Option 2 where step index wasn't advancing
+                    const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
 
                     // CRITICAL: Check if there's a chainedAction from the current step that needs to execute
                     // This fixes Temporary Shelter where REMOVE_ALL_AIM_FROM_CONTEXT must execute after Shield placement
@@ -665,9 +692,12 @@ export const useAppCounters = ({
                       chainedActionType,
                       chainedActionPayloadCustomAction,
                       cursorStackKeys: Object.keys(cursorStack),
+                      originalStepIndex,
+                      completedStepIndex,
                     })
 
                     // Create CONTINUE_AUTO_STEPS action with stepContext (where the token was placed)
+                    // CRITICAL: Pass completedStepIndex as currentStepIndex for handleContinueAutoSteps
                     const continueAction: any = {
                       type: 'CONTINUE_AUTO_STEPS',
                       sourceCard: cursorStack.sourceCard,
@@ -675,7 +705,10 @@ export const useAppCounters = ({
                       isDeployAbility: cursorStack.isDeployAbility,
                       readyStatusToRemove: cursorStack.readyStatusToRemove,
                       payload: {
-                        _autoStepsContext: autoStepsContext,
+                        _autoStepsContext: {
+                          ...autoStepsContext,
+                          currentStepIndex: completedStepIndex,
+                        },
                         stepContext: {
                           targetCoords: { row, col },
                           targetCard: targetCard,
@@ -728,14 +761,37 @@ export const useAppCounters = ({
                     clearTargetingMode()
                   } else {
                     // Still have more AUTO_STEPS
-                    // CRITICAL: Clear targetingMode AND cursorStack synchronously
-                    // The next step (CONTINUE_AUTO_STEPS) will restore targetingMode if needed
-                    // This fixes Overwatch Option 2 where targetingMode stays active after token placement
-                    console.log('[useAppCounters] More AUTO_STEPS remaining, clearing targetingMode and cursorStack, keeping abilityMode')
-                    flushSync(() => {
-                      setCursorStack(null)
-                    })
-                    clearTargetingMode()
+                    // CRITICAL: Use setTimeout to give React time to update cursorStack state
+                    // This fixes Data Interception/Enhanced Interrogation where new Revealed cursorStack
+                    // is created but immediate check sees old cursorStack (Exploit) and clears it
+                    setTimeout(() => {
+                      // Check the NEW cursorStack after React state update
+                      setCursorStack(currentStack => {
+                        if (!currentStack) {
+                          console.log('[useAppCounters] No cursorStack after AUTO_STEPS, already cleared')
+                          return null
+                        }
+                        const isHandTargeting = currentStack.targetOwnerId === -1 ||
+                          (currentStack.onlyOpponents && currentStack.onlyFaceDown)
+                        console.log('[useAppCounters] Delayed check after AUTO_STEPS:', {
+                          cursorStackType: currentStack.type,
+                          cursorStackTargetOwnerId: currentStack.targetOwnerId,
+                          cursorStackOnlyOpponents: currentStack.onlyOpponents,
+                          cursorStackOnlyFaceDown: currentStack.onlyFaceDown,
+                          isHandTargeting,
+                        })
+                        if (isHandTargeting) {
+                          // For hand targeting, keep cursorStack so user can place tokens
+                          console.log('[useAppCounters] Hand-targeting detected, keeping cursorStack')
+                          return currentStack
+                        } else {
+                          // For board targeting, clear cursorStack
+                          console.log('[useAppCounters] Board-targeting, clearing cursorStack')
+                          clearTargetingMode()
+                          return null
+                        }
+                      })
+                    }, 0)
                   }
                 }
                 interactionLock.current = true

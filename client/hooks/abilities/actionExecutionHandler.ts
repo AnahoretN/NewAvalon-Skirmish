@@ -258,6 +258,8 @@ function handleContinueAutoSteps(
     stepContextTargetOwnerId: (stepContext as any)?._sourceOwnerId,
     hasChainedAction: !!chainedActionFromStep,
     chainedActionType: chainedActionFromStep?.type,
+    stepContextLastPlacedToken: stepContext?.lastPlacedToken,
+    commandContextLastPlacedToken: commandContext?.lastPlacedToken,
   })
 
   // CRITICAL: currentStepIndex is the COMPLETED step index from autoStepsContext
@@ -296,7 +298,7 @@ function handleContinueAutoSteps(
   }
 
   // Call advanceToNextStepWithCoords with the necessary props
-  // Pass completedStepIndex - advanceToNextStepWithCoords will add 1 to get nextStepIndex
+  // CRITICAL: Pass completedStepIndex + 1 because advanceToNextStepWithCoords uses the index directly
   // Type assertion: we pass a subset of ModeHandlersProps
   advanceToNextStepWithCoords(
     {
@@ -315,7 +317,7 @@ function handleContinueAutoSteps(
       handleActionExecution,
     } as any,
     sourceCoords,
-    completedStepIndex,
+    completedStepIndex + 1,
     stepContext,
     chainedActionFromStep
   )
@@ -657,10 +659,15 @@ function handleGlobalAutoApply(
     console.log('[handleGlobalAutoApply] CLEANUP_COMMAND triggered, discarding command card')
     markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
 
-    // CRITICAL: Use commandCardId from _autoStepsContext if available (Tactical Maneuver, etc.)
+    // CRITICAL: Use commandCardId and commandCardOwnerId from _autoStepsContext if available
     // This ensures we discard the correct command card even after sourceCard was replaced
+    // (e.g., Data Interception Option 2, Enhanced Interrogation Option 2)
     const autoStepsContext = (action.payload as any)?._autoStepsContext
     const commandCardId = autoStepsContext?.commandCardId || action.sourceCard?.id
+
+    // CRITICAL: Use stored commandCardOwnerId to find the correct player's announced card
+    // This fixes issues where sourceCard.ownerId is the moved card's owner, not command owner
+    const ownerId = autoStepsContext?.commandCardOwnerId ?? action.sourceCard?.ownerId ?? localPlayerId ?? 0
 
     // CRITICAL: Verify the card is actually a command card (starts with CMD_)
     // If sourceCard is not a command card, don't use it for cleanup
@@ -670,14 +677,13 @@ function handleGlobalAutoApply(
       finalCardId = commandCardId
     }
 
-    const ownerId = action.sourceCard?.ownerId ?? localPlayerId ?? 0
-
     console.log('[handleGlobalAutoApply] Sending CLEANUP_COMMAND:', {
       ownerId,
       cardId: finalCardId,
       sourceCard: action.sourceCard,
       hasAutoStepsContext: !!autoStepsContext,
       commandCardId: autoStepsContext?.commandCardId,
+      commandCardOwnerId: autoStepsContext?.commandCardOwnerId,
       sourceCardIsCommand: action.sourceCard?.id?.startsWith('CMD_')
     })
 
@@ -892,9 +898,14 @@ function handleCreateStack(
 
   // Handle Dynamic Count
   if (action.dynamicCount) {
-    const { factor, ownerId } = action.dynamicCount
+    const { factor, ownerId: rawOwnerId } = action.dynamicCount
     let dynamic = 0
     const tokenLocations: {row: number, col: number, cardName: string}[] = []
+
+    // CRITICAL: Resolve "source" string to actual owner ID for dynamicCount
+    // This fixes Enhanced Interrogation where dynamicCount.ownerId is "source" string
+    const sourceOwnerIdForResolution = action.sourceCard?.ownerId ?? actionSourceOwnerId ?? localPlayerId ?? 0
+    const ownerId = rawOwnerId === 'source' ? sourceOwnerIdForResolution : rawOwnerId
 
     // CRITICAL: Use getFreshGameState() instead of gameState to get the most up-to-date state
     // This fixes commands like Data Interception where dynamicCount needs to see tokens
@@ -931,6 +942,16 @@ function handleCreateStack(
     }
 
     // DIAGNOSTIC: Log dynamic count calculation with detailed info
+    console.log('[CREATE_STACK] Dynamic count calculation:', {
+      factor,
+      ownerId,
+      dynamic,
+      tokenLocations,
+      tokenLocationsCount: tokenLocations.length,
+      justPlacedCounted,
+      finalCount: dynamic,
+      tokenType: action.tokenType || action.payload?.tokenType,
+    })
 
     count = dynamic
   }
@@ -1049,6 +1070,20 @@ function handleCreateStack(
       _originalReadyStatusToRemove: action.readyStatusToRemove,
     }
 
+    // DIAGNOSTIC: Log modifications to verify onlyOpponents and onlyFaceDown are set
+    console.log('[CREATE_STACK] modifications created:', {
+      tokenType: action.tokenType || action.payload?.tokenType,
+      modificationsTargetOwnerId: modifications.targetOwnerId,
+      modificationsOnlyOpponents: modifications.onlyOpponents,
+      modificationsOnlyFaceDown: modifications.onlyFaceDown,
+      actionOnlyOpponents: action.onlyOpponents,
+      actionOnlyFaceDown: action.onlyFaceDown,
+      payloadPropsOnlyOpponents: payloadProps.onlyOpponents,
+      payloadPropsOnlyFaceDown: payloadProps.onlyFaceDown,
+      detailsPropsOnlyOpponents: detailsProps.onlyOpponents,
+      detailsPropsOnlyFaceDown: detailsProps.onlyFaceDown,
+    })
+
     // CRITICAL: Read tokenType from both action and payload (chained actions use payload format)
     // This fixes False Orders option 1 where chainedAction has tokenType in payload
     const tokenType = action.tokenType || action.payload?.tokenType || 'Aim'
@@ -1163,6 +1198,7 @@ function handleCreateStack(
       console.log('[CREATE_CURSOR_STACK] Specific target branch:', {
         tokenType,
         tokenOwnerId,
+        count,
         targetOwnerId,
         modificationsTargetOwnerId: modifications.targetOwnerId,
         modificationsExcludeOwnerId: modifications.excludeOwnerId,
@@ -1525,6 +1561,7 @@ function handleCreateStack(
       console.log('[CREATE_CURSOR_STACK] Before creating cursorStack:', {
         tokenType,
         tokenOwnerId,
+        count,
         modificationsTargetOwnerId: modifications.targetOwnerId,
         modificationsExcludeOwnerId: modifications.excludeOwnerId,
         actionTargetOwnerId: action.targetOwnerId,
@@ -1541,6 +1578,7 @@ function handleCreateStack(
       console.log('[CREATE_CURSOR_STACK] Board token placement:', {
         tokenType,
         tokenOwnerId,
+        count,
         modificationsTargetOwnerId: modifications.targetOwnerId,
         modificationsExcludeOwnerId: modifications.excludeOwnerId,
       })

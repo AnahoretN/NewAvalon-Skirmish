@@ -275,38 +275,49 @@ export function buildActionFromContentAbility(
     // CRITICAL: For command cards, add a final cleanup step to discard the card
     // This ensures all command cards are discarded after their steps complete
     let stepsWithCleanup = ability.steps.map((step: any, index: number) => {
+      // Create a copy of the step to avoid mutating the original
+      const processedStep = { ...step }
+
+      // CRITICAL: Resolve "source" string to actual owner ID for dynamicCount
+      // This fixes Enhanced Interrogation where dynamicCount.ownerId is "source" string
+      if (processedStep.details?.dynamicCount?.ownerId === 'source') {
+        processedStep.details = {
+          ...processedStep.details,
+          dynamicCount: {
+            ...processedStep.details.dynamicCount,
+            ownerId: ownerId
+          }
+        }
+      }
+
       // CRITICAL: Convert chainedAction from {action, details} to {type, payload} format
       // This fixes Tactical Maneuver where chainedAction uses old format
-      if (step.chainedAction && typeof step.chainedAction === 'object') {
+      if (processedStep.chainedAction && typeof processedStep.chainedAction === 'object') {
         console.log('[buildActionFromContentAbility] Converting chainedAction for step', index, ':', {
-          stepAction: step.action,
-          stepMode: step.mode,
-          hasChainedAction: !!step.chainedAction,
-          originalChainedAction: step.chainedAction,
+          stepAction: processedStep.action,
+          stepMode: processedStep.mode,
+          hasChainedAction: !!processedStep.chainedAction,
+          originalChainedAction: processedStep.chainedAction,
         })
         // CRITICAL: Create new chainedAction without old {action, details} properties
         // This prevents confusion between old and new formats
         const convertedChainedAction: any = {
-          type: step.chainedAction.action || step.chainedAction.type,
-          payload: step.chainedAction.details || step.chainedAction.payload,
+          type: processedStep.chainedAction.action || processedStep.chainedAction.type,
+          payload: processedStep.chainedAction.details || processedStep.chainedAction.payload,
         }
         // Only copy other properties if they're not action/details
-        Object.keys(step.chainedAction).forEach(key => {
+        Object.keys(processedStep.chainedAction).forEach(key => {
           if (key !== 'action' && key !== 'details' && key !== 'type' && key !== 'payload') {
-            convertedChainedAction[key] = step.chainedAction[key]
+            convertedChainedAction[key] = processedStep.chainedAction[key]
           }
         })
-        const converted = {
-          ...step,
-          chainedAction: convertedChainedAction
-        }
+        processedStep.chainedAction = convertedChainedAction
         console.log('[buildActionFromContentAbility] Converted chainedAction:', {
-          convertedType: converted.chainedAction.type,
-          convertedPayload: converted.chainedAction.payload,
+          convertedType: processedStep.chainedAction.type,
+          convertedPayload: processedStep.chainedAction.payload,
         })
-        return converted
       }
-      return step
+      return processedStep
     })
     if (ability.type === 'command') {
       stepsWithCleanup = [
@@ -336,9 +347,10 @@ export function buildActionFromContentAbility(
         originalType: ability.type,
         // Copy supportRequired from ability level
         supportRequired: ability.supportRequired,
-        // CRITICAL: Store command card ID for cleanup (Tactical Maneuver, etc.)
+        // CRITICAL: Store command card ID and owner for cleanup (Tactical Maneuver, etc.)
         // This ensures we can find the correct command card to discard after execution
-        commandCardId: card.id
+        commandCardId: card.id,
+        commandCardOwnerId: card.ownerId
       }
     } as AbilityAction
 

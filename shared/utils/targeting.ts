@@ -48,8 +48,8 @@ function isLucius(card: Card): boolean {
 export const validateTarget = (
   target: { card: Card; ownerId: number; location: 'hand' | 'board'; boardCoords?: { row: number, col: number } },
   constraints: {
-        targetOwnerId?: number;
-        excludeOwnerId?: number;
+        targetOwnerId?: number | 'source';
+        excludeOwnerId?: number | 'source';
         onlyOpponents?: boolean;
         onlyFaceDown?: boolean;
         targetType?: string;
@@ -71,12 +71,14 @@ export const validateTarget = (
   // 1. Target Owner (Inclusive)
   // CRITICAL: Use != null to check for both undefined AND null
   // If targetOwnerId is not set (undefined/null), skip this check
-  if (constraints.targetOwnerId != null && constraints.targetOwnerId !== TARGET_OPPONENTS && constraints.targetOwnerId !== TARGET_MOVED_OWNER && constraints.targetOwnerId !== ownerId) {
+  // NOTE: "source" should be resolved before calling validateTarget, but if present, skip the check
+  if (constraints.targetOwnerId != null && constraints.targetOwnerId !== 'source' && constraints.targetOwnerId !== TARGET_OPPONENTS && constraints.targetOwnerId !== TARGET_MOVED_OWNER && constraints.targetOwnerId !== ownerId) {
     return false
   }
 
   // 2. Excluded Owner (Exclusive)
-  if (constraints.excludeOwnerId != null && constraints.excludeOwnerId === ownerId) {
+  // NOTE: "source" should be resolved before calling validateTarget, but if present, skip the check
+  if (constraints.excludeOwnerId != null && constraints.excludeOwnerId !== 'source' && constraints.excludeOwnerId === ownerId) {
     return false
   }
 
@@ -295,6 +297,16 @@ export const calculateValidTargets = (
 ): {row: number, col: number}[] => {
   if (!action || (action.type !== 'ENTER_MODE' && action.type !== 'CREATE_STACK' && action.type !== 'OPEN_MODAL')) {
     return []
+  }
+
+  // CRITICAL: Resolve "source" string to actual owner ID for targeting properties
+  // This fixes Enhanced Interrogation and other commands where "source" placeholder is used
+  const sourceOwnerId = action.sourceCard?.ownerId ?? commandContext?.sourceOwnerId ?? actorId ?? 0
+  if (action.targetOwnerId === 'source') {
+    (action as AbilityAction).targetOwnerId = sourceOwnerId
+  }
+  if (action.excludeOwnerId === 'source') {
+    (action as AbilityAction).excludeOwnerId = sourceOwnerId
   }
 
   // CRITICAL: Handle AUTO_STEPS by extracting the current step

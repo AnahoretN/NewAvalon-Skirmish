@@ -10,7 +10,7 @@ import type { Card, AbilityAction, CommandContext, DragItem, CursorStackState, C
 import { TIMING } from '@/utils/common'
 import { createTokenCursorStack } from '@/utils/tokenTargeting'
 import { handleLineSelection as handleLineSelectionModule } from './lineSelectionHandlers.js'
-import { buildDetailsFromContent } from '@shared/abilities/contentAbilities.js'
+import { buildDetailsFromContent, buildFilterFromString } from '@shared/abilities/contentAbilities.js'
 
 /**
  * CRITICAL: Convert chainedAction from JSON format (action/details) to AbilityAction format (type/payload)
@@ -1146,15 +1146,38 @@ export function advanceToNextStepWithCoords(
           // CRITICAL: Override targetOwnerId with resolved value (for False Orders Option 1)
           // This ensures payload.targetOwnerId is also resolved from -2 to actual owner ID
           targetOwnerId: resolvedTargetOwnerId,
+          // CRITICAL: Override dynamicCount with resolved value (Enhanced Interrogation, Data Interception)
+          // This ensures payload.dynamicCount is also resolved from "source" to actual owner ID
+          dynamicCount: resolvedDynamicCount,
+          // CRITICAL: Convert string filters to functions for command cards
+          // This fixes Enhanced Interrogation option 2 where filter "hasCounterOwner_Aim" needs to be a function
+          ...(details.filter && typeof details.filter === 'string' ? {
+            filter: buildFilterFromString(details.filter, ownerId, sourceCoords || { row: 0, col: 0 }),
+            filterString: details.filter  // Keep original string for serialization
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
+
+      // DIAGNOSTIC: Log stepAction properties
+      console.log('[advanceToNextStepWithCoords] stepAction created for CREATE_STACK:', {
+        stepActionToken: stepAction.tokenType,
+        stepActionOnlyOpponents: (stepAction as any).onlyOpponents,
+        stepActionOnlyFaceDown: (stepAction as any).onlyFaceDown,
+        stepActionTargetOwnerId: (stepAction as any).targetOwnerId,
+        detailsOnlyOpponents: details.onlyOpponents,
+        detailsOnlyFaceDown: details.onlyFaceDown,
+        detailsTargetOwnerId: details.targetOwnerId,
+        nextStepDetails: nextStep.details,
+      })
     } else if (nextStep.action === "CREATE_TOKEN") {
       // CREATE_TOKEN needs to be converted to OPEN_MODAL with PLACE_TOKEN mode
       stepAction = {
@@ -1172,12 +1195,19 @@ export function advanceToNextStepWithCoords(
           ...nextStep.details,
           tokenId: nextStep.details?.tokenId,
           range: nextStep.mode === "ADJACENT_EMPTY" ? "adjacent" : "global",
+          // CRITICAL: Convert string filters to functions for command cards
+          ...(nextStep.details?.filter && typeof nextStep.details.filter === 'string' ? {
+            filter: buildFilterFromString(nextStep.details.filter, ownerId, sourceCoords || { row: 0, col: 0 }),
+            filterString: nextStep.details.filter
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
@@ -1266,12 +1296,21 @@ export function advanceToNextStepWithCoords(
           // This fixes False Orders Option 1 where chained action needs command card owner, not unit card owner
           // When useContextCard is true, effectiveSourceCard is the unit with Exploit, but commandCard is the False Orders card
           _commandCard: (effectiveSourceCard !== sourceCard) ? sourceCard : undefined,
+          // CRITICAL: Convert string filters to functions for command cards
+          // This fixes Enhanced Interrogation option 2 where filter "hasCounterOwner_Aim" needs to be a function
+          ...(nextStep.details?.filter && typeof nextStep.details.filter === 'string' ? {
+            filter: buildFilterFromString(nextStep.details.filter, ownerId, effectiveSourceCoords),
+            filterString: nextStep.details.filter  // Keep original string for serialization
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            // Priority: autoStepsContext.commandCardId > abilityMode.payload.commandCardId > sourceCard.id
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
@@ -1299,6 +1338,14 @@ export function advanceToNextStepWithCoords(
       (stepAction.onlyOpponents || stepAction.payload?.onlyOpponents) &&
       (stepAction.onlyFaceDown || stepAction.payload?.onlyFaceDown)
 
+    console.log('[advanceToNextStepWithCoords] Checking setTargetingMode condition:', {
+      hasSetTargetingMode: !!setTargetingMode,
+      hasCalculateValidTargets: !!calculateValidTargets,
+      isLineSelectionMode,
+      isHandTargetingCreateStack,
+      stepActionMode: stepAction.mode,
+      stepActionType: stepAction.type,
+    })
 
     if (setTargetingMode && calculateValidTargets && !isLineSelectionMode && !isHandTargetingCreateStack) {
       // CRITICAL: Use getFreshGameState() to get the latest state including tokens just placed
@@ -1321,12 +1368,27 @@ export function advanceToNextStepWithCoords(
       // CRITICAL: For CREATE_STACK actions, handleActionExecution will set targeting mode
       // This fixes False Orders Option 1 where setTargetingMode was called with wrong ownerId
       if (nextStep.action === "CREATE_STACK" && props.handleActionExecution) {
+        // CRITICAL: Update commandContext with lastPlacedToken from stepContext
+        // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
+        if (stepContext?.lastPlacedToken && props.setCommandContext) {
+          props.setCommandContext(prev => ({
+            ...prev,
+            lastPlacedToken: stepContext.lastPlacedToken,
+            sourceOwnerId: stepContext.sourceOwnerId,
+          }))
+        }
         // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
         setAbilityMode(stepAction)
         // Call handleActionExecution synchronously to ensure cursorStack is set before any useEffect runs
         props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
       } else {
         // For non-CREATE_STACK actions, set targeting mode normally
+        console.log('[advanceToNextStepWithCoords] Setting targetingMode for non-CREATE_STACK action:', {
+          mode: stepAction.mode,
+          ownerId,
+          validTargetsCount: validTargets.length,
+          stepActionKeys: Object.keys(stepAction),
+        })
         setTargetingMode(stepAction, ownerId, sourceCoords, validTargets, commandContext)
         // CRITICAL: Also set abilityMode so click handlers recognize the interaction
         // This fixes SELECT_UNIT_FOR_MOVE not working in AUTO_STEPS (Data Interception option 1)
@@ -1341,6 +1403,15 @@ export function advanceToNextStepWithCoords(
       // CRITICAL: For CREATE_STACK with hand targets, call handleActionExecution to create cursorStack
       // This ensures handleCreateStack is called which creates the cursorStack for hand card targeting
       if (isHandTargetingCreateStack && props.handleActionExecution) {
+        // CRITICAL: Update commandContext with lastPlacedToken from stepContext
+        // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
+        if (stepContext?.lastPlacedToken && props.setCommandContext) {
+          props.setCommandContext(prev => ({
+            ...prev,
+            lastPlacedToken: stepContext.lastPlacedToken,
+            sourceOwnerId: stepContext.sourceOwnerId,
+          }))
+        }
         // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
         setAbilityMode(stepAction)
         // Call handleActionExecution synchronously to ensure cursorStack is set before any useEffect runs

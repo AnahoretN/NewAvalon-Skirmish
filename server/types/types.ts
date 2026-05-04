@@ -347,7 +347,7 @@ export interface CursorStackState {
     isDragging: boolean;
     sourceCoords?: {row: number, col: number}; // Origin for ability tracking
     targetOwnerId?: number; // Optional restriction for 'Revealed' token usage (Recon Drone) - Inclusive
-    excludeOwnerId?: number; // Optional restriction - Exclusive (e.g. Vigilant Spotter: Don't reveal self)
+    excludeOwnerId?: number | 'source'; // Optional restriction - Exclusive (e.g. Vigilant Spotter: Don't reveal self)
     onlyOpponents?: boolean; // Optional restriction - Exclusive (Don't reveal self OR teammates)
     onlyFaceDown?: boolean; // Optional restriction - Only cards that are currently hidden (Face down or unrevealed hand)
     targetType?: string; // Optional: Restrict target by card Type (e.g., "Unit")
@@ -387,11 +387,11 @@ export type AbilityAction = {
     mode?: string;
     tokenType?: string;
     count?: number;
-    dynamicCount?: { factor: string; ownerId: number }; // For dynamic stack counts (e.g. Overwatch Reveal)
+    dynamicCount?: { factor: string; ownerId: number | 'source' }; // For dynamic stack counts (e.g. Overwatch Reveal)
     onlyFaceDown?: boolean;
     onlyOpponents?: boolean;
-    targetOwnerId?: number;
-    excludeOwnerId?: number;
+    targetOwnerId?: number | 'source';
+    excludeOwnerId?: number | 'source';
     targetType?: string; // Optional: Restrict target by card Type
     sourceCard?: Card;
     sourceCoords?: { row: number, col: number };
