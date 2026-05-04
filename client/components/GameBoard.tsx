@@ -159,8 +159,8 @@ const GridCell = memo((props: GridCellProps) => {
       }, [scoringLines, row, col, activeGridSize])
       const showScoringHighlight = scoringLineInfo !== null
 
-// Random delay for ready ability animation - recalculates on any prop change (0-0.25 sec)
-const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [props, cell.card?.id, row, col, currentPhase])
+// Random delay for ready ability animation - only depends on card ID to avoid unnecessary recalculations
+const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
 
       const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()

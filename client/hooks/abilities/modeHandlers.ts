@@ -1054,6 +1054,11 @@ export function advanceToNextStepWithCoords(
 
     // Handle CREATE_STACK - keep as CREATE_STACK to trigger handleCreateStack (cursor stack)
     if (nextStep.action === "CREATE_STACK") {
+      // CRITICAL: Get chainedAction from the PREVIOUS step (the one being completed)
+      // This fixes Temporary Shelter where step 0's chainedAction must execute after step 0 completes
+      const previousStep = nextStepIndex > 0 ? steps[nextStepIndex - 1] : null
+      const previousStepChainedAction = previousStep?.chainedAction
+
       console.log('[advanceToNextStepWithCoords] CREATE_STACK step: Converting to SELECT_TARGET mode', {
         tokenType: nextStep.details?.tokenType,
         count: nextStep.details?.count,
@@ -1061,6 +1066,11 @@ export function advanceToNextStepWithCoords(
         detailsTargetOwnerId: nextStep.details?.targetOwnerId,
         stepContextSourceOwnerId: stepContext?.sourceOwnerId,
         commandContextSourceOwnerId: commandContext?.sourceOwnerId,
+        nextStepIndex,
+        hasPreviousStep: !!previousStep,
+        previousStepAction: previousStep?.action,
+        hasPreviousStepChainedAction: !!previousStepChainedAction,
+        previousStepChainedActionType: previousStepChainedAction?.type,
       })
       const details = nextStep.details || {}
 
@@ -1073,7 +1083,8 @@ export function advanceToNextStepWithCoords(
       } : undefined
 
       // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) with proper logging
-      let resolvedTargetOwnerId: number | undefined = details.targetOwnerId
+      // CRITICAL: Initialize as undefined, not details.targetOwnerId, to prevent string "source" from being assigned
+      let resolvedTargetOwnerId: number | undefined = undefined
       if (details.targetOwnerId === 'source') {
         resolvedTargetOwnerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
       } else if (details.targetOwnerId === -2) {
@@ -1084,6 +1095,9 @@ export function advanceToNextStepWithCoords(
           commandContextSourceOwnerId: commandContext?.sourceOwnerId,
           resolvedTargetOwnerId,
         })
+      } else if (typeof details.targetOwnerId === 'number') {
+        // Use the number value directly (specific player ID)
+        resolvedTargetOwnerId = details.targetOwnerId
       }
 
       stepAction = {
@@ -1114,11 +1128,14 @@ export function advanceToNextStepWithCoords(
         recordContext: details.recordContext,
         dynamicCount: resolvedDynamicCount,
         // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
-        // CRITICAL: Make a DEEP COPY to prevent mutation of original steps (False Orders issue)
-        // CRITICAL: Do NOT resolve targetOwnerId -2 here! Keep it as -2 so emptyCellHandlers.ts can resolve it when executed.
-        // This fixes False Orders Option 1 where repeated uses would target wrong player's hand due to stale resolved values
+        // CRITICAL: For AUTO_STEPS, chainedAction can be in the CURRENT step (to execute after it completes)
+        // or in the NEXT step (to execute after the next step completes)
+        // This fixes Temporary Shelter where chainedAction is in step 0 (the CREATE_STACK step itself)
+        // Priority: nextStep.chainedAction (for False Orders) > previousStep.chainedAction (for Temporary Shelter)
         ...(nextStep.chainedAction ? {
           chainedAction: JSON.parse(JSON.stringify(nextStep.chainedAction))
+        } : previousStepChainedAction ? {
+          chainedAction: JSON.parse(JSON.stringify(previousStepChainedAction))
         } : {}),
         // CRITICAL: Add originalOwnerId so handleSelectUnitForMove can use it for highlight color
         // This fixes Data Interception option 1 where cell selection highlight used wrong color when playing as dummy

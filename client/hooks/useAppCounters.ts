@@ -653,6 +653,20 @@ export const useAppCounters = ({
                     // (set to nextStepIndex + 1 in handleCreateStack), so we don't increment it here
                     const autoStepsContext = { ...cursorStack._autoStepsContext }
 
+                    // CRITICAL: Check if there's a chainedAction from the current step that needs to execute
+                    // This fixes Temporary Shelter where REMOVE_ALL_AIM_FROM_CONTEXT must execute after Shield placement
+                    // before continuing to the next AUTO_STEPS step (CLEANUP_COMMAND)
+                    const hasChainedAction = !!cursorStack.chainedAction
+                    const chainedActionType = cursorStack.chainedAction?.type
+                    const chainedActionPayloadCustomAction = cursorStack.chainedAction?.payload?.customAction
+
+                    console.log('[useAppCounters] Checking cursorStack for chainedAction:', {
+                      hasChainedAction,
+                      chainedActionType,
+                      chainedActionPayloadCustomAction,
+                      cursorStackKeys: Object.keys(cursorStack),
+                    })
+
                     // Create CONTINUE_AUTO_STEPS action with stepContext (where the token was placed)
                     const continueAction: any = {
                       type: 'CONTINUE_AUTO_STEPS',
@@ -672,7 +686,23 @@ export const useAppCounters = ({
                         }
                       }
                     }
-                    console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS (no chainedAction), stepIndex:', autoStepsContext.currentStepIndex)
+
+                    // CRITICAL: Pass chainedAction so modeHandlers can execute it before advancing to next step
+                    // This fixes Temporary Shelter where chainedAction (REMOVE_ALL_AIM_FROM_CONTEXT) must execute
+                    if (cursorStack.chainedAction) {
+                      continueAction.chainedAction = cursorStack.chainedAction
+                      console.log('[useAppCounters] Adding chainedAction to continueAction:', {
+                        type: continueAction.chainedAction.type,
+                        payload: continueAction.chainedAction.payload,
+                      })
+                    }
+
+                    console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS', {
+                      hasChainedAction,
+                      chainedActionType,
+                      chainedActionPayloadCustomAction,
+                      stepIndex: autoStepsContext.currentStepIndex
+                    })
                     onAction(continueAction, { row, col })
                   }
                   // Clear targeting mode when cursor stack is fully consumed

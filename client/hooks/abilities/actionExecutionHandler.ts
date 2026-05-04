@@ -772,6 +772,7 @@ function handleCreateStack(
     hasChainedAction: !!action.chainedAction,
     chainedActionType: action.chainedAction?.type,
     chainedActionMode: action.chainedAction?.mode,
+    chainedActionPayloadCustomAction: action.chainedAction?.payload?.customAction,
     onlyOpponents: action.onlyOpponents,
     payloadOnlyOpponents: action.payload?.onlyOpponents,
     excludeOwnerId: action.excludeOwnerId,
@@ -818,6 +819,51 @@ function handleCreateStack(
       if ((action as any).details?.targetOwnerId === -2) {
         (action as any).details.targetOwnerId = actionSourceOwnerId
       }
+    }
+  }
+
+  // CRITICAL: Resolve "source" string to actual owner ID
+  // This fixes Temporary Shelter and other commands where "source" placeholder is not resolved
+  // Get the source owner ID (command card owner for commands, unit owner for abilities)
+  const sourceOwnerIdForResolution = action.sourceCard?.ownerId ?? actionSourceOwnerId ?? localPlayerId ?? 0
+
+  // CRITICAL: Check ALL locations where targetOwnerId might be stored
+  // contentDatabase.json uses details.targetOwnerId, modeHandlers copies to both details and payload
+  const actionTargetOwnerId = action.targetOwnerId
+  const payloadTargetOwnerId = action.payload?.targetOwnerId
+  const detailsTargetOwnerId = (action as any).details?.targetOwnerId
+
+  const needsSourceResolution =
+    (actionTargetOwnerId === 'source') ||
+    (payloadTargetOwnerId === 'source') ||
+    (detailsTargetOwnerId === 'source')
+
+  // DIAGNOSTIC: Log targetOwnerId values to debug Temporary Shelter
+  console.log('[handleCreateStack] Checking targetOwnerId for "source":', {
+    actionTargetOwnerId,
+    payloadTargetOwnerId,
+    detailsTargetOwnerId,
+    needsSourceResolution,
+    sourceOwnerIdForResolution,
+  })
+
+  if (needsSourceResolution) {
+    console.log('[handleCreateStack] Resolving targetOwnerId "source":', {
+      actionTargetOwnerId,
+      payloadTargetOwnerId,
+      detailsTargetOwnerId,
+      resolvedOwnerId: sourceOwnerIdForResolution,
+    })
+
+    // Update ALL locations with resolved value
+    if (actionTargetOwnerId === 'source') {
+      action.targetOwnerId = sourceOwnerIdForResolution
+    }
+    if (action.payload?.targetOwnerId === 'source') {
+      action.payload.targetOwnerId = sourceOwnerIdForResolution
+    }
+    if ((action as any).details?.targetOwnerId === 'source') {
+      (action as any).details.targetOwnerId = sourceOwnerIdForResolution
     }
   }
 
@@ -970,27 +1016,32 @@ function handleCreateStack(
     // CRITICAL: Merge payload properties for chained actions (which use payload format)
     // This fixes False Orders option 1 where chainedAction has properties in payload
     const payloadProps = action.payload || {}
+    const detailsProps = (action as any).details || {}
+    // CRITICAL: Read from action, then payload, then details (contentDatabase.json uses details)
+    // This fixes Temporary Shelter where targetOwnerId="source" is in details
     const modifications: Partial<any> = {
       count: count,
       sourceCoords: action.sourceCoords || sourceCoords,
       sourceCard: action.sourceCard,
       isDeployAbility: action.isDeployAbility,
       readyStatusToRemove: action.readyStatusToRemove,
-      targetOwnerId: action.targetOwnerId ?? payloadProps.targetOwnerId,
-      excludeOwnerId: action.excludeOwnerId ?? payloadProps.excludeOwnerId,
-      onlyOpponents: action.onlyOpponents ?? payloadProps.onlyOpponents,
-      onlyFaceDown: action.onlyFaceDown ?? payloadProps.onlyFaceDown,
-      targetType: action.targetType ?? payloadProps.targetType,
-      requiredTargetStatus: action.requiredTargetStatus ?? payloadProps.requiredTargetStatus,
-      requireStatusFromSourceOwner: action.requireStatusFromSourceOwner ?? payloadProps.requireStatusFromSourceOwner,
-      mustBeAdjacentToSource: action.mustBeAdjacentToSource ?? payloadProps.mustBeAdjacentToSource,
-      mustBeInLineWithSource: action.mustBeInLineWithSource ?? payloadProps.mustBeInLineWithSource,
-      maxDistanceFromSource: action.maxDistanceFromSource ?? payloadProps.maxDistanceFromSource,
-      maxOrthogonalDistance: action.maxOrthogonalDistance ?? payloadProps.maxOrthogonalDistance,
-      placeAllAtOnce: action.placeAllAtOnce ?? payloadProps.placeAllAtOnce,
-      replaceStatus: action.replaceStatus ?? payloadProps.replaceStatus,
-      chainedAction: action.chainedAction,
-      recordContext: action.recordContext ?? payloadProps.recordContext,
+      targetOwnerId: action.targetOwnerId ?? payloadProps.targetOwnerId ?? detailsProps.targetOwnerId,
+      excludeOwnerId: action.excludeOwnerId ?? payloadProps.excludeOwnerId ?? detailsProps.excludeOwnerId,
+      onlyOpponents: action.onlyOpponents ?? payloadProps.onlyOpponents ?? detailsProps.onlyOpponents,
+      onlyFaceDown: action.onlyFaceDown ?? payloadProps.onlyFaceDown ?? detailsProps.onlyFaceDown,
+      targetType: action.targetType ?? payloadProps.targetType ?? detailsProps.targetType,
+      requiredTargetStatus: action.requiredTargetStatus ?? payloadProps.requiredTargetStatus ?? detailsProps.requiredTargetStatus,
+      requireStatusFromSourceOwner: action.requireStatusFromSourceOwner ?? payloadProps.requireStatusFromSourceOwner ?? detailsProps.requireStatusFromSourceOwner,
+      mustBeAdjacentToSource: action.mustBeAdjacentToSource ?? payloadProps.mustBeAdjacentToSource ?? detailsProps.mustBeAdjacentToSource,
+      mustBeInLineWithSource: action.mustBeInLineWithSource ?? payloadProps.mustBeInLineWithSource ?? detailsProps.mustBeInLineWithSource,
+      maxDistanceFromSource: action.maxDistanceFromSource ?? payloadProps.maxDistanceFromSource ?? detailsProps.maxDistanceFromSource,
+      maxOrthogonalDistance: action.maxOrthogonalDistance ?? payloadProps.maxOrthogonalDistance ?? detailsProps.maxOrthogonalDistance,
+      placeAllAtOnce: action.placeAllAtOnce ?? payloadProps.placeAllAtOnce ?? detailsProps.placeAllAtOnce,
+      replaceStatus: action.replaceStatus ?? payloadProps.replaceStatus ?? detailsProps.replaceStatus,
+      // CRITICAL: Read chainedAction from action, payload, or details (contentDatabase.json uses details)
+      // This fixes Temporary Shelter where chainedAction is in step.chainedAction
+      chainedAction: action.chainedAction ?? payloadProps.chainedAction ?? detailsProps.chainedAction,
+      recordContext: action.recordContext ?? payloadProps.recordContext ?? detailsProps.recordContext,
       // CRITICAL: Pass _autoStepsContext for AUTO_STEPS continuation after cursorStack completes
       // This enables abilities like Centurion Commit to continue after CREATE_STACK step
       _autoStepsContext: action.payload?._autoStepsContext,
@@ -2086,6 +2137,9 @@ function handleEnterMode(
           sourceCoords: action.sourceCoords,
           isDeployAbility: action.isDeployAbility,
           readyStatusToRemove: action.readyStatusToRemove,
+          // CRITICAL: Preserve chainedAction from step level (for multi-step commands like Temporary Shelter)
+          // This fixes Temporary Shelter where REMOVE_ALL_AIM_FROM_CONTEXT must execute after Shield placement
+          ...(firstStep.chainedAction ? { chainedAction: firstStep.chainedAction } : {}),
           payload: {
             ...firstStep.details,
             _autoStepsContext: {
@@ -2209,6 +2263,8 @@ function handleEnterMode(
             sourceCoords: action.sourceCoords,
             isDeployAbility: action.isDeployAbility,
             readyStatusToRemove: action.readyStatusToRemove,
+            // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+            ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
             payload: {
               ...nextStep.details,
               _autoStepsContext: {
