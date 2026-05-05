@@ -781,7 +781,13 @@ function handleCreateStack(
     chainedActionPayloadCustomAction: action.chainedAction?.payload?.customAction,
     onlyOpponents: action.onlyOpponents,
     payloadOnlyOpponents: action.payload?.onlyOpponents,
+    detailsOnlyOpponents: (action as any).details?.onlyOpponents,
+    onlyFaceDown: action.onlyFaceDown,
+    payloadOnlyFaceDown: action.payload?.onlyFaceDown,
+    detailsOnlyFaceDown: (action as any).details?.onlyFaceDown,
     excludeOwnerId: action.excludeOwnerId,
+    payloadExcludeOwnerId: action.payload?.excludeOwnerId,
+    detailsExcludeOwnerId: (action as any).details?.excludeOwnerId,
     targetOwnerId: action.targetOwnerId,
     payloadTargetOwnerId: action.payload?.targetOwnerId,
     detailsTargetOwnerId: (action as any).details?.targetOwnerId,
@@ -1366,7 +1372,24 @@ function handleCreateStack(
         // The ability will complete when the player clicks on a hand card or board card
       } else {
         // Original logic: ALL opponents (excluding excluded owner)
-        const excludedId = action.excludeOwnerId ?? tokenOwnerId
+        // CRITICAL: Read excludeOwnerId from all possible locations (action, payload, details)
+        const excludedId = action.excludeOwnerId ?? action.payload?.excludeOwnerId ?? (action as any).details?.excludeOwnerId ?? tokenOwnerId
+
+      // CRITICAL: Read onlyOpponents from all possible locations (action, payload, details)
+      // This fixes cases where onlyOpponents is in payload but not on action
+      const onlyOpponents = action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents
+
+      console.log('[Revealed token] All opponents mode:', {
+        tokenOwnerId,
+        excludedId,
+        onlyOpponents,
+        actionExcludeOwnerId: action.excludeOwnerId,
+        payloadExcludeOwnerId: action.payload?.excludeOwnerId,
+        detailsExcludeOwnerId: (action as any).details?.excludeOwnerId,
+        actionOnlyOpponents: action.onlyOpponents,
+        payloadOnlyOpponents: action.payload?.onlyOpponents,
+        detailsOnlyOpponents: (action as any).details?.onlyOpponents,
+      })
 
       for (const player of freshState.players) {
         // Skip excluded player (token owner's own hand)
@@ -1374,7 +1397,6 @@ function handleCreateStack(
           continue
         }
         // Skip teammates if onlyOpponents is set
-        const onlyOpponents = action.onlyOpponents || action.payload?.onlyOpponents
         if (onlyOpponents) {
           const tokenOwner = freshState.players.find(p => p.id === tokenOwnerId)
           // CRITICAL FIX: In FFA mode, teamId is undefined/null for everyone
@@ -1391,12 +1413,13 @@ function handleCreateStack(
         }
         // Add this player's hand cards
         if (player.hand) {
-          console.log('Processing player hand:', {
+          console.log('[Revealed token] Processing player hand:', {
             playerId: player.id,
             playerName: player.name,
             isLocal: player.id === props.localPlayerId,
             isExcluded: player.id === excludedId,
-            firstCard: player.hand[0] ? { id: player.hand[0].id, baseId: player.hand[0].baseId, hasStatuses: !!player.hand[0].statuses, statuses: player.hand[0].statuses } : null
+            handSize: player.hand.length,
+            onlyFaceDown: action.onlyFaceDown ?? action.payload?.onlyFaceDown ?? (action as any).details?.onlyFaceDown,
           })
           for (let i = 0; i < player.hand.length; i++) {
             const card = player.hand[i]
@@ -1412,8 +1435,25 @@ function handleCreateStack(
 
             // DIAGNOSTIC: Log why each card is or isn't added
             if (hasOurRevealed) {
+              console.log('[Revealed token] Skipping card - already has our Revealed token:', {
+                playerId: player.id,
+                cardIndex: i,
+                cardName: card.name,
+                cardBaseId: card.baseId,
+              })
             } else if (!passesFaceDownCheck) {
+              console.log('[Revealed token] Skipping card - face-down check failed:', {
+                playerId: player.id,
+                cardIndex: i,
+                cardName: card.name,
+              })
             } else {
+              console.log('[Revealed token] Adding card to handTargets:', {
+                playerId: player.id,
+                cardIndex: i,
+                cardName: card.name,
+                cardBaseId: card.baseId,
+              })
               handTargets.push({ playerId: player.id, cardIndex: i })
             }
           }
@@ -1424,7 +1464,7 @@ function handleCreateStack(
       console.log('Revealed token targeting setup:', {
         tokenOwnerId,
         excludedId,
-        onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
+        onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
         totalPlayers: freshState.players.length,
         playersWithHand: freshState.players.filter(p => p.hand && p.hand.length > 0).length,
         handTargets: handTargets.map(t => ({ playerId: t.playerId, cardIndex: t.cardIndex }))
@@ -1435,7 +1475,7 @@ function handleCreateStack(
         console.log('No hand targets found, skipping Revealed placement:', {
           tokenOwnerId,
           excludedId,
-          onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
+          onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
           players: freshState.players.map(p => ({ id: p.id, name: p.name, handLength: p.hand?.length || 0, isDummy: p.isDummy })),
           // DIAGNOSTIC: Check if this is a guest without fresh opponent hand data
           localPlayerId: props.localPlayerId,
@@ -1456,7 +1496,7 @@ function handleCreateStack(
             sourceCoords: action.sourceCoords || sourceCoords,
             chainedAction: action.chainedAction,
             tokenOwnerId,
-            onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
+            onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
           })
 
           // Mark ability as used locally (removes ready status)
@@ -1538,8 +1578,8 @@ function handleCreateStack(
         payload: {
           tokenType,
           filter: () => true,
-          excludeOwnerId: action.excludeOwnerId,
-          onlyOpponents: action.onlyOpponents || action.payload?.onlyOpponents,
+          excludeOwnerId: action.excludeOwnerId ?? action.payload?.excludeOwnerId ?? (action as any).details?.excludeOwnerId,
+          onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
           // CRITICAL: Include targetOwnerId so App.tsx knows which player's hand to highlight
           // This fixes False Orders Option 1 where only specific player's hand should be targeted
           // CRITICAL: Check all locations: action, payload, details

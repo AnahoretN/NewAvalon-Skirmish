@@ -1520,6 +1520,13 @@ const AppInner = function AppInner() {
   }, [gameState])
 
   useEffect(() => {
+    // CRITICAL: If handleCancelAllModes was just called (right-click cancel), skip this entire useEffect
+    // This prevents targetingMode from being restored immediately after being cleared
+    const cancelTimeSince = Date.now() - cancelAllModesTimestampRef.current
+    if (cancelTimeSince < 500) {
+      return
+    }
+
     // If another player has set targeting mode, don't override with local calculations
     // This allows visual effects from remote players to display correctly
     if (gameState.targetingMode && gameState.targetingMode.playerId !== localPlayerId) {
@@ -1750,7 +1757,11 @@ const AppInner = function AppInner() {
     //
     const hasPlayMode = playMode && playMode.card?.types?.includes('Unit')
     const hasCommandModal = !!commandModalCard
-    const hasActiveMode = cursorStack || abilityMode || hasPlayMode || hasCommandModal
+    // CRITICAL: Check if we're in cancel mode (right-click) - if so, treat as no active mode
+    // This prevents targetingMode from being restored after handleCancelAllModes
+    const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
+    const isInCancelMode = timeSinceCancel < 500
+    const hasActiveMode = !isInCancelMode && (cursorStack || abilityMode || hasPlayMode || hasCommandModal)
     const isDeckSelectableMode = abilityMode?.mode === 'SELECT_DECK'
 
     // CRITICAL: Don't override targetingMode if it's already set with handTargets (DISCARD_FROM_HAND abilities, Revealed token placement)
@@ -1869,9 +1880,9 @@ const AppInner = function AppInner() {
           }
 
           // CRITICAL: Don't restore targetingMode if handleCancelAllModes was just called (right-click cancel)
-          // Check if cancelAllModes was called within the last 100ms
+          // Check if cancelAllModes was called within the last 500ms
           const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
-          if (timeSinceCancel > 100) {
+          if (timeSinceCancel > 500) {
             // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
             setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
           }

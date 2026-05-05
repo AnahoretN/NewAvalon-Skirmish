@@ -854,15 +854,17 @@ export const useAppCounters = ({
       e.preventDefault()
       // CRITICAL: Clear abilityMode AND cursorStack SYNCHRONOUSLY to prevent
       // useEffect in App.tsx from restoring targetingMode
+      // CRITICAL: Use force=true for clearTargetingMode to ensure it works for all players
       flushSync(() => {
         setAbilityMode(null)
         setCursorStack(null)
       })
-      clearTargetingMode()
+      // Pass force=true to ensure targetingMode is cleared regardless of ownership
+      clearTargetingMode(true)
     }
-    window.addEventListener('contextmenu', handleGlobalContextMenu)
+    window.addEventListener('contextmenu', handleGlobalContextMenu, { capture: true })
     return () => {
-      window.removeEventListener('contextmenu', handleGlobalContextMenu)
+      window.removeEventListener('contextmenu', handleGlobalContextMenu, { capture: true })
     }
   }, [cursorStack, setCursorStack, setAbilityMode, clearTargetingMode])
 

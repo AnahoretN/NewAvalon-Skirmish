@@ -541,20 +541,19 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     const currentSimpleHost = getSimpleHost()
     const currentSimpleGuest = getSimpleGuest()
 
-    if (currentSimpleHost && (isHost || isOwnerDummy || force)) {
-      // CRITICAL: When HOST clears targeting mode, update SimpleHost state directly
-      // This ensures the cleared targetingMode is reflected in state broadcasts
-      if (isHost) {
-        currentSimpleHost.clearTargetingMode()
-      } else {
-        // Non-host player clearing targeting mode - broadcast via SimpleVisualEffects
-        const effects = new SimpleVisualEffects(currentSimpleHost)
-        effects.clearTargetingMode()
-      }
-    } else if ((isOwner || force) && !isHost && currentSimpleGuest) {
-      // CRITICAL FIX: Guest clearing targeting mode
-      // Send action to host so host can broadcast to all clients
-      // This ensures targeting mode is cleared for everyone, not just locally
+    if (isHost && currentSimpleHost) {
+      // HOST clears targeting mode directly in SimpleHost state
+      currentSimpleHost.clearTargetingMode()
+    } else if (force && currentSimpleGuest) {
+      // CRITICAL: Right-click cancel (force=true) - guest sends action to host
+      // Host will clear targetingMode in its state and broadcast to all clients
+      currentSimpleGuest.sendAction('CLEAR_TARGETING_MODE')
+    } else if (isOwnerDummy && currentSimpleHost) {
+      // Dummy player targeting mode - anyone can clear via SimpleVisualEffects
+      const effects = new SimpleVisualEffects(currentSimpleHost)
+      effects.clearTargetingMode()
+    } else if (isOwner && currentSimpleGuest) {
+      // Guest clearing their own targeting mode - send action to host
       currentSimpleGuest.sendAction('CLEAR_TARGETING_MODE')
     }
   }, [getSimpleHost, getSimpleGuest, gameStateRef, setGameState, targetingModeLocallyClearedRef])
