@@ -972,7 +972,39 @@ export const calculateValidTargets = (
       }
     })
   }
-  // 4. Riot Move (Specifically vacated cell)
+  // 4. PUSH_MOVE (After push - choose where to move: stay in place or move to vacated cell)
+  // Used by Riot Agent and Reclaimed Gawain after pushing an opponent card
+  else if (mode === 'PUSH_MOVE' && payload.vacatedCoords && sourceCoords) {
+    // Option 1: Stay in place (click on sourceCoords)
+    targets.push(sourceCoords)
+
+    // Option 2: Move to vacated cell (where pushed card was)
+    targets.push(payload.vacatedCoords)
+
+    // Option 3: Intermediate cells (if source and vacated are more than 1 cell apart)
+    if (sourceCoords.row === payload.vacatedCoords.row) {
+      // Same row - add intermediate columns
+      const minCol = Math.min(sourceCoords.col, payload.vacatedCoords.col)
+      const maxCol = Math.max(sourceCoords.col, payload.vacatedCoords.col)
+      for (let c = minCol + 1; c < maxCol; c++) {
+        // Only add if cell is empty
+        if (!board[sourceCoords.row][c].card) {
+          targets.push({ row: sourceCoords.row, col: c })
+        }
+      }
+    } else if (sourceCoords.col === payload.vacatedCoords.col) {
+      // Same column - add intermediate rows
+      const minRow = Math.min(sourceCoords.row, payload.vacatedCoords.row)
+      const maxRow = Math.max(sourceCoords.row, payload.vacatedCoords.row)
+      for (let r = minRow + 1; r < maxRow; r++) {
+        // Only add if cell is empty
+        if (!board[r][sourceCoords.col].card) {
+          targets.push({ row: r, col: sourceCoords.col })
+        }
+      }
+    }
+  }
+  // 5. Riot Move (Specifically vacated cell)
   else if (mode === 'RIOT_MOVE' && payload.vacatedCoords) {
     targets.push(payload.vacatedCoords)
     // Also highlight self to indicate "stay" option

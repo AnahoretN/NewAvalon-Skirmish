@@ -368,9 +368,11 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     const newTimestamp = Date.now()
     const currentGameState = gameStateRef.current
     if (!currentGameState || !currentGameState.board) {
+      console.log('[setTargetingMode] No gameState or board, returning')
       return
     }
 
+    console.log('[setTargetingMode] Called with mode:', action.mode, 'targets:', preCalculatedTargets, 'isLocal:', isLocal)
 
     const localPlayerId = currentGameState.localPlayerId
 
@@ -389,6 +391,7 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     const shouldAllowRemoteUpdate = !hasLocalTargetingMode || isOwnerDummy
 
     if (!isLocal && !shouldAllowRemoteUpdate) {
+      console.log('[setTargetingMode] Remote update not allowed, returning')
       return
     }
 
@@ -396,6 +399,7 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     // If targetingMode was recently cleared locally, ignore remote updates
     const currentTargetingMode = currentGameState.targetingMode
     if (!currentTargetingMode && targetingModeClearRef.current > 0 && !isLocal) {
+      console.log('[setTargetingMode] Targeting mode recently cleared, ignoring remote update')
       return
     }
 
@@ -445,8 +449,11 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     }
 
     if (isAlreadySet) {
+      console.log('[setTargetingMode] Already set with same values, returning')
       return
     }
+
+    console.log('[setTargetingMode] Setting targeting mode with boardTargets:', targetingModeData.boardTargets)
 
     // Update local state immediately
     setGameState((prev: any) => {

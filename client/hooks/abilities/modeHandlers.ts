@@ -11,6 +11,7 @@ import { TIMING } from '@/utils/common'
 import { createTokenCursorStack } from '@/utils/tokenTargeting'
 import { handleLineSelection as handleLineSelectionModule } from './lineSelectionHandlers.js'
 import { buildDetailsFromContent, buildFilterFromString } from '@shared/abilities/contentAbilities.js'
+import { flushSync } from 'react-dom'
 
 /**
  * CRITICAL: Convert chainedAction from JSON format (action/details) to AbilityAction format (type/payload)
@@ -1899,12 +1900,13 @@ function handleSelectTargetActionType(
 
     // Perform the push
     const vacatedCoords = boardCoords
-    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
     // Continue to next step or finish ability
     const autoStepsContext = payload._autoStepsContext
     if (autoStepsContext && autoStepsContext.steps) {
+      // For auto-steps, set ability mode to null BEFORE moveItem
       advanceToNextStepWithCoords(props, boardCoords, autoStepsContext.currentStepIndex)
+      moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
       return true
     }
 
@@ -1925,12 +1927,17 @@ function handleSelectTargetActionType(
       payload: { vacatedCoords }
     }
 
+    // CRITICAL: Set ability mode BEFORE calling moveItem
+    // This prevents useEffect in App.tsx from clearing targeting mode prematurely
     setAbilityMode(pushMoveAction)
 
     // Set up targeting mode for PUSH_MOVE
     if (props.setTargetingMode) {
       props.setTargetingMode(pushMoveAction, ownerId, safeSourceCoords, pushMoveTargets)
     }
+
+    // Perform the push AFTER setting ability mode
+    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
     return true
   }
@@ -1998,8 +2005,6 @@ function handlePush(
   // vacatedCoords is the cell where the pushed card was (before being pushed)
   const vacatedCoords = boardCoords
 
-  moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
-
   // Calculate valid targets for PUSH_MOVE
   // Valid targets: sourceCoords (stay in place), vacatedCoords, and cells between them
   const pushMoveTargets: {row: number, col: number}[] = []
@@ -2042,6 +2047,8 @@ function handlePush(
     payload: { vacatedCoords }
   }
 
+  // CRITICAL: Set ability mode BEFORE calling moveItem
+  // This prevents useEffect in App.tsx from clearing targeting mode prematurely
   setAbilityMode(pushMoveAction)
 
   // Set up targeting mode for PUSH_MOVE
@@ -2049,6 +2056,9 @@ function handlePush(
   if (setTargetingMode) {
     setTargetingMode(pushMoveAction, ownerId, sourceCoords, pushMoveTargets)
   }
+
+  // Perform the push AFTER setting ability mode
+  moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
   return true
 }
@@ -2068,13 +2078,17 @@ function handlePushMove(
 ): boolean {
   const { abilityMode, moveItem, markAbilityUsed, setAbilityMode, clearTargetingMode } = props
 
+  console.log('[handlePushMove] Called with abilityMode:', abilityMode?.mode, 'boardCoords:', boardCoords)
+
   if (!abilityMode || abilityMode.mode !== 'PUSH_MOVE') {
+    console.log('[handlePushMove] Not PUSH_MOVE mode, returning false')
     return false
   }
 
   const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload } = abilityMode
 
   if (!sourceCoords || !sourceCard || !payload?.vacatedCoords) {
+    console.log('[handlePushMove] Missing required data, returning false')
     return false
   }
 
@@ -2154,7 +2168,7 @@ function handleShieldSelfThenPush(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem } = props
+  const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem, updateState } = props
 
   if (interactionLock.current) {
     return false
@@ -2169,6 +2183,40 @@ function handleShieldSelfThenPush(
   const ownerId = sourceCard.ownerId!
   const shieldAlreadyApplied = payload?.shieldApplied === true
 
+  // Helper function to add Shield synchronously using flushSync
+  const addShieldSync = () => {
+    if (!updateState) return
+    // CRITICAL: Use flushSync to ensure state is updated synchronously
+    // This prevents the double-click bug where Shield isn't applied before the push
+    flushSync(() => {
+      updateState((prev: GameState) => {
+        if (!prev.board[sourceCoords.row]?.[sourceCoords.col]) {
+          return prev
+        }
+        const updatedBoard = prev.board.map((row, rIdx) =>
+          row.map((cell, cIdx) => {
+            if (rIdx === sourceCoords.row && cIdx === sourceCoords.col && cell.card) {
+              const newStatus = {
+                type: 'Shield',
+                addedByPlayerId: ownerId,
+                id: `Shield_${ownerId}_${Date.now()}_${Math.random()}`
+              }
+              return {
+                ...cell,
+                card: {
+                  ...cell.card,
+                  statuses: [...(cell.card.statuses || []), newStatus]
+                }
+              }
+            }
+            return cell
+          })
+        )
+        return { ...prev, board: updatedBoard }
+      })
+    })
+  }
+
   // Check if clicking on self
   if (boardCoords.row === sourceCoords.row && boardCoords.col === sourceCoords.col) {
     if (shieldAlreadyApplied) {
@@ -2177,8 +2225,8 @@ function handleShieldSelfThenPush(
       setAbilityMode(null)
       return true
     } else {
-      // Old behavior: add Shield and transition to PUSH
-      addBoardCardStatus(sourceCoords, 'Shield', ownerId)
+      // Add Shield and transition to PUSH mode
+      addShieldSync()
 
       const pushAction: AbilityAction = {
         type: 'ENTER_MODE',
@@ -2225,7 +2273,7 @@ function handleShieldSelfThenPush(
         }
       }
 
-      setTargetingMode(pushAction, ownerId, sourceCoords, preCalculatedTargets, commandContext)
+      setTargetingMode(pushAction, ownerId, sourceCoords, preCalculatedTargets)
       return true
     }
   }
@@ -2239,9 +2287,9 @@ function handleShieldSelfThenPush(
 
   if (isAdj && card.ownerId !== ownerId && !isTeammate) {
     // IMPORTANT: Apply Shield first if not already applied
-    // This handles the case where player clicks directly on adjacent card
+    // Use synchronous update to ensure state is updated before proceeding
     if (!shieldAlreadyApplied) {
-      addBoardCardStatus(sourceCoords, 'Shield', ownerId)
+      addShieldSync()
     }
 
     const dRow = boardCoords.row - sourceCoords.row
@@ -2263,19 +2311,68 @@ function handleShieldSelfThenPush(
       return false
     }
 
-    // Perform the push
-    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
+    // Calculate valid targets for PUSH_MOVE (like handlePush does)
+    // Valid targets: sourceCoords (stay in place), vacatedCoords, and cells between them
+    const vacatedCoords = boardCoords
+    const pushMoveTargets: {row: number, col: number}[] = []
 
-    // Transition to PUSH_MOVE mode (move into vacated cell or intermediate cells)
-    setAbilityMode({
+    // 1. Source coords (stay in place)
+    pushMoveTargets.push(sourceCoords)
+
+    // 2. Vacated coords
+    pushMoveTargets.push(vacatedCoords)
+
+    // 3. Intermediate cells (if source and vacated are more than 1 cell apart)
+    if (sourceCoords.row === vacatedCoords.row) {
+      // Same row - add intermediate columns
+      const minCol = Math.min(sourceCoords.col, vacatedCoords.col)
+      const maxCol = Math.max(sourceCoords.col, vacatedCoords.col)
+      for (let c = minCol + 1; c < maxCol; c++) {
+        if (gameState.board[sourceCoords.row][c].card === null) {
+          pushMoveTargets.push({ row: sourceCoords.row, col: c })
+        }
+      }
+    } else if (sourceCoords.col === vacatedCoords.col) {
+      // Same column - add intermediate rows
+      const minRow = Math.min(sourceCoords.row, vacatedCoords.row)
+      const maxRow = Math.max(sourceCoords.row, vacatedCoords.row)
+      for (let r = minRow + 1; r < maxRow; r++) {
+        if (gameState.board[r][sourceCoords.col].card === null) {
+          pushMoveTargets.push({ row: r, col: sourceCoords.col })
+        }
+      }
+    }
+
+    const pushMoveAction: AbilityAction = {
       type: 'ENTER_MODE',
       mode: 'PUSH_MOVE',
       sourceCard,
       sourceCoords,
       isDeployAbility,
       readyStatusToRemove,
-      payload: { vacatedCoords: boardCoords }
+      payload: { vacatedCoords }
+    }
+
+    console.log('[handleShieldSelfThenPush] Setting PUSH_MOVE mode with targets:', pushMoveTargets)
+
+    // CRITICAL: Use flushSync to ensure all state updates happen synchronously
+    // This prevents useEffect in App.tsx from clearing targeting mode prematurely
+    flushSync(() => {
+      // Set ability mode to PUSH_MOVE first
+      setAbilityMode(pushMoveAction)
+      console.log('[handleShieldSelfThenPush] setAbilityMode PUSH_MOVE done')
+
+      // Set up targeting mode for PUSH_MOVE with valid targets
+      if (setTargetingMode) {
+        setTargetingMode(pushMoveAction, ownerId, sourceCoords, pushMoveTargets)
+        console.log('[handleShieldSelfThenPush] setTargetingMode done')
+      }
     })
+
+    console.log('[handleShieldSelfThenPush] After flushSync, calling moveItem')
+
+    // Perform the push AFTER setting ability mode and targeting mode
+    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
     return true
   }
 

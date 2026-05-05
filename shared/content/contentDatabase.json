@@ -887,21 +887,9 @@
         {
           "type": "deploy",
           "supportRequired": false,
-          "steps": [
-            {
-              "action": "CREATE_STACK_SELF",
-              "mode": null,
-              "details": {
-                "tokenType": "Shield",
-                "count": 1
-              }
-            },
-            {
-              "action": "ENTER_MODE",
-              "mode": "PUSH",
-              "details": {}
-            }
-          ]
+          "action": "ENTER_MODE",
+          "mode": "SHIELD_SELF_THEN_PUSH",
+          "details": {}
         },
         {
           "type": "setup",
