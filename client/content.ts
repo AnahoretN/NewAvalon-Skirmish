@@ -142,6 +142,7 @@ function buildDecksData(): Record<string, Card[]> {
     for (const deckEntry of deckFile.cards) {
       const cardDef = _cardDatabase.get(deckEntry.cardId)
       if (!cardDef) {
+            console.log('[buildDecksData] WARNING: Card not found in database:', deckEntry.cardId)
             continue
       }
 
@@ -154,13 +155,14 @@ function buildDecksData(): Record<string, Card[]> {
         const cardKey = safeCardId.toUpperCase()
 
         if (isCommandCard) {
-          deckCardList.push({
+          const card = {
             ...cardDef,
             deck: DeckType.Command,
             id: `CMD_${cardKey}_${i + 1}`,
             baseId: deckEntry.cardId, // Set baseId for localization
             faction: cardDef.faction || 'Command',
-          })
+          }
+          deckCardList.push(card)
         } else {
           deckCardList.push({
             ...cardDef,
@@ -351,12 +353,16 @@ export function getDecksData(): Record<string, Card[]> {
  * Raw ability structure from contentDatabase.json
  */
 export interface ContentAbility {
-  type: 'deploy' | 'setup' | 'commit' | 'pass'
+  type: 'deploy' | 'setup' | 'commit' | 'pass' | 'command'
   supportRequired?: boolean
   action?: string
   mode?: string | null
   actionType?: string
   details?: Record<string, any>
+  // For command cards: option index (1-based)
+  optionIndex?: number
+  // For command cards: the text shown in the modal for this option
+  optionText?: string
   steps?: Array<{
     action: string
     mode?: string | null
@@ -374,15 +380,13 @@ export function getCardAbilities(baseId: string): ContentAbility[] {
   // First check card database
   const card = _cardDatabase.get(baseId)
   if (card && (card as any).ABILITIES) {
-    const abilities = (card as any).ABILITIES as ContentAbility[]
-    return abilities
+    return (card as any).ABILITIES as ContentAbility[]
   }
 
   // Also check token database (for tokens like Recon Drone, Walking Turret)
   const token = _tokenDatabase.get(baseId)
   if (token && (token as any).ABILITIES) {
-    const abilities = (token as any).ABILITIES as ContentAbility[]
-    return abilities
+    return (token as any).ABILITIES as ContentAbility[]
   }
 
   return []

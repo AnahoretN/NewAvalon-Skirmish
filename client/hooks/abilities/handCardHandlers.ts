@@ -9,6 +9,7 @@ import { TIMING } from '@/utils/common'
 import { validateTarget } from '@shared/utils/targeting'
 import { READY_STATUS } from '@shared/abilities/readySystem.js'
 import { hasReadyStatus } from '@shared/abilities/readySystem.js'
+import { buildFilterFromString } from '@shared/abilities/contentAbilities.js'
 import { flushSync } from 'react-dom'
 
  
@@ -96,8 +97,13 @@ export function handleHandCardClick(
       cursorStack.originalOwnerId // CRITICAL: Pass token owner ID for command cards
     )
 
-      // Apply the token/status to the card
-      if (cursorStack.type === 'Revealed') {
+    // CRITICAL: Only apply token if target is valid
+    if (!isValid) {
+      return
+    }
+
+    // Apply the token/status to the card
+    if (cursorStack.type === 'Revealed') {
         // For Revealed, we need to request reveal or add status
         const effectiveActorId = cursorStack.sourceCard?.ownerId ?? gameState.activePlayerId ?? localPlayerId ?? 1
         if (!card.statuses) {
@@ -159,10 +165,44 @@ export function handleHandCardClick(
               }, 0)
             }
           }
+
+          // CRITICAL: Continue AUTO_STEPS if this CREATE_STACK was part of a multi-step command
+          // This fixes Data Interception where after placing Revealed tokens, we need to continue to CLEANUP_COMMAND
+          const autoStepsContext = (cursorStack as any)._autoStepsContext
+          if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
+            console.log('[HAND_CARD_CLICK] Continuing AUTO_STEPS after CREATE_STACK completion:', {
+              currentStepIndex: autoStepsContext.currentStepIndex,
+              totalSteps: autoStepsContext.steps.length,
+            })
+            // Create CONTINUE_AUTO_STEPS action to advance to the next step
+            const continueAction: AbilityAction = {
+              type: 'CONTINUE_AUTO_STEPS',
+              mode: 'AUTO_STEPS',
+              payload: {
+                _autoStepsContext: {
+                  ...autoStepsContext,
+                  currentStepIndex: autoStepsContext.currentStepIndex + 1,
+                },
+              },
+              sourceCard: cursorStack.sourceCard,
+              sourceCoords: cursorStack.sourceCoords,
+            }
+            if (setActionQueue) {
+              setTimeout(() => {
+                setActionQueue(prev => [...prev, continueAction])
+              }, 0)
+            } else if (onAction) {
+              const sourceCoords = cursorStack.sourceCoords || { row: -1, col: -1 }
+              setTimeout(() => {
+                onAction(continueAction, sourceCoords)
+              }, 0)
+            }
+          }
         }
       }
     }
-    return
+    // REMOVED: return statement that was blocking abilityMode processing
+    // This return was incorrectly placed outside the if (cursorStack) block
 
   // Add visual selection effect when card is clicked during selection mode
   if (abilityMode?.type === 'ENTER_MODE' && abilityMode.mode === 'SELECT_TARGET') {
@@ -171,13 +211,21 @@ export function handleHandCardClick(
     // Trigger hand card selection effect visible to all players via WebSocket (before any filtering)
     triggerHandCardSelection(player.id, cardIndex, gameState.activePlayerId ?? localPlayerId ?? 1)
 
+    // Convert filter string to function if needed (for Quick Response Team, Faber, etc.)
+    // The filter from contentDatabase.json is a string like "hasType_Unit" that needs conversion
+    let filterFn = payload.filter
+    if (typeof filterFn !== 'function' && typeof filterFn === 'string') {
+      const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
+      filterFn = buildFilterFromString(filterFn, sourceOwnerId, sourceCoords || { row: 0, col: 0 })
+    }
+
     // SELECT_HAND_FOR_DEPLOY (Quick Response Team)
     if (payload.actionType === 'SELECT_HAND_FOR_DEPLOY') {
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
 
-      // Store command card info to mark as used when play completes
+      // Store command card info and AUTO_STEPS context for cleanup
       // Store selected card info for reference
       setCommandContext((prev: any) => ({
         ...prev,
@@ -185,30 +233,39 @@ export function handleHandCardClick(
           sourceCoords: abilityMode.sourceCoords,
           isDeployAbility: abilityMode.isDeployAbility,
           readyStatusToRemove: abilityMode.readyStatusToRemove,
+          _autoStepsContext: abilityMode.payload?._autoStepsContext,
         },
         selectedHandCard: { playerId: player.id, cardIndex, card }
       }))
+
+      // CRITICAL: Clear ability mode SYNCHRONOUSLY before setting playMode
+      // This ensures that when the user clicks an empty cell, the playMode check
+      // in GameBoard handleClick happens before any abilityMode check
+      flushSync(() => {
+        setAbilityMode(null)
+      })
+
+      // Clear targeting mode and valid targets
+      clearTargetingMode()
+      clearValidTargets?.()
 
       // Start normal play mode for the selected Unit card
       const sourceItem: any = { card, source: 'hand', playerId: player.id, cardIndex }
       if (setPlayMode) {
         setPlayMode({ card, sourceItem, faceDown: false })
       }
-
-      // Clear ability mode - play mode will handle the rest
-      clearTargetingMode()
-      clearValidTargets?.()
-      setAbilityMode(null)
       return
     }
 
     // SELECT_HAND_FOR_DISCARD_THEN_SPAWN (Faber)
     if (payload.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_SPAWN') {
       // Apply filter to validate the card
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
-      if (player.id !== sourceCard?.ownerId) {
+      // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
+      const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
+      if (player.id !== sourceOwnerId) {
         return
       } // Only discard own cards
 
@@ -244,11 +301,16 @@ export function handleHandCardClick(
 
     // SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN (Faber - CREATE_TOKEN with cost)
     if (payload.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN') {
+      console.log('[HAND_CARD_CLICK] SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN matched!')
+
       // Apply filter to validate the card
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
-      if (player.id !== sourceCard?.ownerId) {
+      // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
+      // This fixes the issue where sourceCard?.ownerId might be undefined
+      const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
+      if (player.id !== sourceOwnerId) {
         return
       } // Only discard own cards
 
@@ -285,7 +347,9 @@ export function handleHandCardClick(
 
     // LUCIUS SETUP: Discard 1 -> Search Command
     if (payload.actionType === 'LUCIUS_SETUP') {
-      if (player.id !== sourceCard?.ownerId) {
+      // CRITICAL: Use fallback to localPlayerId like handleEnterMode does
+      const sourceOwnerId = sourceCard?.ownerId ?? localPlayerId ?? player.id
+      if (player.id !== sourceOwnerId) {
         return
       } // Only discard own cards
 
@@ -309,7 +373,7 @@ export function handleHandCardClick(
 
     // DESTROY Hand Card
     if (payload.actionType === 'DESTROY') {
-      if (payload.filter && !payload.filter(card)) {
+      if (filterFn && !filterFn(card)) {
         return
       }
       moveItem({ card, source: 'hand', playerId: player.id, cardIndex, bypassOwnershipCheck: true }, { target: 'discard', playerId: player.id })

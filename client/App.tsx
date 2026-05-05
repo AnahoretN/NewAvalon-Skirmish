@@ -45,7 +45,7 @@ import { DeckType } from './types'
 import { STATUS_ICONS, STATUS_DESCRIPTIONS, PLAYER_COLOR_RGB } from './constants'
 import { getCountersDatabase, fetchContentDatabase } from './content'
 import { validateTarget, calculateValidTargets, checkActionHasTargets } from '@shared/utils/targeting'
-import { getCommandAction } from '@server/utils/commandLogic'
+import { getCommandActionByOption, getCommandOptions, isCommandCard } from './utils/autoAbilities'
 import { createTargetingActionFromCursorStack, createTargetingActionFromAbilityMode, determineTargetingPlayerId } from './utils/targetingActionUtils'
 import { getTokenTargetingRules } from './utils/tokenTargeting'
 import { useLanguage } from './contexts/LanguageContext'
@@ -71,11 +71,13 @@ const AppInner = function AppInner() {
 
   // Declare ability state early (needed by useGameState)
   const [abilityMode, setAbilityMode] = useState<AbilityAction | null>(null)
+  // CRITICAL: Track pending command card that needs cleanup after abilityMode completes
+  const pendingCommandCleanupRef = useRef<{ card: Card; ownerId: number } | null>(null)
   // CRITICAL: Track pending chained actions to prevent race condition
   // When a chained action is being processed, the action queue should wait
   const pendingChainedActionRef = useRef<boolean>(false)
 
-  const gameStateHook = useGameState({ abilityMode, setAbilityMode })
+  const gameStateHook = useGameState()
 
   const {
     gameState,
@@ -219,6 +221,15 @@ const AppInner = function AppInner() {
     tokensModalAnchor: null as { top: number; left: number } | null,
     countersModalAnchor: null as { top: number; left: number } | null,
   })
+
+  // Memoize command options to avoid recalculating on every render
+  // This prevents repeated getCommandOptions calls when commandModalCard is open
+  const commandOptionsCache = React.useMemo(() => {
+    if (!commandModalCard) return { baseId: null, options: [] }
+    const baseId = commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id
+    const options = getCommandOptions(baseId)
+    return { baseId, options }
+  }, [commandModalCard?.id, commandModalCard?.baseId])
 
   const [viewingDiscard, setViewingDiscard] = useState<{
     player: Player;
@@ -379,6 +390,9 @@ const AppInner = function AppInner() {
 
   // Track previous gameState.abilityMode for WebRTC host sync (separate from local abilityMode tracking)
   const prevGameStateAbilityModeRef = useRef<AbilityAction | null>(null)
+
+  // Track when handleCancelAllModes was called to prevent targetingMode restoration
+  const cancelAllModesTimestampRef = useRef<number>(0)
 
   // Lifted state for cursor stack to resolve circular dependency
   const [cursorStack, setCursorStack] = useState<CursorStackState | null>(null)
@@ -675,6 +689,9 @@ const AppInner = function AppInner() {
     triggerClickWave,
     clearTargetingMode,
     setActionQueue,
+    setValidHandTargets,
+    setTargetingMode,
+    abilityMode,
   })
 
   // ============================================================================
@@ -990,15 +1007,29 @@ const AppInner = function AppInner() {
 
       // CRITICAL: Check for restrictions (e.g., False Orders Revealed token)
       // Note: These fields are in action.payload
+      const targetOwnerId = action?.payload?.targetOwnerId ?? action?.targetOwnerId
       const excludedOwnerId = action?.payload?.excludeOwnerId ?? action?.excludeOwnerId
       const onlyOpponents = action?.payload?.onlyOpponents ?? action?.onlyOpponents
 
-      // If targeting player is excluded, don't show their hand
-      if (targetingPlayerId === excludedOwnerId) {
-        setValidHandTargets([])
+      // Collect hand targets based on targeting mode
+      const freshHandTargets: {playerId: number, cardIndex: number}[] = []
+
+      // CRITICAL: Handle targetOwnerId (False Orders Option 1 - specific player's hand)
+      // If targetOwnerId is set and positive, ONLY target that player's hand
+      if (targetOwnerId && targetOwnerId > 0) {
+        const targetPlayer = gameState.players.find(p => p.id === targetOwnerId)
+        if (targetPlayer && targetPlayer.hand && targetPlayer.hand.length > 0) {
+          for (let i = 0; i < targetPlayer.hand.length; i++) {
+            freshHandTargets.push({ playerId: targetPlayer.id, cardIndex: i })
+          }
+        }
       } else {
-        // Collect hand targets from all non-excluded players
-        const freshHandTargets: {playerId: number, cardIndex: number}[] = []
+        // Original logic: all opponents (using excludedOwnerId)
+        // If targeting player is excluded, don't show their hand
+        if (targetingPlayerId === excludedOwnerId) {
+          setValidHandTargets([])
+          return
+        }
 
         for (const player of gameState.players) {
           // Skip excluded player
@@ -1019,9 +1050,9 @@ const AppInner = function AppInner() {
             }
           }
         }
-
-        setValidHandTargets(freshHandTargets)
       }
+
+      setValidHandTargets(freshHandTargets)
     } else if (!gameState.targetingMode?.handTargets && !hasLocalActiveMode) {
       // Clear validHandTargets when targetingMode is cleared (no longer has handTargets)
       // This ensures remote players see targeting highlights cleared when token is placed
@@ -1339,10 +1370,41 @@ const AppInner = function AppInner() {
   useEffect(() => {
     // When playMode goes from non-null to null and there's a pending command card
     if (prevPlayModeRef.current && !playMode && commandContext.pendingCommandCard) {
-      const { sourceCoords, isDeployAbility, readyStatusToRemove } = commandContext.pendingCommandCard
-      if (sourceCoords && sourceCoords.row >= 0) {
+      const { sourceCoords, isDeployAbility, readyStatusToRemove, _autoStepsContext } = commandContext.pendingCommandCard
+
+      // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
+      if (_autoStepsContext && setActionQueue) {
+        console.log('[App.tsx] Continuing AUTO_STEPS after playMode completes:', {
+          currentStepIndex: _autoStepsContext.currentStepIndex,
+          totalSteps: _autoStepsContext.steps.length,
+          commandCardId: _autoStepsContext.commandCardId,
+        })
+
+        // Find the command card for sourceCard
+        // CRITICAL: Player has announcedCard (singular), not announced (array)
+        const commandCard = gameState.players
+          .map(p => p.announcedCard)
+          .filter((c): c is Card => c !== undefined && c !== null)
+          .find(c => c.id === _autoStepsContext.commandCardId)
+
+        // Add CONTINUE_AUTO_STEPS action to queue to execute CLEANUP_COMMAND
+        const continueAction: any = {
+          type: 'CONTINUE_AUTO_STEPS',
+          sourceCard: commandCard,
+          sourceCoords: sourceCoords,
+          isDeployAbility: isDeployAbility,
+          readyStatusToRemove: readyStatusToRemove,
+          payload: {
+            _autoStepsContext: _autoStepsContext,
+            completedCoords: sourceCoords || { row: -1, col: -1 },
+          }
+        }
+        setActionQueue((prev: any[]) => [...prev, continueAction])
+      } else if (sourceCoords && sourceCoords.row >= 0) {
+        // No AUTO_STEPS context, just mark ability as used (for non-command cards)
         markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
       }
+
       // Clear the pending command card
       setCommandContext((prev: any) => {
         const { pendingCommandCard, ...rest } = prev
@@ -1350,7 +1412,7 @@ const AppInner = function AppInner() {
       })
     }
     prevPlayModeRef.current = playMode
-  }, [playMode, commandContext.pendingCommandCard, markAbilityUsed, setCommandContext])
+  }, [playMode, commandContext.pendingCommandCard, markAbilityUsed, setCommandContext, setActionQueue, gameState.players])
 
   // Handle command card from token panel - open modal when card appears in announced
   const pendingCommandFromTokenPanelRef = useRef<string | null>(null)
@@ -1378,28 +1440,35 @@ const AppInner = function AppInner() {
     // We've been waiting for this card - open the modal
     pendingCommandFromTokenPanelRef.current = null
 
-    const baseId = (card.baseId || card.id.split('_')[1] || card.id).toLowerCase()
-    const complexCommands = [
-      'overwatch', 'tacticalmaneuver', 'repositioning', 'inspiration',
-      'datainterception', 'falseorders', 'experimentalstimulants',
-      'logisticschain', 'quickresponseteam', 'temporaryshelter', 'enhancedinterrogation',
-    ]
+    // Note: baseId is already camelCase from database, don't convert to lowercase
+    const baseId = card.baseId || card.id.split('_')[1] || card.id
+    const commandOptions = getCommandOptions(baseId)
 
-    const isComplexCommand = complexCommands.some((id) => baseId.includes(id))
-
-    if (isComplexCommand && !commandModalCard) {
-      // Open modal for complex command
+    // Check if command has options using the new system
+    // CRITICAL: Don't reopen modal if actionQueue is active (still processing current command)
+    if (commandOptions.length > 0 && !commandModalCard && actionQueue.length === 0) {
+      // Command with options - open modal
       // CRITICAL: Use the card's actual owner, NOT localPlayerId
       // This fixes dummy player command activation where local player controls dummy's cards
       setCommandModalCard({ ...card, ownerId: card.ownerId ?? localPlayerId })
-    } else if (!isComplexCommand && !commandModalCard) {
-      // Simple command - execute directly
-      const actions = getCommandAction(card.id, -1, card as any, gameState as any, localPlayerId)
-      if (actions.length > 0) {
-        setActionQueue([
-          ...(actions as any),
-          { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: localPlayerId }, sourceCard: card },
-        ])
+    } else if (!commandModalCard) {
+      // Command without options (shouldn't happen with current data, but handle gracefully)
+      // Execute with first option if available
+      if (commandOptions.length === 1) {
+        const action = getCommandActionByOption(
+          baseId,
+          commandOptions[0].optionIndex,
+          { ...card, ownerId: card.ownerId ?? localPlayerId },
+          gameState,
+          card.ownerId ?? localPlayerId,
+          { row: -1, col: -1 }
+        )
+        if (action) {
+          setActionQueue([
+            action,
+            { type: 'GLOBAL_AUTO_APPLY', payload: { cleanupCommand: true, card: card, ownerId: localPlayerId }, sourceCard: card },
+          ])
+        }
       }
     }
   }, [gameState?.players, localPlayerId, commandModalCard, setCommandModalCard, setActionQueue])
@@ -1451,6 +1520,13 @@ const AppInner = function AppInner() {
   }, [gameState])
 
   useEffect(() => {
+    // CRITICAL: If handleCancelAllModes was just called (right-click cancel), skip this entire useEffect
+    // This prevents targetingMode from being restored immediately after being cleared
+    const cancelTimeSince = Date.now() - cancelAllModesTimestampRef.current
+    if (cancelTimeSince < 500) {
+      return
+    }
+
     // If another player has set targeting mode, don't override with local calculations
     // This allows visual effects from remote players to display correctly
     if (gameState.targetingMode && gameState.targetingMode.playerId !== localPlayerId) {
@@ -1573,35 +1649,30 @@ const AppInner = function AppInner() {
     if (commandModalCard && !abilityMode && !cursorStack) {
       const player = gameState.players.find(p => p.id === commandModalCard.ownerId)
       if (player?.announcedCard?.id === commandModalCard.id) {
-        // Command is in announced zone, get its actions
-        const baseId = (commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id).toLowerCase()
-        const complexCommands = [
-          'overwatch',
-          'tacticalmaneuver',
-          'repositioning',
-          'inspiration',
-          'datainterception',
-          'falseorders',
-          'experimentalstimulants',
-          'logisticschain',
-          'quickresponseteam',
-          'temporaryshelter',
-          'enhancedinterrogation',
-        ]
+        // Use cached command options to avoid repeated database lookups
+        const { baseId, options: commandOptions } = commandOptionsCache
 
-        if (complexCommands.some(id => baseId.includes(id))) {
-          // For complex commands, we need to get the actions that will be available
+        if (commandOptions.length > 0) {
+          // For commands with options, calculate targets for ALL options
           const freshGameState = getFreshGameState ? getFreshGameState() : gameState
-          // Try option 0 (first option) to see what targets it needs
           try {
-            const optionActions = getCommandAction(commandModalCard.id, 0, commandModalCard as any, freshGameState as any, commandModalCard.ownerId!)
-            optionActions.forEach((action: any) => {
-              const targets = calculateValidTargets(action as any, freshGameState as any, commandModalCard.ownerId!, commandContext)
-              targets.forEach(t => {
-                if (!boardTargets.some(bt => bt.row === t.row && bt.col === t.col)) {
-                  boardTargets.push(t)
-                }
-              })
+            commandOptions.forEach((option) => {
+              const action = getCommandActionByOption(
+                baseId,
+                option.optionIndex,
+                commandModalCard,
+                freshGameState,
+                commandModalCard.ownerId!,
+                { row: -1, col: -1 }
+              )
+              if (action) {
+                const targets = calculateValidTargets(action as any, freshGameState as any, commandModalCard.ownerId!, commandContext)
+                targets.forEach(t => {
+                  if (!boardTargets.some(bt => bt.row === t.row && bt.col === t.col)) {
+                    boardTargets.push(t)
+                  }
+                })
+              }
             })
           } catch (e) {
             // If we can't calculate targets, that's ok - modal is open for selection
@@ -1686,15 +1757,23 @@ const AppInner = function AppInner() {
     //
     const hasPlayMode = playMode && playMode.card?.types?.includes('Unit')
     const hasCommandModal = !!commandModalCard
-    const hasActiveMode = cursorStack || abilityMode || hasPlayMode || hasCommandModal
+    // CRITICAL: Check if we're in cancel mode (right-click) - if so, treat as no active mode
+    // This prevents targetingMode from being restored after handleCancelAllModes
+    const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
+    const isInCancelMode = timeSinceCancel < 500
+    const hasActiveMode = !isInCancelMode && (cursorStack || abilityMode || hasPlayMode || hasCommandModal)
     const isDeckSelectableMode = abilityMode?.mode === 'SELECT_DECK'
 
-    // CRITICAL: Don't override targetingMode if it's already set with handTargets (DISCARD_FROM_HAND abilities)
+    // CRITICAL: Don't override targetingMode if it's already set with handTargets (DISCARD_FROM_HAND abilities, Revealed token placement)
     // These abilities set targetingMode in actionExecutionHandler.ts with pre-calculated handTargets
     // We should preserve them instead of recalculating and potentially clearing them
+    // CRITICAL: Check action type OR mode to handle both CREATE_STACK (from actionExecutionHandler) and SELECT_TARGET (from useEffect)
     const isHandTargetingMode = gameState.targetingMode?.handTargets &&
                                 gameState.targetingMode.handTargets.length > 0 &&
-                                gameState.targetingMode.action?.payload?.actionType === abilityMode?.payload?.actionType
+                                (gameState.targetingMode.action?.payload?.actionType === abilityMode?.payload?.actionType ||
+                                 gameState.targetingMode.action?.mode === abilityMode?.mode ||
+                                 // Also check if the current targetingMode has targetOwnerId set (Revealed token targeting specific player)
+                                 !!gameState.targetingMode.action?.payload?.targetOwnerId)
 
     // Check if targets actually changed before setting state
     const boardTargetsChanged = JSON.stringify(boardTargets) !== JSON.stringify(prevBoardTargetsRef.current)
@@ -1764,7 +1843,8 @@ const AppInner = function AppInner() {
           gameState,
           localPlayerId,
           actorId,
-          boardSize
+          boardSize,
+          targetingAction
         )
 
         // CRITICAL: Line selection modes use abilityMode + handleLineSelection for their interaction
@@ -1779,8 +1859,33 @@ const AppInner = function AppInner() {
           // SELECT_CELL is for selecting empty cells on the board, NOT cards in hand
           const finalHandTargets = targetingAction.mode === 'SELECT_CELL' ? [] : handTargets
 
-          // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
-          setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
+          // CRITICAL: Don't override targetingMode if it already has handTargets
+          // This prevents CREATE_STACK handler's handTargets from being overwritten by useEffect
+          // When cursorStack is active, createTargetingActionFromCursorStack doesn't calculate handTargets,
+          // so we need to preserve the existing handTargets from gameState.targetingMode
+          const hasExistingHandTargets = gameState.targetingMode?.handTargets && gameState.targetingMode.handTargets.length > 0
+          if (hasExistingHandTargets && finalHandTargets.length === 0 && targetingAction.mode === 'SELECT_TARGET') {
+            // Preserve existing targetingMode with handTargets - don't overwrite with empty array
+            // Still update validTargets for UI highlights
+            if (boardTargetsChanged) {
+              setValidTargets(boardTargets)
+              prevBoardTargetsRef.current = boardTargets
+            }
+            const handTargetsToUse = gameState.targetingMode?.handTargets ?? []
+            if (JSON.stringify(handTargetsToUse) !== JSON.stringify(prevHandTargetsRef.current)) {
+              setValidHandTargets(handTargetsToUse)
+              prevHandTargetsRef.current = handTargetsToUse
+            }
+            return undefined
+          }
+
+          // CRITICAL: Don't restore targetingMode if handleCancelAllModes was just called (right-click cancel)
+          // Check if cancelAllModes was called within the last 500ms
+          const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
+          if (timeSinceCancel > 500) {
+            // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
+            setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
+          }
         } else {
           // For line selection modes, only set local validTargets - don't call setTargetingMode
           // The line selection is handled via handleLineSelection in lineSelectionHandlers.ts
@@ -1803,7 +1908,7 @@ const AppInner = function AppInner() {
 
     return undefined
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abilityMode, cursorStack, playMode, commandModalCard, gameState.board, gameState.players, localPlayerId, commandContext, gameState.activePlayerId, setTargetingMode, clearTargetingMode])
+  }, [abilityMode, cursorStack, playMode, commandModalCard, gameState.board, gameState.players, localPlayerId, commandContext, gameState.activePlayerId, setTargetingMode, clearTargetingMode, cancelAllModesTimestampRef])
 
 
   // Sync valid hand targets and deck selectability to other players
@@ -1964,8 +2069,14 @@ const AppInner = function AppInner() {
           const excludedOwnerId = cursorStack.excludeOwnerId
           const onlyOpponents = cursorStack.onlyOpponents || (cursorStack.targetOwnerId === -1)
           const tokenOwnerId = cursorStack.originalOwnerId
+          // CRITICAL: Check targetOwnerId for specific target player (False Orders Option 1, Recon Drone Commit)
+          const targetOwnerId = cursorStack.targetOwnerId
 
           for (const player of gameState.players) {
+            // CRITICAL: If targetOwnerId is set (specific player), only target that player's hand
+            if (targetOwnerId && targetOwnerId > 0 && player.id !== targetOwnerId) {
+              continue
+            }
             // Skip excluded player (token owner's own hand for Revealed)
             if (player.id === excludedOwnerId) {
               continue
@@ -2092,7 +2203,8 @@ const AppInner = function AppInner() {
           for (let c = 0; c < boardSize; c++) {
             const cell = gameState.board[r]?.[c]
             const card = cell?.card
-            if (card?.statuses?.some((s: CardStatus) => s.type === 'LastPlayed' && s.addedByPlayerId === activePlayerId)) {
+            // Check that card belongs to active player AND has LastPlayed status from that player
+            if (card?.ownerId === activePlayerId && card?.statuses?.some((s: CardStatus) => s.type === 'LastPlayed' && s.addedByPlayerId === activePlayerId)) {
               lastPlayedCoords = { row: r, col: c }
               found = true
               break
@@ -2217,6 +2329,16 @@ const AppInner = function AppInner() {
     // wait for it to complete before processing the next action in the queue
     if (actionQueue.length > 0 && !abilityMode && !cursorStack && !pendingChainedActionRef.current) {
       const nextAction = actionQueue[0]
+      // DEBUG: Log actionQueue processing
+      console.log('[actionQueue] Processing action:', {
+        actionQueueLength: actionQueue.length,
+        actionType: nextAction.type,
+        actionMode: nextAction.mode,
+        hasCleanupCommand: nextAction.payload?.cleanupCommand,
+        abilityMode,
+        cursorStack,
+        pendingChainedAction: pendingChainedActionRef.current
+      })
       setActionQueue(prev => prev.slice(1))
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
@@ -2261,18 +2383,108 @@ const AppInner = function AppInner() {
               count += cell.card.statuses.filter(s => s.type === 'Aim' && s.addedByPlayerId === ownerId).length
             }
           }))
+          // CRITICAL: Also count Aim token from commandContext.lastPlacedToken
+          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+          const justPlaced = commandContext.lastPlacedToken
+          if (justPlaced && justPlaced.tokenType === 'Aim' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
+            // Check if this token is already counted on the board (it might not be synced yet)
+            const alreadyCounted = gameState.board.some(row =>
+              row.some(cell => {
+                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
+                  // Count Aim tokens at this location
+                  const aimCount = cell.card.statuses.filter(s =>
+                    s.type === 'Aim' &&
+                    s.addedByPlayerId === ownerId
+                  ).length
+                  // If we found the card, check if we're at the right coords
+                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
+                    return aimCount > 0
+                  }
+                }
+                return false
+              })
+            )
+            if (!alreadyCounted) {
+              console.log('[calculateDynamicCount] Adding lastPlaced Aim token to count:', {
+                tokenType: justPlaced.tokenType,
+                boardCoords: justPlaced.boardCoords,
+                addedByPlayerId: justPlaced.addedByPlayerId,
+                countBefore: count,
+                countAfter: count + 1
+              })
+              count += 1
+            }
+          }
         } else if (factor === 'Exploit') {
           gameState.board.forEach(row => row.forEach(cell => {
             if (cell.card?.statuses) {
               count += cell.card.statuses.filter(s => s.type === 'Exploit' && s.addedByPlayerId === ownerId).length
             }
           }))
+          // CRITICAL: Also count Exploit token from commandContext.lastPlacedToken
+          const justPlaced = commandContext.lastPlacedToken
+          if (justPlaced && justPlaced.tokenType === 'Exploit' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
+            const alreadyCounted = gameState.board.some(row =>
+              row.some(cell => {
+                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
+                  const exploitCount = cell.card.statuses.filter(s =>
+                    s.type === 'Exploit' &&
+                    s.addedByPlayerId === ownerId
+                  ).length
+                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
+                    return exploitCount > 0
+                  }
+                }
+                return false
+              })
+            )
+            if (!alreadyCounted) {
+              console.log('[calculateDynamicCount] Adding lastPlaced Exploit token to count:', {
+                tokenType: justPlaced.tokenType,
+                boardCoords: justPlaced.boardCoords,
+                addedByPlayerId: justPlaced.addedByPlayerId,
+                countBefore: count,
+                countAfter: count + 1
+              })
+              count += 1
+            }
+          }
         }
         return count
       }
 
       if (actionToProcess.type === 'GLOBAL_AUTO_APPLY') {
         if (actionToProcess.payload?.cleanupCommand) {
+          // CRITICAL: Don't cleanup if there's an active ability mode (AUTO_STEPS, SELECT_TARGET, etc.)
+          // The cleanup will be triggered after the ability mode completes
+          if (abilityMode) {
+            // CRITICAL: Move cleanup to the end of the queue instead of removing it
+            // This ensures it will be processed after abilityMode clears
+            const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
+            if (cleanupSkipCount < 5) {
+              ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
+              setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
+              return
+            }
+          }
+
+          // CRITICAL: Also check if there are still pending non-cleanup actions in the queue
+          // This prevents cleanup from executing before command card abilities complete
+          // EXCEPTION: Allow cleanup if all remaining actions are from chained actions (detected by missing cleanupCommand in original queue)
+          const remainingQueue = actionQueue.slice(1)
+          const hasPendingActions = remainingQueue.some(a =>
+            !a.payload?.cleanupCommand && // Not a cleanup action
+            (a.type !== 'GLOBAL_AUTO_APPLY' || !a.payload?.cleanupCommand)
+          )
+          // CRITICAL: If cleanup has been skipped multiple times (5+), just process it to prevent infinite loop
+          const cleanupSkipCount = (nextAction as any)._cleanupSkipCount || 0
+          if (hasPendingActions && cleanupSkipCount < 5) {
+            // Move cleanup to the end of the queue and increment skip count on the actual action object
+            ;(nextAction as any)._cleanupSkipCount = cleanupSkipCount + 1
+            setActionQueue(prev => [...prev.filter(a => a !== nextAction), nextAction])
+            return
+          }
+
           // Robust cleanup: determine target player and use current announced card
           const targetPlayerId = actionToProcess.payload.ownerId !== undefined
             ? actionToProcess.payload.ownerId
@@ -2293,6 +2505,8 @@ const AppInner = function AppInner() {
                 playerId: targetPlayerId,
               })
             }
+            // CRITICAL: Return after cleanupCommand to prevent double-processing
+            return
           }
         } else if (actionToProcess.payload?.dynamicResource) {
           const { type, factor, baseCount, ownerId: payloadOwnerId } = actionToProcess.payload.dynamicResource
@@ -2314,19 +2528,52 @@ const AppInner = function AppInner() {
               updatePlayerScoreWithLogging(activePlayerId, score)
             }
           }
-        } else if (actionToProcess.payload?.contextReward && actionToProcess.sourceCard) {
+        } else if (actionToProcess.payload?.contextReward && (actionToProcess.sourceCard || actionToProcess.originalOwnerId || actionToProcess.sourceCoords)) {
           // This is handled inside useAppAbilities now for better access to board state
           // but we call executeAction to trigger it
+          // CRITICAL: contextReward (DRAW_MOVED_POWER, SCORE_MOVED_POWER) doesn't require sourceCard
+          // It finds the moved card via commandContext and uses its power
+          console.log('[actionQueue] Processing contextReward action:', {
+            contextReward: actionToProcess.payload.contextReward,
+            sourceCardName: actionToProcess.sourceCard?.name || '(no sourceCard)',
+            sourceCoords: actionToProcess.sourceCoords,
+            originalOwnerId: actionToProcess.originalOwnerId,
+            _tempContextId: actionToProcess.payload._tempContextId,
+            _sourceCoordsBeforeMove: actionToProcess.payload._sourceCoordsBeforeMove
+          })
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else if (actionToProcess.payload?.customAction && actionToProcess.sourceCard) {
           // Handle custom actions like FINN_SCORING
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
+        } else if (actionToProcess.payload?.tokenType && (actionToProcess.payload?.count || actionToProcess.payload?.count === 0)) {
+          // CRITICAL: Handle token placement on context card (False Orders option 2: Stun x2)
+          // This case has tokenType and count in payload for placing on the moved card
+          // Send to executeAction which will call handleGlobalAutoApply
+          console.log('[actionQueue] Processing token placement on context card:', {
+            tokenType: actionToProcess.payload.tokenType,
+            count: actionToProcess.payload.count,
+            contextCardId: actionToProcess.payload.contextCardId,
+            _tempContextId: actionToProcess.payload._tempContextId,
+            sourceCoords: actionToProcess.sourceCoords,
+          })
+          executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
+        } else {
+          // CRITICAL: Unknown GLOBAL_AUTO_APPLY action - don't let it fall through to executeAction
+          // This prevents cleanupCommand and other special actions from being routed incorrectly
+          console.warn('[actionQueue] Unknown GLOBAL_AUTO_APPLY action, skipping:', actionToProcess)
+          setActionQueue(prev => prev.slice(1))
+          return
         }
       } else if (actionToProcess.type === 'CREATE_STACK' ||
                  actionToProcess.type === 'OPEN_MODAL' ||
-                 actionToProcess.type === 'ENTER_MODE') {
+                 actionToProcess.type === 'ENTER_MODE' ||
+                 // Note: GLOBAL_AUTO_APPLY is now handled above with explicit return
+                 // actionToProcess.type === 'GLOBAL_AUTO_APPLY' ||
+                 actionToProcess.type === 'CONTINUE_AUTO_STEPS') {
         // DIRECTLY EXECUTE the action from the queue.
         // This ensures setTargetingMode is called for hand targeting effects
+        // Also handles GLOBAL_AUTO_APPLY (e.g., False Orders Stun x2) correctly
+        // Also handles CONTINUE_AUTO_STEPS for command card cleanup
         executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
       } else {
         // Ensure we check targets before blindly setting mode from queue
@@ -2538,6 +2785,9 @@ const AppInner = function AppInner() {
   // Cancels all active modes (abilityMode, cursorStack, playMode, targetingMode)
   // Called by right-click on board or cards
   const handleCancelAllModes = useCallback(() => {
+    // CRITICAL: Set timestamp to prevent targetingMode restoration in useEffect
+    cancelAllModesTimestampRef.current = Date.now()
+
     // Handle Deploy ability cancellation: remove readyDeploy and add phase-specific status
     if (abilityMode && abilityMode.isDeployAbility && abilityMode.sourceCoords) {
       const { row, col } = abilityMode.sourceCoords
@@ -2591,13 +2841,14 @@ const AppInner = function AppInner() {
     if (playMode) {
       setPlayMode(null)
     }
-    // Clear targeting mode for all players
-    clearTargetingMode()
+    // CRITICAL: Force clear targeting mode with bypass for right-click cancel
+    // This ensures targetingMode is cleared immediately regardless of ownership
+    clearTargetingMode(true)
     // Clear valid hand targets
     setValidHandTargets([])
     // Clear valid board targets
     setValidTargets([])
-  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState])
+  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState, setAbilityMode, setCursorStack, setPlayMode, setValidHandTargets, setValidTargets, cancelAllModesTimestampRef])
 
   const handleDoubleClickHandCard = (player: Player, card: Card, cardIndex: number) => {
     if (abilityMode || cursorStack) {
@@ -2703,7 +2954,9 @@ const AppInner = function AppInner() {
   }, [viewingDiscard?.pickConfig?.filterType])
 
   // Shared handler for closing deck/discard view with shuffle support
-  const handleDeckViewClose = useCallback(() => {
+  // cardSelected: true when a card was actually selected (to continue AUTO_STEPS), false otherwise
+  const handleDeckViewClose = useCallback((cardSelected = false) => {
+    console.log('[App.tsx] handleDeckViewClose called:', { cardSelected, hasViewingDiscard: !!viewingDiscard })
     if (!viewingDiscard) {
       return
     }
@@ -2711,6 +2964,42 @@ const AppInner = function AppInner() {
     // Shuffle deck if required by the search ability (even when cancelling without selection)
     if (viewingDiscard.shuffleOnClose) {
       shufflePlayerDeckWithLogging(viewingDiscard.player.id)
+    }
+
+    // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
+    // Only continue if a card was actually selected
+    const { _autoStepsContext } = viewingDiscard as any
+    console.log('[App.tsx] Checking AUTO_STEPS continuation:', { hasAutoStepsContext: !!_autoStepsContext, cardSelected })
+    if (_autoStepsContext && setActionQueue && cardSelected) {
+      console.log('[App.tsx] Continuing AUTO_STEPS after deck view closes:', {
+        currentStepIndex: _autoStepsContext.currentStepIndex,
+        totalSteps: _autoStepsContext.steps.length,
+        commandCardId: _autoStepsContext.commandCardId,
+      })
+
+      // Find the command card for sourceCard
+      const commandCard = gameState.players
+        .map(p => p.announcedCard)
+        .filter((c): c is Card => c !== undefined && c !== null)
+        .find(c => c.id === _autoStepsContext.commandCardId)
+
+      // Add CONTINUE_AUTO_STEPS action to queue to execute CLEANUP_COMMAND
+      const continueAction: any = {
+        type: 'CONTINUE_AUTO_STEPS',
+        sourceCard: commandCard,
+        sourceCoords: _autoStepsContext.sourceCoords || { row: -1, col: -1 },
+        isDeployAbility: _autoStepsContext.isDeployAbility,
+        readyStatusToRemove: _autoStepsContext.readyStatusToRemove,
+        payload: {
+          _autoStepsContext: _autoStepsContext,
+          completedCoords: _autoStepsContext.sourceCoords || { row: -1, col: -1 },
+        }
+      }
+      setActionQueue((prev: any[]) => [...prev, continueAction])
+
+      setViewingDiscard(null)
+      setAbilityMode(null)
+      return
     }
 
     // If closing during a card pick/search ability without selecting a card, cancel the ability
@@ -2732,7 +3021,7 @@ const AppInner = function AppInner() {
 
     setViewingDiscard(null)
     setAbilityMode(null)
-  }, [viewingDiscard, shufflePlayerDeck, drawCard, markAbilityUsed, setAbilityMode])
+  }, [viewingDiscard, shufflePlayerDeck, drawCard, markAbilityUsed, setActionQueue, gameState.players])
 
   const handleDiscardCardClick = (cardIndex: number) => {
     if (!viewingDiscard || !viewingDiscardPlayer) {
@@ -2748,10 +3037,12 @@ const AppInner = function AppInner() {
     }
 
     const { action, isDeck: pickIsDeck } = pickConfig
+    console.log('[App.tsx] handleDiscardCardClick:', { cardIndex, action, pickIsDeck })
 
     if (action === 'recover') {
       // Add to hand
       if (pickIsDeck) {
+        console.log('[App.tsx] Moving card from deck to hand:', { cardIndex, playerId: viewingDiscardPlayer.id })
         moveItem({
           card: viewingDiscardPlayer.deck[cardIndex],
           source: 'deck',
@@ -2765,7 +3056,9 @@ const AppInner = function AppInner() {
         recoverDiscardedCard(viewingDiscardPlayer.id, cardIndex)
       }
       // Use shared close handler (handles shuffle if required)
-      handleDeckViewClose()
+      // Pass true to indicate a card was selected (for AUTO_STEPS continuation)
+      console.log('[App.tsx] Card moved, calling handleDeckViewClose(true)')
+      handleDeckViewClose(true)
     } else if (action === 'resurrect') {
       // For Immunis: Select card, then close modal to allow cell selection
       if (abilityMode?.mode === 'IMMUNIS_RETRIEVE') {

@@ -425,6 +425,7 @@ export const useAppAbilities = ({
         scoreLine,
         scoreDiagonal,
         isWebRTCMode,
+        setActionQueue,
       })
       if (handled) {return}
     }
@@ -514,8 +515,10 @@ export const useAppAbilities = ({
       scoreLine,
       scoreDiagonal,
       openContextMenu: () => {},
-      triggerDeckSelection: () => {},
+      triggerDeckSelection,
+      setViewingDiscard,
       isWebRTCMode,
+      setActionQueue,
     })
 
     // All empty cell handling is now done in the modular handler
@@ -545,6 +548,8 @@ export const useAppAbilities = ({
     modifyBoardCardPower,
     scoreLine,
     scoreDiagonal,
+    triggerDeckSelection,
+    setViewingDiscard,
   ])
 
   /**

@@ -123,7 +123,7 @@ interface UseGameStateResult {
 
   // Targeting
   setTargetingMode: (action: any, playerId: number, sourceCoords?: { row: number; col: number }, preCalculatedTargets?: {row: number, col: number}[], commandContext?: any, preCalculatedHandTargets?: {playerId: number, cardIndex: number}[]) => void
-  clearTargetingMode: () => void
+  clearTargetingMode: (force?: boolean) => void
 
   // Phase management
   nextPhase: (forceTurnPass?: boolean) => void
@@ -292,6 +292,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   // CRITICAL: Track state version to prevent old states from overwriting newer ones
   // This fixes targetingMode being cleared when host broadcasts old state
   const stateVersionRef = useRef(0)
+  // CRITICAL: Track when targetingMode was locally cleared to prevent host from overwriting
+  const targetingModeLocallyClearedRef = useRef(false)
 
   // Update refs when state changes
   useEffect(() => {
@@ -644,9 +646,27 @@ export function useGameState(_props: any = {}): UseGameStateResult {
           }
 
           const fullState = personalToGameState(personalState, myId)
+
+          // CRITICAL: If targetingMode was cleared locally (right-click cancel), don't restore it from host
+          // Check AFTER personalToGameState, delete from fullState
+          if (targetingModeLocallyClearedRef.current && fullState.targetingMode) {
+            delete fullState.targetingMode
+          }
+
           // Defer state update to avoid flushSync during render cycle
           setTimeout(() => {
-            setGameState(fullState)
+            // CRITICAL: Reset the flag AFTER state update (not before)
+            // Using prevState callback to ensure flag is checked at update time
+            setGameState((prev) => {
+              // Double-check flag at the moment of state update
+              if (targetingModeLocallyClearedRef.current) {
+                // Keep targetingMode as null even if fullState has it
+                targetingModeLocallyClearedRef.current = false
+                return { ...fullState, targetingMode: null }
+              }
+              targetingModeLocallyClearedRef.current = false
+              return fullState
+            })
             setLocalPlayerId(myId)
 
             // CRITICAL: Sync local settings with host state
@@ -1201,6 +1221,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   const drawCardsBatch = useCallback((playerId: number, count: number) => {
     // Draw multiple cards for a player
     // Used by Tactical Maneuver, Inspiration, and other abilities
+    console.log('[drawCardsBatch] Called:', { playerId, count, timestamp: Date.now() })
     sendAction('DRAW_CARDS_BATCH', { count, targetPlayerId: playerId })
   }, [sendAction])
 
@@ -1653,6 +1674,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     setLatestHandCardSelections,
     setClickWaves,
     setGameState,
+    targetingModeLocallyClearedRef,
   })
 
   const {
@@ -1731,8 +1753,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     })
   }, [sendAction, localPlayerId, setGameState])
   const removeBoardCardStatus = useCallback((coords: any, status: any) => {
-    // Map to P2P action format
-    sendAction('REMOVE_ALL_COUNTERS_BY_TYPE', { coords, type: status })
+    // Map to P2P action format - remove only 1 counter, not all
+    sendAction('REMOVE_COUNTER_BY_TYPE', { coords, type: status })
   }, [sendAction])
   const removeBoardCardStatusByOwner = useCallback((coords: any, status: any, ownerId: number) => {
     // Remove status by type and owner (for removing counters added by specific player)

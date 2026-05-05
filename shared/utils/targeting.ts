@@ -48,8 +48,8 @@ function isLucius(card: Card): boolean {
 export const validateTarget = (
   target: { card: Card; ownerId: number; location: 'hand' | 'board'; boardCoords?: { row: number, col: number } },
   constraints: {
-        targetOwnerId?: number;
-        excludeOwnerId?: number;
+        targetOwnerId?: number | 'source';
+        excludeOwnerId?: number | 'source';
         onlyOpponents?: boolean;
         onlyFaceDown?: boolean;
         targetType?: string;
@@ -71,12 +71,14 @@ export const validateTarget = (
   // 1. Target Owner (Inclusive)
   // CRITICAL: Use != null to check for both undefined AND null
   // If targetOwnerId is not set (undefined/null), skip this check
-  if (constraints.targetOwnerId != null && constraints.targetOwnerId !== TARGET_OPPONENTS && constraints.targetOwnerId !== TARGET_MOVED_OWNER && constraints.targetOwnerId !== ownerId) {
+  // NOTE: "source" should be resolved before calling validateTarget, but if present, skip the check
+  if (constraints.targetOwnerId != null && constraints.targetOwnerId !== 'source' && constraints.targetOwnerId !== TARGET_OPPONENTS && constraints.targetOwnerId !== TARGET_MOVED_OWNER && constraints.targetOwnerId !== ownerId) {
     return false
   }
 
   // 2. Excluded Owner (Exclusive)
-  if (constraints.excludeOwnerId != null && constraints.excludeOwnerId === ownerId) {
+  // NOTE: "source" should be resolved before calling validateTarget, but if present, skip the check
+  if (constraints.excludeOwnerId != null && constraints.excludeOwnerId !== 'source' && constraints.excludeOwnerId === ownerId) {
     return false
   }
 
@@ -269,6 +271,11 @@ function buildFilterFromString(
     return (card: Card) => card.faction === faction
   }
 
+  // hasType_Unit_and_not_Device (Experimental Stimulants - special compound filter)
+  if (filter === 'hasType_Unit_and_not_Device') {
+    return (card: Card) => card.types?.includes('Unit') === true && card.types?.includes('Device') !== true
+  }
+
   // hasType_TypeName
   if (filter.startsWith('hasType_')) {
     const typeName = filter.replace('hasType_', '')
@@ -290,6 +297,16 @@ export const calculateValidTargets = (
 ): {row: number, col: number}[] => {
   if (!action || (action.type !== 'ENTER_MODE' && action.type !== 'CREATE_STACK' && action.type !== 'OPEN_MODAL')) {
     return []
+  }
+
+  // CRITICAL: Resolve "source" string to actual owner ID for targeting properties
+  // This fixes Enhanced Interrogation and other commands where "source" placeholder is used
+  const sourceOwnerId = action.sourceCard?.ownerId ?? commandContext?.sourceOwnerId ?? actorId ?? 0
+  if (action.targetOwnerId === 'source') {
+    (action as AbilityAction).targetOwnerId = sourceOwnerId
+  }
+  if (action.excludeOwnerId === 'source') {
+    (action as AbilityAction).excludeOwnerId = sourceOwnerId
   }
 
   // CRITICAL: Handle AUTO_STEPS by extracting the current step
@@ -587,6 +604,7 @@ export const calculateValidTargets = (
 
   // SELECT_TARGET with tokenType (CREATE_STACK for tokens like Aim, Shield, etc.)
   // Used by Princeps/ABR Gawain Deploy: "Place an Aim token on a card in its line"
+  // Also used by Cautious Avenger Deploy: "Place an Aim counter on a card within 2 cells"
   if (mode === 'SELECT_TARGET' && payload.tokenType && !(payload.filter || payload.filterString)) {
     const ownerId = action.sourceCard?.ownerId || actorId || 0
 
@@ -600,7 +618,7 @@ export const calculateValidTargets = (
 
         const cell = board[r][c]
         if (cell.card) {
-          // Check constraints
+          // Check constraints - include maxOrthogonalDistance and maxDistanceFromSource
           const isValid = validateTarget(
             { card: cell.card, ownerId: cell.card.ownerId || 0, location: 'board', boardCoords: { row: r, col: c } },
             {
@@ -608,6 +626,8 @@ export const calculateValidTargets = (
               excludeOwnerId: action.excludeOwnerId,
               mustBeInLineWithSource: payload.mustBeInLineWithSource,
               mustBeAdjacentToSource: payload.mustBeAdjacentToSource,
+              maxDistanceFromSource: payload.maxDistanceFromSource,
+              maxOrthogonalDistance: payload.maxOrthogonalDistance,
               sourceCoords: sourceCoords,
             },
             ownerId,
@@ -952,7 +972,39 @@ export const calculateValidTargets = (
       }
     })
   }
-  // 4. Riot Move (Specifically vacated cell)
+  // 4. PUSH_MOVE (After push - choose where to move: stay in place or move to vacated cell)
+  // Used by Riot Agent and Reclaimed Gawain after pushing an opponent card
+  else if (mode === 'PUSH_MOVE' && payload.vacatedCoords && sourceCoords) {
+    // Option 1: Stay in place (click on sourceCoords)
+    targets.push(sourceCoords)
+
+    // Option 2: Move to vacated cell (where pushed card was)
+    targets.push(payload.vacatedCoords)
+
+    // Option 3: Intermediate cells (if source and vacated are more than 1 cell apart)
+    if (sourceCoords.row === payload.vacatedCoords.row) {
+      // Same row - add intermediate columns
+      const minCol = Math.min(sourceCoords.col, payload.vacatedCoords.col)
+      const maxCol = Math.max(sourceCoords.col, payload.vacatedCoords.col)
+      for (let c = minCol + 1; c < maxCol; c++) {
+        // Only add if cell is empty
+        if (!board[sourceCoords.row][c].card) {
+          targets.push({ row: sourceCoords.row, col: c })
+        }
+      }
+    } else if (sourceCoords.col === payload.vacatedCoords.col) {
+      // Same column - add intermediate rows
+      const minRow = Math.min(sourceCoords.row, payload.vacatedCoords.row)
+      const maxRow = Math.max(sourceCoords.row, payload.vacatedCoords.row)
+      for (let r = minRow + 1; r < maxRow; r++) {
+        // Only add if cell is empty
+        if (!board[r][sourceCoords.col].card) {
+          targets.push({ row: r, col: sourceCoords.col })
+        }
+      }
+    }
+  }
+  // 5. Riot Move (Specifically vacated cell)
   else if (mode === 'RIOT_MOVE' && payload.vacatedCoords) {
     targets.push(payload.vacatedCoords)
     // Also highlight self to indicate "stay" option
@@ -1663,4 +1715,87 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
   }
 
   return false
+}
+
+/**
+ * Calculate hand targets for CREATE_STACK actions with allowHandTargets
+ * Returns array of {playerId, cardIndex} for valid hand targets
+ */
+export function calculateHandTargets(
+  action: AbilityAction | null,
+  currentGameState: GameState,
+  actorId: number | null,
+  commandContext?: CommandContext,
+): {playerId: number, cardIndex: number}[] {
+  // CRITICAL: Check allowHandTargets from action, payload, or details (chained actions from JSON use payload/details format)
+  // This fixes False Orders Option 1 where allowHandTargets is in payload after normalization
+  const allowHandTargets = action?.allowHandTargets ?? action?.payload?.allowHandTargets ?? (action as any)?.details?.allowHandTargets
+  if (!action || action.type !== 'CREATE_STACK' || !allowHandTargets) {
+    return []
+  }
+
+  const handTargets: {playerId: number, cardIndex: number}[] = []
+  const tokenOwnerId = action.sourceCard?.ownerId ?? actorId
+  // CRITICAL: Read targetOwnerId from action, payload, or details (chained actions use payload/details format)
+  const targetOwnerId = action.targetOwnerId ?? action.payload?.targetOwnerId ?? (action as any).details?.targetOwnerId
+  // CRITICAL: Read onlyOpponents from action or payload
+  const onlyOpponents = action.onlyOpponents ?? action.payload?.onlyOpponents
+  // CRITICAL: Read excludeOwnerId from action or payload
+  const excludeOwnerId = action.excludeOwnerId ?? action.payload?.excludeOwnerId
+  // CRITICAL: Read tokenType from action or payload
+  const tokenType = action.tokenType ?? action.payload?.tokenType
+  // CRITICAL: Read onlyFaceDown from action or payload
+  const onlyFaceDown = action.onlyFaceDown ?? action.payload?.onlyFaceDown
+
+  // Determine which players to check
+  const playersToCheck = targetOwnerId && targetOwnerId > 0
+    ? currentGameState.players.filter(p => p.id === targetOwnerId)
+    : currentGameState.players.filter(p => {
+        // Check onlyOpponents constraint
+        if (onlyOpponents) {
+          const effectiveOwnerId = tokenOwnerId ?? actorId
+          // Cannot be self
+          if (p.id === effectiveOwnerId) return false
+          // Cannot be teammate
+          const tokenOwner = currentGameState.players.find(tp => tp.id === effectiveOwnerId)
+          const targetPlayer = currentGameState.players.find(tp => tp.id === p.id)
+          if (tokenOwner && targetPlayer &&
+              tokenOwner.teamId != null &&
+              tokenOwner.teamId === targetPlayer.teamId) {
+            return false
+          }
+        }
+        // Check excludeOwnerId
+        if (excludeOwnerId && p.id === excludeOwnerId) {
+          return false
+        }
+        return true
+      })
+
+  // Check each player's hand
+  for (const player of playersToCheck) {
+    if (!player.hand) continue
+
+    for (let i = 0; i < player.hand.length; i++) {
+      const card = player.hand[i]
+
+      // Check if card already has this token (for Revealed)
+      if (tokenType === 'Revealed') {
+        const hasOurRevealed = card.statuses?.some(s =>
+          s.type === 'Revealed' && s.addedByPlayerId === tokenOwnerId
+        )
+        if (hasOurRevealed) continue
+      }
+
+      // Check onlyFaceDown constraint (for Revealed token)
+      if (onlyFaceDown) {
+        // Hand cards are considered face-down by default
+        // Just check if card doesn't have Revealed token (already checked above)
+      }
+
+      handTargets.push({ playerId: player.id, cardIndex: i })
+    }
+  }
+
+  return handTargets
 }

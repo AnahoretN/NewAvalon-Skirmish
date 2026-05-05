@@ -555,6 +555,12 @@ export function applyAction(
       newState = handleRemoveCountersWithReward(newState, playerId, data)
       break
 
+    case 'CLEANUP_COMMAND':
+      // CRITICAL: Use data.playerId (command card owner) instead of playerId (local player)
+      // This fixes cleanup for command cards played by local player but owned by other players (e.g., dummy control)
+      newState = handleCleanupCommandAction(newState, data.playerId || playerId, data)
+      break
+
     case 'ADD_STATUS_TO_BOARD_CARD':
       newState = handleAddStatusToBoardCard(newState, playerId, data)
       break
@@ -693,7 +699,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Preparation (0) → Setup (1) - automatic, handled in passTurn
   if (phase === 0) {
-    const newState = { ...stateAfterResurrected, currentPhase: 1 }
+    const newState = { ...stateAfterResurrected, currentPhase: 1, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -703,7 +709,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Setup (1) → Main (2) - happens when playing card
   if (phase === 1) {
-    const newState = { ...stateAfterResurrected, currentPhase: 2 }
+    const newState = { ...stateAfterResurrected, currentPhase: 2, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -713,7 +719,7 @@ function handleNextPhase(state: GameState, _playerId: number): GameState {
 
   // Main (2) → Commit (3)
   if (phase === 2) {
-    const newState = { ...stateAfterResurrected, currentPhase: 3 }
+    const newState = { ...stateAfterResurrected, currentPhase: 3, floatingTexts: [] }
     // Clear scoring mode if somehow active
     newState.isScoringStep = false
     newState.scoringLines = []
@@ -786,7 +792,8 @@ function enterScoringPhase(state: GameState, playerId: number): GameState {
     ...state,
     currentPhase: 4,
     isScoringStep: true,
-    scoringLines
+    scoringLines,
+    floatingTexts: []  // Clear floating texts when entering scoring phase
   }
 }
 
@@ -797,7 +804,7 @@ function handlePreviousPhase(state: GameState, _playerId: number): GameState {
   const phase = state.currentPhase
 
   if (phase > 1) {
-    return { ...state, currentPhase: phase - 1 as any }
+    return { ...state, currentPhase: phase - 1 as any, floatingTexts: [] }
   }
 
   return state
@@ -864,7 +871,8 @@ function handlePassTurn(state: GameState, playerId: number, reason: string): Gam
     players: newPlayers,
     activePlayerId: nextPlayerId,
     currentPhase: 0,  // Preparation
-    scoringLines: []  // Clear scoring lines when passing turn
+    scoringLines: [],  // Clear scoring lines when passing turn
+    floatingTexts: []  // Clear floating texts when passing turn
   }
 
   // Check full cycle (returned to starting player)
@@ -923,6 +931,9 @@ function handleSetPhase(state: GameState, phaseNumber: number): GameState {
     newState.scoringLines = []
   }
 
+  // Clear floating texts when changing phase
+  newState.floatingTexts = []
+
   recalculateAllReadyStatuses(newState)
   return newState
 }
@@ -955,6 +966,9 @@ function executePreparationPhase(state: GameState, activePlayerId: number): Game
 
   // Transition to Setup
   newState.currentPhase = 1
+
+  // Clear floating texts when transitioning to Setup
+  newState.floatingTexts = []
 
   // Recalculate ready statuses for new active player in Setup phase
   recalculateAllReadyStatuses(newState)
@@ -1291,31 +1305,18 @@ function handleMoveCardOnBoard(state: GameState, playerId: number, data: any): G
     }
   }
 
-  // CRITICAL: Handle context rewards for command cards like Tactical Maneuver
-  // Only process if we didn't already handle token placement above
+  // NOTE: Context rewards (DRAW_MOVED_POWER, SCORE_MOVED_POWER) are now handled by the client
+  // The client calls handleContextReward which sends DRAW_CARDS_BATCH and UPDATE_SCORE messages
+  // This prevents double-drawing/double-scoring when the host processes MOVE_CARD_ON_BOARD
+  // Token placement from chainedAction is still handled below
+
+  // Handle token placement from chainedAction (fallback if not handled above)
   if (!contextCardId && targetingMode) {
     const chainedAction = targetingMode?.chainedAction || targetingMode?.action?.chainedAction || targetingMode?.action?.payload?.chainedAction
 
     if (chainedAction) {
       const chainedPayload = chainedAction.payload
 
-      // Handle context rewards (Tactical Maneuver draw/score)
-      if (chainedPayload?.contextReward && chainedAction.sourceCard) {
-        // Create context data for reward
-        const rewardData = {
-          payload: {
-            ...chainedPayload,
-            _sourceCoordsBeforeMove: fromCoords,  // Where card WAS before move
-            _tempContextId: sourceCard.id,  // Card ID for finding
-            lastMovedCardCoords: toCoords,  // Where card IS now
-          },
-          sourceCard: chainedAction.sourceCard,
-        }
-
-        newState = handleContextReward(newState, playerId, rewardData)
-      }
-
-      // Handle token placement from chainedAction (fallback if not handled above)
       if (chainedPayload?.tokenType && chainedPayload?.count && chainedPayload?.contextCardId && !contextCardId) {
 
         // Find the moved card by ID
@@ -2239,6 +2240,17 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
     ownerId: actualPlayerId  // CRITICAL: Set ownerId so command cards know which player owns them
   }
 
+  // Debug: Log announced card creation for command cards
+  if (announcedCard.deck === 'Command' || announcedCard.types?.includes('Command')) {
+    console.log('[handleAnnounceCard] Created announced command card:', {
+      id: announcedCard.id,
+      baseId: announcedCard.baseId,
+      hasABILITIES: !!(announcedCard as any).ABILITIES,
+      abilitiesCount: (announcedCard as any).ABILITIES?.length || 0,
+      ownerId: announcedCard.ownerId
+    })
+  }
+
   const newPlayers = state.players.map(p => {
     if (p.id === actualPlayerId) {
       return {
@@ -2645,6 +2657,13 @@ function handleDrawCardsBatch(state: GameState, playerId: number, data?: any): G
   const actualCount = count || 1
   const targetId = targetPlayerId ?? playerId
 
+  console.log('[handleDrawCardsBatch] P2P host processing:', {
+    targetId,
+    actualCount,
+    deckSize: state.players.find(p => p.id === targetId)?.deck?.length,
+    timestamp: Date.now()
+  })
+
   const player = state.players.find(p => p.id === targetId)
   if (!player || !player.deck || player.deck.length === 0) {return state}
 
@@ -2658,6 +2677,12 @@ function handleDrawCardsBatch(state: GameState, playerId: number, data?: any): G
       drawnCards.push(card)
     }
   }
+
+  console.log('[handleDrawCardsBatch] Drawing cards:', {
+    cardsToDraw,
+    drawnCardIds: drawnCards.map(c => c.id),
+    newHandSize: player.hand.length + drawnCards.length
+  })
 
   const newDeck = player.deck.slice(cardsToDraw)
   const newHand = [...player.hand, ...drawnCards]
@@ -2992,35 +3017,76 @@ function handleGlobalAutoApply(state: GameState, playerId: number, data: any): G
     return handleContextReward(state, playerId, data)
   }
 
-  // Handle token placement on moved card (False Orders Option 1: Stun x2)
-  if (payload.tokenType && payload.count && payload.contextCardId) {
-
-    // Find the moved card by ID
+  // Handle token placement on moved card (False Orders option 2: Stun x2)
+  // CRITICAL: Support multiple ways to find the target card
+  if (payload.tokenType && (payload.count || payload.count === 0)) {
     let targetCoords: { row: number; col: number } | null = null
-    for (let r = 0; r < state.board.length; r++) {
-      for (let c = 0; c < state.board[r].length; c++) {
-        const card = state.board[r][c].card
-        if (card && card.id === payload.contextCardId) {
-          targetCoords = { row: r, col: c }
+
+    // Method 1: Use contextCardId if provided
+    if (payload.contextCardId) {
+      for (let r = 0; r < state.board.length; r++) {
+        for (let c = 0; c < state.board[r].length; c++) {
+          const card = state.board[r][c].card
+          if (card && card.id === payload.contextCardId) {
+            targetCoords = { row: r, col: c }
+            break
+          }
+        }
+        if (targetCoords) {
           break
         }
       }
-      if (targetCoords) {
-        break
+    }
+
+    // Method 2: Use _tempContextId if provided (fallback)
+    if (!targetCoords && payload._tempContextId) {
+      for (let r = 0; r < state.board.length; r++) {
+        for (let c = 0; c < state.board[r].length; c++) {
+          const card = state.board[r][c].card
+          if (card && card.id === payload._tempContextId) {
+            targetCoords = { row: r, col: c }
+            break
+          }
+        }
+        if (targetCoords) {
+          break
+        }
+      }
+    }
+
+    // Method 3: Use lastMovedCardCoords if provided (direct coordinates)
+    if (!targetCoords && payload.lastMovedCardCoords) {
+      const { row, col } = payload.lastMovedCardCoords
+      if (row >= 0 && row < state.board.length && col >= 0 && col < state.board[row].length) {
+        const card = state.board[row][col].card
+        if (card) {
+          targetCoords = { row, col }
+        }
       }
     }
 
     if (!targetCoords) {
+      console.warn('[handleGlobalAutoApply] Could not find target card for token placement:', {
+        tokenType: payload.tokenType,
+        count: payload.count,
+        contextCardId: payload.contextCardId,
+        _tempContextId: payload._tempContextId,
+        lastMovedCardCoords: payload.lastMovedCardCoords,
+      })
       return state
     }
 
     // Add the tokens using handleAddStatusToBoardCard
+    // CRITICAL: Handle ownerId === "source" to use sourceCard owner (False Orders)
+    // Tokens should belong to the player who played the command card
+    let tokenOwnerId = payload.ownerId === "source" ? (sourceCard?.ownerId || playerId) : (payload.ownerId || playerId)
+
     let newState = state
     for (let i = 0; i < payload.count; i++) {
       newState = handleAddStatusToBoardCard(newState, playerId, {
         boardCoords: targetCoords,
         statusType: payload.tokenType,
-        ownerId: payload.ownerId || playerId,
+        ownerId: tokenOwnerId,
         count: 1,
       })
     }
@@ -3038,7 +3104,17 @@ function handleGlobalAutoApply(state: GameState, playerId: number, data: any): G
 }
 
 /**
- * Handle context reward actions (Tactical Maneuver draw/score)
+ * Handle context reward actions
+ * This is the SINGLE SOURCE OF TRUTH for all context rewards.
+ * Called from handleGlobalAutoApply when GLOBAL_AUTO_APPLY message has contextReward.
+ *
+ * Supported reward types:
+ * - DRAW_MOVED_POWER: Draw cards equal to moved card's power (Tactical Maneuver)
+ * - DRAW_EQUAL_POWER: Draw cards equal to card's power
+ * - SCORE_MOVED_POWER: Add score equal to moved card's power (Tactical Maneuver)
+ * - STUN_MOVED_UNIT: Add Stun status to moved unit (False Orders)
+ * - REMOVE_AIM: Remove Aim status from card
+ * - WEAKEN: Reduce card power by 1
  */
 function handleContextReward(state: GameState, playerId: number, data: any): GameState {
   const { payload, sourceCard } = data || {}
@@ -3046,37 +3122,53 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
 
   if (!rewardType || !sourceCard) {return state}
 
-  // CRITICAL: Use _sourceCoordsBeforeMove first (where card IS now), not destination
-  // This fixes timing issue where moveItem is async and card hasn't moved yet
-  const sourceBeforeMove = payload?._sourceCoordsBeforeMove
-  const coords = sourceBeforeMove || payload?.lastMovedCardCoords
-  if (!coords || coords.row < 0) {return state}
+  // CRITICAL: Use pre-calculated card power from payload first (most reliable)
+  // This is set when selecting the unit in handleSelectUnitForMove
+  let amount = payload?._cardPower || payload?.contextCardPower || 0
 
-  // Find the card at coords
-  let card = state.board[coords.row][coords.col]?.card
+  // Fallback: search for card on board if power not provided
+  if (amount === 0) {
+    // CRITICAL: _sourceCoordsBeforeMove points to OLD position (where card WAS)
+    // We need to find the card at its NEW position after move
+    const searchId = payload?._tempContextId
 
-  // Handle stale state - search by card ID if needed
-  const searchId = payload?._tempContextId
-  if ((!card || (searchId && card.id !== searchId)) && searchId) {
-    for (let r = 0; r < state.board.length; r++) {
-      for (let c = 0; c < state.board[r].length; c++) {
-        if (state.board[r][c].card?.id === searchId) {
-          card = state.board[r][c].card
-          break
+    // First try using lastMovedCardCoords (destination, where card IS now)
+    let card: Card | undefined
+    const lastMovedCoords = payload?.lastMovedCardCoords
+    if (lastMovedCoords && lastMovedCoords.row >= 0) {
+      card = state.board[lastMovedCoords.row][lastMovedCoords.col]?.card
+    }
+
+    // If not found, search by card ID across entire board
+    if ((!card || (searchId && card.id !== searchId)) && searchId) {
+      for (let r = 0; r < state.board.length; r++) {
+        for (let c = 0; c < state.board[r].length; c++) {
+          if (state.board[r][c].card?.id === searchId) {
+            card = state.board[r][c].card
+            break
+          }
         }
+        if (card) {break}
       }
-      if (card) {break}
+    }
+
+    if (card) {
+      amount = Math.max(0, card.power + (card.powerModifier || 0) + (card.bonusPower || 0))
     }
   }
 
-  if (!card) {
-    return state
-  }
+  // CRITICAL: Use originalOwnerId for command card rewards (Tactical Maneuver, False Orders)
+  // sourceCard might be the selected unit, not the command card
+  const rewardOwnerId = data.originalOwnerId ?? sourceCard.ownerId ?? playerId
 
-  // Calculate amount from card power
-  const amount = Math.max(0, card.power + (card.powerModifier || 0) + (card.bonusPower || 0))
-  const rewardOwnerId = sourceCard.ownerId || playerId
+  console.log('[handleContextReward] Host processing:', {
+    rewardType,
+    amount,
+    hasCardPower: !!(payload?._cardPower || payload?.contextCardPower),
+    rewardOwnerId,
+  })
 
+  // Handle different reward types
   if (rewardType === 'DRAW_MOVED_POWER' || rewardType === 'DRAW_EQUAL_POWER') {
     // Draw cards for the reward owner
     const newPlayers = state.players.map(p => {
@@ -3089,6 +3181,12 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
             drawnCards.push(cardDrawn)
           }
         }
+        console.log('[handleContextReward] Drawing cards:', {
+          playerId: p.id,
+          cardsToDraw,
+          drawnCardIds: drawnCards.map(c => c.id),
+          newHandSize: p.hand.length + drawnCards.length
+        })
         return {
           ...p,
           deck: p.deck,
@@ -3109,9 +3207,47 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
       return p
     })
     return { ...state, players: newPlayers }
+  } else if (rewardType === 'STUN_MOVED_UNIT') {
+    // Add Stun status to the moved card
+    return handleAddStatusToBoardCard(state, rewardOwnerId, {
+      boardCoords: coords,
+      statusType: 'Stun',
+      ownerId: rewardOwnerId,
+      count: 1,
+    })
+  } else if (rewardType === 'REMOVE_AIM') {
+    // Remove Aim status from the card
+    return handleRemoveCounterByType(state, {
+      boardCoords: coords,
+      counterType: 'Aim',
+    })
+  } else if (rewardType === 'WEAKEN') {
+    // Reduce card power by 1
+    return handleWeaken(state, coords)
   }
 
   return state
+}
+
+/**
+ * Weaken a card at coords (reduce power by 1)
+ */
+function handleWeaken(state: GameState, coords: { row: number; col: number }): GameState {
+  const newBoard = state.board.map((row, r) =>
+    row.map((cell, c) => {
+      if (r === coords.row && c === coords.col && cell.card) {
+        return {
+          ...cell,
+          card: {
+            ...cell.card,
+            powerModifier: (cell.card.powerModifier || 0) - 1
+          }
+        }
+      }
+      return cell
+    })
+  )
+  return { ...state, board: newBoard }
 }
 
 /**
@@ -3144,6 +3280,55 @@ function handleCleanupCommand(state: GameState, playerId: number, commandCard: C
   // No need to switch phase here - command goes to discard without changing phase
 
   return newState
+}
+
+/**
+ * Handle CLEANUP_COMMAND action - discard command card from showcase to discard
+ * This is the final step of all command cards
+ */
+function handleCleanupCommandAction(state: GameState, playerId: number, data: any): GameState {
+  const { cardId } = data || {}
+
+  if (!cardId) {
+    console.warn('[handleCleanupCommandAction] No cardId provided')
+    return state
+  }
+
+  // Find the player and their announced card
+  const player = state.players.find(p => p.id === playerId)
+  if (!player) {
+    console.warn('[handleCleanupCommandAction] Player not found:', playerId)
+    return state
+  }
+
+  const announcedCard = player.announcedCard
+  if (!announcedCard) {
+    console.warn('[handleCleanupCommandAction] No announced card for player:', playerId)
+    return state
+  }
+
+  console.log('[handleCleanupCommandAction] Discarding command card:', {
+    playerId,
+    cardId,
+    announcedCardId: announcedCard.id,
+    announcedCardName: announcedCard.name
+  })
+
+  // Move the announced card to discard
+  const newPlayers = state.players.map(p => {
+    if (p.id === playerId) {
+      const discard = [...(p.discard || []), announcedCard]
+      return {
+        ...p,
+        discard,
+        discardSize: discard.length,
+        announcedCard: null
+      }
+    }
+    return p
+  })
+
+  return { ...state, players: newPlayers }
 }
 
 /**

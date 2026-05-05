@@ -213,7 +213,12 @@ const DropZone: React.FC<{ onDrop: () => void, className?: string, isOverClassNa
       }}
       onDragLeave={(e) => {
         e.stopPropagation()
-        setIsOver(false)
+        // Only clear if we're actually leaving this zone (not entering a child element)
+        const relatedTarget = e.relatedTarget as Element
+        const currentTarget = e.currentTarget
+        if (!relatedTarget || !currentTarget.contains(relatedTarget)) {
+          setIsOver(false)
+        }
       }}
       onDrop={(e) => {
         e.preventDefault()
@@ -414,12 +419,23 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
 
   // Helper: Handle context menu with mode cancellation
   const handleContextMenuWithCancel = useCallback((e: React.MouseEvent, type: ContextMenuParams['type'], data: ContextMenuData) => {
+    // Prevent browser context menu
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Check if any mode was active BEFORE cancelling (to prevent context menu from opening)
+    const wasCursorStackActive = !!cursorStack
+    const wasTargetingModeActive = !!targetingMode
+
     // Right-click cancels all targeting/ability modes for all players
     if (onCancelAllModes) {
       onCancelAllModes()
     }
-    openContextMenu(e, type, data)
-  }, [openContextMenu, onCancelAllModes])
+    // Only open context menu if no mode was active
+    if (!wasCursorStackActive && !wasTargetingModeActive) {
+      openContextMenu(e, type, data)
+    }
+  }, [openContextMenu, onCancelAllModes, cursorStack, targetingMode])
 
   // Helper: Get effective deck size
   // Use deckSize metadata for WebRTC optimized states where deck array may not be populated
@@ -1474,7 +1490,7 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                     }}
                     onDragOver={(e) => {
                       e.preventDefault()
-                      e.stopPropagation()
+                      // Don't stop propagation - let parent handlers also receive the event
                     }}
                     onDrop={(e) => {
                       e.preventDefault()

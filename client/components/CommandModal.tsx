@@ -3,6 +3,7 @@ import type { Card, PlayerColor } from '@/types'
 import { Card as CardComponent } from './Card'
 import { useLanguage } from '@/contexts/LanguageContext'
 import { formatAbilityText } from '@/utils/textFormatters'
+import { getCommandOptions } from '@/utils/autoAbilities'
 
 interface CommandModalProps {
     isOpen: boolean;
@@ -18,15 +19,22 @@ export const CommandModal: React.FC<CommandModalProps> = ({ isOpen, card, player
 
   const localized = card.baseId ? getCardTranslation(card.baseId) : undefined
   const displayCard = localized ? { ...card, ...localized } : card
-  const abilityText = displayCard.abilityText || ''
 
-  // Parse Ability Text for N Options
-  // Expected format: "● Option 1 Text... \n● Option 2 Text..."
-  // Extracts text starting from ● up to the next ● or end of string.
-  const parsedOptions = React.useMemo(() => {
-    const parts = abilityText.split('●').map(s => s.trim()).filter(s => s.length > 0)
-    return parts
-  }, [abilityText])
+  // Get command options from contentDatabase using the new system
+  // Note: baseId is already camelCase from database, don't convert to lowercase
+  const commandOptions = React.useMemo(() => {
+    const baseId = displayCard.baseId || displayCard.id.split('_')[1] || displayCard.id
+    const options = getCommandOptions(baseId)
+    // Debug logging
+    console.log('[CommandModal] Fetching options:', {
+      baseId: baseId,
+      displayCardBaseId: displayCard.baseId,
+      displayCardId: displayCard.id,
+      optionsCount: options.length,
+      options: options
+    })
+    return options
+  }, [displayCard.baseId, displayCard.id])
 
   if (!isOpen) {
     return null
@@ -51,21 +59,21 @@ export const CommandModal: React.FC<CommandModalProps> = ({ isOpen, card, player
           </h3>
 
           <div className="flex flex-col gap-vu-md flex-grow justify-center overflow-y-auto max-h-[60vh] pr-vu-md">
-            {parsedOptions.map((optionText, index) => (
+            {commandOptions.map((option) => (
               <button
-                key={index}
-                onClick={() => onConfirm(index)}
+                key={option.optionIndex}
+                onClick={() => onConfirm(option.optionIndex - 1)} // Convert 1-based to 0-based
                 className="group relative bg-gray-800 hover:bg-indigo-900 border-[calc(4*var(--vu-base))] border-gray-600 hover:border-indigo-400 rounded-vu-2 p-vu-lg transition-all duration-200 text-left shadow-lg hover:shadow-indigo-500/20 flex items-center gap-vu-lg shrink-0"
               >
                 <div className="bg-gray-700 text-gray-400 w-vu-icon-lg h-vu-icon-lg flex-shrink-0 flex items-center justify-center rounded-full font-bold text-vu-14 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                  {index + 1}
+                  {option.optionIndex}
                 </div>
                 <div className="text-gray-200 group-hover:text-white text-vu-14 font-medium leading-snug">
-                  {formatAbilityText(optionText, abilityKeywords)}
+                  {formatAbilityText(option.optionText, abilityKeywords)}
                 </div>
               </button>
             ))}
-            {parsedOptions.length === 0 && (
+            {commandOptions.length === 0 && (
               <div className="text-gray-500 text-center italic text-vu-14">No selectable modules found on this card.</div>
             )}
           </div>

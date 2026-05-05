@@ -10,6 +10,24 @@ import type { Card, AbilityAction, CommandContext, DragItem, CursorStackState, C
 import { TIMING } from '@/utils/common'
 import { createTokenCursorStack } from '@/utils/tokenTargeting'
 import { handleLineSelection as handleLineSelectionModule } from './lineSelectionHandlers.js'
+import { buildDetailsFromContent, buildFilterFromString } from '@shared/abilities/contentAbilities.js'
+import { flushSync } from 'react-dom'
+
+/**
+ * CRITICAL: Convert chainedAction from JSON format (action/details) to AbilityAction format (type/payload)
+ * In contentDatabase.json, chainedAction has: {action: "GLOBAL_AUTO_APPLY", details: {contextReward: "..."}}
+ * But AbilityAction expects: {type: "GLOBAL_AUTO_APPLY", payload: {contextReward: "..."}}
+ */
+function normalizeChainedAction(chainedAction: any): any {
+  if (!chainedAction) return undefined
+  if (chainedAction.action && !chainedAction.type) {
+    return {
+      type: chainedAction.action,
+      payload: chainedAction.details || {}
+    }
+  }
+  return chainedAction
+}
 
 // Track cards that are transitioning from AUTO_STEPS to actual mode
 // Prevents infinite re-processing due to asynchronous React state updates
@@ -40,6 +58,7 @@ export interface InstantStepResult {
   success: boolean
   shouldAdvance: boolean
   message?: string
+  needsExecution?: boolean  // If true, the step needs to be executed via handleActionExecution
 }
 
 /**
@@ -130,6 +149,21 @@ export function executeInstantAutoStep(
       return { success: true, shouldAdvance: true }
     }
 
+    case 'GLOBAL_AUTO_APPLY': {
+      // Handle instant GLOBAL_AUTO_APPLY actions (e.g., CLEANUP_COMMAND, draw cards)
+      const customAction = step.details?.customAction
+      const dynamicResource = step.details?.dynamicResource
+      console.log('[executeInstantAutoStep] GLOBAL_AUTO_APPLY:', {
+        customAction,
+        dynamicResource,
+        stepDetails: step.details,
+      })
+      // CRITICAL: All GLOBAL_AUTO_APPLY actions need execution through handleActionExecution
+      // This includes CLEANUP_COMMAND and dynamicResource actions (e.g., draw cards)
+      // executeInstantAutoStep doesn't have access to drawCards, updatePlayerScore, etc.
+      return { success: true, shouldAdvance: true, needsExecution: true }
+    }
+
     default:
       // Unknown actions still advance to avoid getting stuck
       return { success: false, shouldAdvance: true, message: 'Unknown action: ' + step.action }
@@ -202,6 +236,7 @@ export interface ModeHandlersProps {
   scoreLine?: (r1: number, c1: number, r2: number, c2: number, pid: number) => void
   scoreDiagonal?: (r1: number, c1: number, r2: number, c2: number, pid: number, bonusType?: 'point_per_support' | 'draw_per_support') => void
   isWebRTCMode?: boolean
+  setActionQueue?: React.Dispatch<React.SetStateAction<AbilityAction[]>>
 }
 
 /**
@@ -541,13 +576,31 @@ function handleSelectTargetWithToken(
     setCommandContext({ lastMovedCardCoords: boardCoords, lastMovedCardId: card.id })
   }
 
-  if (payload.chainedAction) {
+  // CRITICAL: Check AUTO_STEPS BEFORE chainedAction
+  // If we're in AUTO_STEPS, continue to next step and preserve chainedAction for later
+  const autoStepsContext = payload._autoStepsContext
+  if (autoStepsContext && autoStepsContext.steps) {
+    // Update commandContext with last moved card coords for AUTO_STEPS continuation
+    // Continue to next step instead of clearing mode
+    // Pass stepContext with the card that just received the token
+    advanceToNextStepWithCoords(
+      props,
+      boardCoords,
+      autoStepsContext.currentStepIndex,
+      { lastMovedCardCoords: boardCoords, sourceOwnerId: card.ownerId },
+      payload.chainedAction  // Pass chainedAction to execute after AUTO_STEPS complete
+    )
+  } else if (payload.chainedAction) {
+    // Execute chained action if not in AUTO_STEPS
     const nextAction: AbilityAction = {
       ...payload.chainedAction,
       sourceCard: payload.chainedAction.sourceCard ?? card,
       sourceCoords: payload.chainedAction.sourceCoords ?? boardCoords,
       isDeployAbility,
       recordContext: true,
+      // CRITICAL: Set originalOwnerId to ability mode source card owner for correct targeting
+      // This fixes cases where chained actions need to use the original card's owner, not the target card's owner
+      originalOwnerId: abilityMode.sourceCard?.ownerId ?? sourceCoords ? gameState.board[sourceCoords.row]?.[sourceCoords.col]?.card?.ownerId : undefined,
     }
     handleActionExecution(nextAction, boardCoords)
     // Immediate wave for chained action - no delay needed
@@ -557,31 +610,14 @@ function handleSelectTargetWithToken(
       clearValidTargets()
     }
   } else {
-    // Check if this is part of AUTO_STEPS
-    const autoStepsContext = payload._autoStepsContext
-    if (autoStepsContext && autoStepsContext.steps) {
-      // Update commandContext with last moved card coords for AUTO_STEPS continuation
-      if (payload.recordContext) {
-        setCommandContext({ lastMovedCardCoords: boardCoords, lastMovedCardId: card.id })
-      }
-      // Continue to next step instead of clearing mode
-      // Pass stepContext with the card that just received the token
-      advanceToNextStepWithCoords(
-        props,
-        boardCoords,
-        autoStepsContext.currentStepIndex,
-        { lastMovedCardCoords: boardCoords, sourceOwnerId: card.ownerId }
-      )
-    } else {
-      // Normal completion
-      if (sourceCoords && sourceCoords.row >= 0) {
-        markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
-      }
-      setTimeout(() => {
-        setAbilityMode(null)
-        clearValidTargets()
-      }, TIMING.MODE_CLEAR_DELAY)
+    // Normal completion
+    if (sourceCoords && sourceCoords.row >= 0) {
+      markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
     }
+    setTimeout(() => {
+      setAbilityMode(null)
+      clearValidTargets()
+    }, TIMING.MODE_CLEAR_DELAY)
   }
 
   return true
@@ -590,14 +626,16 @@ function handleSelectTargetWithToken(
 /**
  * Continue AUTO_STEPS after a mode completes
  * @param stepContext - Optional context data from previous step (e.g., lastMovedCardCoords, targetCoords, sourceOwnerId)
+ * @param chainedActionFromStep - Optional chained action to execute after all AUTO_STEPS complete
  */
 export function advanceToNextStepWithCoords(
   props: ModeHandlersProps,
   _completedCoords: { row: number; col: number },
   nextStepIndex: number,
-  stepContext?: { lastMovedCardCoords?: { row: number; col: number }; targetCoords?: { row: number; col: number }; sourceOwnerId?: number }
+  stepContext?: { lastMovedCardCoords?: { row: number; col: number }; targetCoords?: { row: number; col: number }; sourceOwnerId?: number },
+  chainedActionFromStep?: AbilityAction
 ): void {
-  const { abilityMode, setAbilityMode, markAbilityUsed, gameState, commandContext, setTargetingMode, calculateValidTargets } = props
+  const { abilityMode, setAbilityMode, markAbilityUsed, gameState, getFreshGameState, commandContext, setTargetingMode, calculateValidTargets, handleActionExecution } = props
 
   if (!abilityMode) { return }
 
@@ -606,10 +644,39 @@ export function advanceToNextStepWithCoords(
 
   const autoStepsContext = payload._autoStepsContext
   const steps = autoStepsContext.steps
-  const sourceCard = abilityMode.sourceCard
+  // CRITICAL: Use abilityMode.sourceCard, but fall back to finding command card by ID if undefined
+  // This fixes False Orders where abilityMode.sourceCard might not be the command card
+  let sourceCard = abilityMode.sourceCard
+  if (!sourceCard && autoStepsContext.commandCardId) {
+    // Find the command card in the announced cards
+    sourceCard = gameState.players
+      .flatMap(p => p.announced || [])
+      .find(c => c.id === autoStepsContext.commandCardId)
+  }
   // CRITICAL: Always use abilityMode.sourceCoords (original card position), NOT completedCoords
   // completedCoords is where the action completed (e.g., destroyed card location), not the source card
   const sourceCoords = abilityMode.sourceCoords
+
+  console.log('[advanceToNextStepWithCoords] Called with:', {
+    nextStepIndex,
+    stepsLength: steps.length,
+    steps: steps.map((s, i) => `${i}: ${s.action}`),
+    nextStep: steps[nextStepIndex] ? `${steps[nextStepIndex].action} (mode: ${steps[nextStepIndex].mode})` : 'undefined',
+    stepContextSourceOwnerId: stepContext?.sourceOwnerId,
+    commandContextSourceOwnerId: commandContext?.sourceOwnerId,
+    commandContextLastMovedCardCoords: commandContext?.lastMovedCardCoords,
+  })
+
+  // CRITICAL: Clear commandContext.sourceOwnerId at the start of each AUTO_STEPS chain
+  // This prevents stale values from previous ability uses (e.g., False Orders targeting wrong player)
+  // Only clear at the first step (index 0) to not interfere with ongoing multi-step abilities
+  if (nextStepIndex === 0 && commandContext?.sourceOwnerId && !stepContext?.sourceOwnerId) {
+    console.log('[advanceToNextStepWithCoords] Clearing stale commandContext.sourceOwnerId:', commandContext.sourceOwnerId)
+    props.setCommandContext?.(prev => {
+      const { sourceOwnerId, ...rest } = prev
+      return rest
+    })
+  }
 
   // Use readyStatusToRemove from autoStepsContext if not set at action level
   const readyStatusToRemove = abilityMode.readyStatusToRemove ?? autoStepsContext.readyStatusToRemove
@@ -617,15 +684,204 @@ export function advanceToNextStepWithCoords(
   // Check if there are more steps
   if (nextStepIndex >= steps.length) {
     // All steps complete!
-    markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
+    // CRITICAL: Execute chainedAction if present (e.g., False Orders Revealed tokens)
+    if (chainedActionFromStep) {
+      // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) to actual owner ID
+      // This fixes False Orders Option 1 where chained action targets the moved card's owner's hand
+      // Priority: stepContext.sourceOwnerId > chainedAction._sourceOwnerId (from useAppCounters) > commandContext.sourceOwnerId
+      const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
+
+      console.log('[advanceToNextStepWithCoords] Resolving targetOwnerId:', {
+        detailsTargetOwnerId: (chainedActionFromStep as any).details?.targetOwnerId,
+        payloadTargetOwnerId: (chainedActionFromStep as any).payload?.targetOwnerId,
+        stepContextSourceOwnerId: stepContext?.sourceOwnerId,
+        chainedActionSourceOwnerId: (chainedActionFromStep as any)._sourceOwnerId,
+        commandContextSourceOwnerId: commandContext?.sourceOwnerId,
+        resolvedContextOwnerId: contextOwnerId,
+      })
+
+      // CRITICAL: Always resolve targetOwnerId if stepContext.sourceOwnerId is set
+      // This prevents stale values from previous chainedAction uses (e.g., False Orders repeated)
+      // If details.targetOwnerId or payload.targetOwnerId is -2, resolve to contextOwnerId
+      // If stepContext.sourceOwnerId is set, use it regardless of current targetOwnerId value
+      const needsResolution = (chainedActionFromStep as any).details?.targetOwnerId === -2 ||
+                             (chainedActionFromStep as any).payload?.targetOwnerId === -2 ||
+                             stepContext?.sourceOwnerId !== undefined
+
+      const resolvedTargetOwnerId = needsResolution ? contextOwnerId : undefined
+
+      const nextAction: AbilityAction = {
+        ...chainedActionFromStep,
+        sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
+        sourceCoords: chainedActionFromStep.sourceCoords ?? _completedCoords,
+        isDeployAbility: abilityMode.isDeployAbility,
+        recordContext: true,
+        // CRITICAL: Set originalOwnerId to command card owner for correct targeting in chained actions
+        // This fixes False Orders Option 1 where Revealed tokens should use command card owner, not moved card owner
+        originalOwnerId: sourceCard?.ownerId ?? abilityMode.sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0,
+        // CRITICAL: Add _sourceOwnerId to prevent stale commandContext.sourceOwnerId from being used
+        // This fixes False Orders Option 1 where repeated uses would target wrong player's hand
+        ...(contextOwnerId !== undefined ? { _sourceOwnerId: contextOwnerId } : {}),
+        // CRITICAL: Override targetOwnerId with resolved value if it was -2
+        ...(resolvedTargetOwnerId !== undefined ? {
+          details: { ...(chainedActionFromStep as any).details, targetOwnerId: resolvedTargetOwnerId },
+          payload: { ...(chainedActionFromStep as any).payload, targetOwnerId: resolvedTargetOwnerId }
+        } : {})
+      }
+
+      // DIAGNOSTIC: Log chained action execution for debugging
+      console.log('[advanceToNextStepWithCoords] Executing chainedAction:', {
+        chainedActionType: chainedActionFromStep.type,
+        chainedActionToken: (chainedActionFromStep as any).tokenType || (chainedActionFromStep as any).payload?.tokenType,
+        abilityModeSourceCardId: abilityMode.sourceCard?.id,
+        abilityModeSourceCardOwnerId: abilityMode.sourceCard?.ownerId,
+        resolvedSourceCardId: sourceCard?.id,
+        resolvedSourceCardOwnerId: sourceCard?.ownerId,
+        nextActionSourceCardId: nextAction.sourceCard?.id,
+        nextActionSourceCardOwnerId: nextAction.sourceCard?.ownerId,
+        resolvedTargetOwnerId,
+      })
+
+      handleActionExecution(nextAction, _completedCoords)
+    }
+
+    // CRITICAL: Execute CLEANUP_COMMAND step if it's the last step and wasn't executed yet
+    // This fixes Logistics Chain not discarding after diagonal selection
+    // Check if the last step is CLEANUP_COMMAND
+    const lastStep = steps[steps.length - 1]
+    console.log('[advanceToNextStepWithCoords] Checking last step for CLEANUP_COMMAND:', {
+      lastStep,
+      lastStepAction: lastStep?.action,
+      lastStepDetailsCustomAction: lastStep?.details?.customAction,
+      stepsLength: steps.length,
+      stepsActions: steps.map(s => s.action),
+    })
+    if (lastStep && lastStep.action === 'GLOBAL_AUTO_APPLY' && lastStep.details?.customAction === 'CLEANUP_COMMAND') {
+      console.log('[advanceToNextStepWithCoords] Executing CLEANUP_COMMAND as final step')
+      const cleanupAction: AbilityAction = {
+        type: 'GLOBAL_AUTO_APPLY',
+        mode: null,
+        sourceCard: abilityMode.sourceCard,
+        sourceCoords: abilityMode.sourceCoords,
+        isDeployAbility: abilityMode.isDeployAbility,
+        readyStatusToRemove: abilityMode.readyStatusToRemove,
+        payload: {
+          ...lastStep.details,
+          _autoStepsContext: autoStepsContext
+        }
+      }
+      handleActionExecution(cleanupAction, sourceCoords || { row: 0, col: 0 })
+    } else {
+      // No CLEANUP_COMMAND step, just mark ability as used
+      console.log('[advanceToNextStepWithCoords] No CLEANUP_COMMAND found, marking ability as used')
+      markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
+    }
     setAbilityMode(null)
     return
   }
 
   const nextStep = steps[nextStepIndex]
 
+  // DIAGNOSTIC: Log nextStep details for debugging chainedAction
+  console.log('[advanceToNextStepWithCoords] nextStep details:', {
+    nextStepIndex,
+    stepAction: nextStep.action,
+    stepMode: nextStep.mode,
+    hasChainedAction: !!nextStep.chainedAction,
+    chainedActionType: nextStep.chainedAction?.type,
+    chainedActionAction: (nextStep.chainedAction as any)?.action,
+    chainedActionPayload: nextStep.chainedAction?.payload,
+    chainedActionDetails: (nextStep.chainedAction as any)?.details,
+  })
+
+  // CRITICAL: Execute chainedAction from previous step BEFORE processing the next step
+  // This fixes False Orders Option 2 where Stun x2 (chainedAction of step 1) should be placed
+  // before advancing to step 2 (CLEANUP_COMMAND)
+  if (chainedActionFromStep) {
+    console.log('[advanceToNextStepWithCoords] Executing chainedAction from previous step:', {
+      chainedActionType: chainedActionFromStep.type,
+      chainedActionPayload: chainedActionFromStep.payload,
+      chainedActionDetails: (chainedActionFromStep as any).details,
+      nextStepIndex,
+      nextStepAction: nextStep.action,
+      _completedCoords,
+      commandContextLastMovedCardCoords: commandContext?.lastMovedCardCoords,
+    })
+
+    // Resolve targetOwnerId if needed
+    const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
+    const needsResolution = (chainedActionFromStep as any).details?.targetOwnerId === -2 ||
+                           (chainedActionFromStep as any).payload?.targetOwnerId === -2 ||
+                           stepContext?.sourceOwnerId !== undefined
+
+    // CRITICAL: Use _completedCoords as the target location for token placement
+    // This fixes False Orders Option 2 where Stun x2 should be placed on the moved card
+    // _completedCoords contains the location where the card was moved to
+    const targetCoords = _completedCoords
+
+    const resolvedChainedAction: AbilityAction = needsResolution && contextOwnerId !== undefined
+      ? {
+          ...chainedActionFromStep,
+          details: { ...(chainedActionFromStep as any).details, targetOwnerId: contextOwnerId },
+          payload: {
+            ...(chainedActionFromStep as any).payload,
+            targetOwnerId: contextOwnerId,
+            // CRITICAL: Add contextCardId or lastMovedCardCoords for token placement
+            // This fixes False Orders Option 2 where Stun x2 needs to find the moved card
+            ...(targetCoords && targetCoords.row >= 0 ? { lastMovedCardCoords: targetCoords } : {}),
+            // CRITICAL: Pass commandContext so handleGlobalAutoApply can access lastMovedCardCoords
+            _commandContext: commandContext,
+          },
+          _sourceOwnerId: contextOwnerId,
+          sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
+          sourceCoords: targetCoords || chainedActionFromStep.sourceCoords || _completedCoords,
+          isDeployAbility: abilityMode.isDeployAbility,
+        }
+      : {
+          ...chainedActionFromStep,
+          payload: {
+            ...(chainedActionFromStep as any).payload,
+            // CRITICAL: Add contextCardId or lastMovedCardCoords for token placement
+            ...(targetCoords && targetCoords.row >= 0 ? { lastMovedCardCoords: targetCoords } : {}),
+            // CRITICAL: Pass commandContext so handleGlobalAutoApply can access lastMovedCardCoords
+            _commandContext: commandContext,
+          },
+          sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
+          sourceCoords: targetCoords || chainedActionFromStep.sourceCoords || _completedCoords,
+          isDeployAbility: abilityMode.isDeployAbility,
+        }
+
+    console.log('[advanceToNextStepWithCoords] About to execute chainedAction:', {
+      type: resolvedChainedAction.type,
+      payload: resolvedChainedAction.payload,
+      details: (resolvedChainedAction as any).details,
+      sourceCoords: resolvedChainedAction.sourceCoords,
+      hasCommandContext: !!resolvedChainedAction.payload._commandContext,
+    })
+
+    // Execute the chainedAction
+    props.handleActionExecution(resolvedChainedAction, resolvedChainedAction.sourceCoords)
+
+    // CRITICAL: After executing chainedAction, continue to next step
+    // The chainedAction is consumed, so don't pass it again
+    chainedActionFromStep = undefined
+  }
+
   // If next step has no mode, execute instantly
-  if (!nextStep.mode) {
+  // CRITICAL: CREATE_STACK always requires player interaction (placing tokens via cursorStack)
+  // even when mode is null, it should NOT be treated as instant
+  if (!nextStep.mode && nextStep.action !== 'CREATE_STACK') {
+    // CRITICAL: Clear targetingMode BEFORE executing instant step
+    // This fixes Overwatch Option 2 where CREATE_STACK sets targetingMode,
+    // but the next step (GLOBAL_AUTO_APPLY) is instant and doesn't need targeting
+    if (props.clearTargetingMode) {
+      console.log('[advanceToNextStepWithCoords] Clearing targetingMode before instant step:', {
+        stepIndex: nextStepIndex,
+        stepAction: nextStep.action,
+      })
+      props.clearTargetingMode()
+    }
+
     // Execute instant step directly
     const ownerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
     const result = executeInstantAutoStep(
@@ -645,28 +901,206 @@ export function advanceToNextStepWithCoords(
     if (!result.success) {
     }
 
+    // CRITICAL: If step needs execution (e.g., CLEANUP_COMMAND, draw cards), execute it via handleActionExecution
+    if (result.needsExecution) {
+      const stepCustomAction = nextStep.details?.customAction
+      const stepDynamicResource = nextStep.details?.dynamicResource
+      console.log('[advanceToNextStepWithCoords] Step needs execution:', {
+        stepAction: nextStep.action,
+        stepCustomAction,
+        stepDynamicResource,
+        stepDetails: nextStep.details,
+      })
+      // CRITICAL: Clear targetingMode before executing GLOBAL_AUTO_APPLY
+      // This fixes Overwatch Option 2 where targetingMode from CREATE_STACK step
+      // should be cleared before the draw step executes
+      if (props.clearTargetingMode) {
+        props.clearTargetingMode()
+      }
+      // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) for chainedAction
+      // This fixes False Orders Option 1 where Revealed tokens need to target the moved card's owner's hand
+      let resolvedChainedAction: AbilityAction | undefined = chainedActionFromStep
+      if (chainedActionFromStep) {
+        // Resolve targetOwnerId if it's -2 or if stepContext.sourceOwnerId is set
+        const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
+        const needsResolution = (chainedActionFromStep as any).details?.targetOwnerId === -2 ||
+                               (chainedActionFromStep as any).payload?.targetOwnerId === -2 ||
+                               stepContext?.sourceOwnerId !== undefined
+
+        if (needsResolution && contextOwnerId !== undefined) {
+          console.log('[advanceToNextStepWithCoords] Resolving chainedAction targetOwnerId:', {
+            detailsTargetOwnerId: (chainedActionFromStep as any).details?.targetOwnerId,
+            payloadTargetOwnerId: (chainedActionFromStep as any).payload?.targetOwnerId,
+            stepContextSourceOwnerId: stepContext?.sourceOwnerId,
+            contextOwnerId,
+            resolvedTargetOwnerId: contextOwnerId,
+          })
+          // Create a new action with resolved targetOwnerId
+          resolvedChainedAction = {
+            ...chainedActionFromStep,
+            ...(contextOwnerId !== undefined ? {
+              details: { ...(chainedActionFromStep as any).details, targetOwnerId: contextOwnerId },
+              payload: { ...(chainedActionFromStep as any).payload, targetOwnerId: contextOwnerId },
+              _sourceOwnerId: contextOwnerId,
+            } : {}),
+          }
+        }
+      }
+
+      // Create action for handleActionExecution
+      // CRITICAL: Cast to AbilityAction because nextStep.action is 'GLOBAL_AUTO_APPLY'
+      const actionToExecute: AbilityAction = {
+        type: 'GLOBAL_AUTO_APPLY',  // Explicitly set the type
+        sourceCard: sourceCard,
+        sourceCoords: sourceCoords || { row: 0, col: 0 },
+        isDeployAbility: abilityMode.isDeployAbility,
+        readyStatusToRemove: readyStatusToRemove,
+        payload: {
+          ...nextStep.details,
+          // CRITICAL: Pass commandContext through payload so handleGlobalAutoApply can access lastPlacedToken
+          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+          _commandContext: props.commandContext,
+          // CRITICAL: Pass _autoStepsContext so CLEANUP_COMMAND can find commandCardId
+          _autoStepsContext: {
+            steps: steps,
+            currentStepIndex: nextStepIndex,
+            originalType: autoStepsContext.originalType,
+            supportRequired: autoStepsContext.supportRequired,
+            readyStatusToRemove: autoStepsContext.readyStatusToRemove,
+            commandCardId: autoStepsContext.commandCardId || sourceCard?.id,
+          },
+        },
+        // CRITICAL: Include chainedAction so handleGlobalAutoApply can execute it after GLOBAL_AUTO_APPLY
+        // This fixes False Orders Option 1 where Revealed tokens need to be placed after step 2 completes
+        ...(resolvedChainedAction ? { chainedAction: resolvedChainedAction } : {}),
+      }
+      console.log('[advanceToNextStepWithCoords] Calling handleActionExecution for GLOBAL_AUTO_APPLY', {
+        hasChainedAction: !!resolvedChainedAction,
+        chainedActionType: resolvedChainedAction?.type,
+      })
+      handleActionExecution(actionToExecute, sourceCoords || { row: 0, col: 0 })
+
+      // After execution, check if there are more steps
+      const followingStepIndex = nextStepIndex + 1
+      if (followingStepIndex >= steps.length) {
+        // All steps complete!
+        console.log('[advanceToNextStepWithCoords] All steps complete after execution')
+        markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
+        setAbilityMode(null)
+        return
+      }
+
+      // Continue to the step after this one
+      advanceToNextStepWithCoords(props, sourceCoords || { row: 0, col: 0 }, followingStepIndex, stepContext, chainedActionFromStep)
+      return
+    }
+
     // Check if there are more steps after this instant step
     const followingStepIndex = nextStepIndex + 1
     if (followingStepIndex >= steps.length) {
       // All steps complete!
+      // CRITICAL: Execute chainedAction if present (e.g., False Orders Revealed tokens)
+      if (chainedActionFromStep) {
+        // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) to actual owner ID
+        // Priority: stepContext.sourceOwnerId > chainedAction._sourceOwnerId (from useAppCounters) > commandContext.sourceOwnerId
+        const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
+
+        // CRITICAL: Always resolve targetOwnerId if stepContext.sourceOwnerId is set
+        // This prevents stale values from previous chainedAction uses (e.g., False Orders repeated)
+        // If details.targetOwnerId or payload.targetOwnerId is -2, resolve to contextOwnerId
+        // If stepContext.sourceOwnerId is set, use it regardless of current targetOwnerId value
+        const needsResolution = (chainedActionFromStep as any).details?.targetOwnerId === -2 ||
+                               (chainedActionFromStep as any).payload?.targetOwnerId === -2 ||
+                               stepContext?.sourceOwnerId !== undefined
+
+        const resolvedTargetOwnerId = needsResolution ? contextOwnerId : undefined
+
+        const nextAction: AbilityAction = {
+          ...chainedActionFromStep,
+          sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
+          sourceCoords: chainedActionFromStep.sourceCoords ?? (sourceCoords || { row: 0, col: 0 }),
+          isDeployAbility: abilityMode.isDeployAbility,
+          recordContext: true,
+          // CRITICAL: Set originalOwnerId to command card owner for correct targeting in chained actions
+          // This fixes False Orders Option 1 where Revealed tokens should use command card owner, not moved card owner
+          originalOwnerId: sourceCard?.ownerId ?? abilityMode.sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0,
+          // CRITICAL: Add _sourceOwnerId to prevent stale commandContext.sourceOwnerId from being used
+          // This fixes False Orders Option 1 where repeated uses would target wrong player's hand
+          ...(contextOwnerId !== undefined ? { _sourceOwnerId: contextOwnerId } : {}),
+          // CRITICAL: Override targetOwnerId with resolved value if it was -2
+          ...(resolvedTargetOwnerId !== undefined ? {
+            details: { ...(chainedActionFromStep as any).details, targetOwnerId: resolvedTargetOwnerId },
+            payload: { ...(chainedActionFromStep as any).payload, targetOwnerId: resolvedTargetOwnerId }
+          } : {})
+        }
+        handleActionExecution(nextAction, sourceCoords || { row: 0, col: 0 })
+      }
       markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
       setAbilityMode(null)
       return
     }
 
     // Continue to the step after this instant step
-    advanceToNextStepWithCoords(props, sourceCoords || { row: 0, col: 0 }, followingStepIndex)
+    advanceToNextStepWithCoords(props, sourceCoords || { row: 0, col: 0 }, followingStepIndex, stepContext, chainedActionFromStep)
     return
   } else {
     // Enter next interactive mode
-    const ownerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
+    // CRITICAL: Use abilityMode.sourceCard as fallback for correct highlighting color
+    // This fixes False Orders Option 1 where sourceCard becomes the target card after first step
+    // and highlights would use the target card's owner color instead of the command card owner's color
+    const ownerId = sourceCard?.ownerId ?? abilityMode.sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
 
     // Handle special action types
     let stepAction: AbilityAction
 
     // Handle CREATE_STACK - keep as CREATE_STACK to trigger handleCreateStack (cursor stack)
     if (nextStep.action === "CREATE_STACK") {
+      // CRITICAL: Get chainedAction from the PREVIOUS step (the one being completed)
+      // This fixes Temporary Shelter where step 0's chainedAction must execute after step 0 completes
+      const previousStep = nextStepIndex > 0 ? steps[nextStepIndex - 1] : null
+      const previousStepChainedAction = previousStep?.chainedAction
+
+      console.log('[advanceToNextStepWithCoords] CREATE_STACK step: Converting to SELECT_TARGET mode', {
+        tokenType: nextStep.details?.tokenType,
+        count: nextStep.details?.count,
+        dynamicCount: nextStep.details?.dynamicCount,
+        detailsTargetOwnerId: nextStep.details?.targetOwnerId,
+        stepContextSourceOwnerId: stepContext?.sourceOwnerId,
+        commandContextSourceOwnerId: commandContext?.sourceOwnerId,
+        nextStepIndex,
+        hasPreviousStep: !!previousStep,
+        previousStepAction: previousStep?.action,
+        hasPreviousStepChainedAction: !!previousStepChainedAction,
+        previousStepChainedActionType: previousStepChainedAction?.type,
+      })
       const details = nextStep.details || {}
+
+      // CRITICAL: Convert "source" string to actual owner ID in dynamicCount
+      // This fixes Data Interception option 0 where dynamicCount.ownerId is "source"
+      const dynamicCount = details.dynamicCount
+      const resolvedDynamicCount = dynamicCount ? {
+        ...dynamicCount,
+        ownerId: dynamicCount.ownerId === 'source' ? (sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0) : dynamicCount.ownerId
+      } : undefined
+
+      // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) with proper logging
+      // CRITICAL: Initialize as undefined, not details.targetOwnerId, to prevent string "source" from being assigned
+      let resolvedTargetOwnerId: number | undefined = undefined
+      if (details.targetOwnerId === 'source') {
+        resolvedTargetOwnerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
+      } else if (details.targetOwnerId === -2) {
+        const contextOwnerId = stepContext?.sourceOwnerId ?? commandContext?.sourceOwnerId
+        resolvedTargetOwnerId = contextOwnerId ?? details.targetOwnerId
+        console.log('[advanceToNextStepWithCoords] Resolved -2 to:', {
+          stepContextSourceOwnerId: stepContext?.sourceOwnerId,
+          commandContextSourceOwnerId: commandContext?.sourceOwnerId,
+          resolvedTargetOwnerId,
+        })
+      } else if (typeof details.targetOwnerId === 'number') {
+        // Use the number value directly (specific player ID)
+        resolvedTargetOwnerId = details.targetOwnerId
+      }
+
       stepAction = {
         type: "CREATE_STACK",
         mode: "SELECT_TARGET",
@@ -676,20 +1110,75 @@ export function advanceToNextStepWithCoords(
         readyStatusToRemove: readyStatusToRemove,
         tokenType: details.tokenType,
         count: details.count || 1,
-        targetOwnerId: sourceCard?.ownerId,
+        // CRITICAL: Copy all targeting properties
+        // CRITICAL: Resolve "source" and -2 (TARGET_MOVED_OWNER) to actual owner ID
+        // CRITICAL: Fall back to commandContext.sourceOwnerId if stepContext doesn't have it
+        targetOwnerId: resolvedTargetOwnerId,
+        excludeOwnerId: details.excludeOwnerId === 'source' ? (sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0) : details.excludeOwnerId,
+        onlyOpponents: details.onlyOpponents,
+        onlyFaceDown: details.onlyFaceDown,
+        targetType: details.targetType,
+        requiredTargetStatus: details.requiredTargetStatus,
+        requireTokenFromSourceOwner: details.requireTokenFromSourceOwner,
         mustBeInLineWithSource: nextStep.mode === "LINE_TARGET" ? true : undefined,
         mustBeAdjacentToSource: nextStep.mode === "ADJACENT_TARGET" ? true : undefined,
+        maxDistanceFromSource: details.maxDistanceFromSource,
+        maxOrthogonalDistance: details.maxOrthogonalDistance,
+        placeAllAtOnce: details.placeAllAtOnce,
+        replaceStatus: details.replaceStatus,
+        recordContext: details.recordContext,
+        dynamicCount: resolvedDynamicCount,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        // CRITICAL: For AUTO_STEPS, chainedAction can be in the CURRENT step (to execute after it completes)
+        // or in the NEXT step (to execute after the next step completes)
+        // This fixes Temporary Shelter where chainedAction is in step 0 (the CREATE_STACK step itself)
+        // Priority: nextStep.chainedAction (for False Orders) > previousStep.chainedAction (for Temporary Shelter)
+        ...(nextStep.chainedAction ? {
+          chainedAction: JSON.parse(JSON.stringify(nextStep.chainedAction))
+        } : previousStepChainedAction ? {
+          chainedAction: JSON.parse(JSON.stringify(previousStepChainedAction))
+        } : {}),
+        // CRITICAL: Add originalOwnerId so handleSelectUnitForMove can use it for highlight color
+        // This fixes Data Interception option 1 where cell selection highlight used wrong color when playing as dummy
+        originalOwnerId: ownerId,
         payload: {
-          ...nextStep.details,
+          // CRITICAL: Deep copy details to prevent mutation of original steps (False Orders issue)
+          ...JSON.parse(JSON.stringify(nextStep.details)),
+          // CRITICAL: Override targetOwnerId with resolved value (for False Orders Option 1)
+          // This ensures payload.targetOwnerId is also resolved from -2 to actual owner ID
+          targetOwnerId: resolvedTargetOwnerId,
+          // CRITICAL: Override dynamicCount with resolved value (Enhanced Interrogation, Data Interception)
+          // This ensures payload.dynamicCount is also resolved from "source" to actual owner ID
+          dynamicCount: resolvedDynamicCount,
+          // CRITICAL: Convert string filters to functions for command cards
+          // This fixes Enhanced Interrogation option 2 where filter "hasCounterOwner_Aim" needs to be a function
+          ...(details.filter && typeof details.filter === 'string' ? {
+            filter: buildFilterFromString(details.filter, ownerId, sourceCoords || { row: 0, col: 0 }),
+            filterString: details.filter  // Keep original string for serialization
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
+
+      // DIAGNOSTIC: Log stepAction properties
+      console.log('[advanceToNextStepWithCoords] stepAction created for CREATE_STACK:', {
+        stepActionToken: stepAction.tokenType,
+        stepActionOnlyOpponents: (stepAction as any).onlyOpponents,
+        stepActionOnlyFaceDown: (stepAction as any).onlyFaceDown,
+        stepActionTargetOwnerId: (stepAction as any).targetOwnerId,
+        detailsOnlyOpponents: details.onlyOpponents,
+        detailsOnlyFaceDown: details.onlyFaceDown,
+        detailsTargetOwnerId: details.targetOwnerId,
+        nextStepDetails: nextStep.details,
+      })
     } else if (nextStep.action === "CREATE_TOKEN") {
       // CREATE_TOKEN needs to be converted to OPEN_MODAL with PLACE_TOKEN mode
       stepAction = {
@@ -699,16 +1188,27 @@ export function advanceToNextStepWithCoords(
         sourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
+        // CRITICAL: Add originalOwnerId so handleSelectUnitForMove can use it for highlight color
+        originalOwnerId: ownerId,
         payload: {
           ...nextStep.details,
           tokenId: nextStep.details?.tokenId,
           range: nextStep.mode === "ADJACENT_EMPTY" ? "adjacent" : "global",
+          // CRITICAL: Convert string filters to functions for command cards
+          ...(nextStep.details?.filter && typeof nextStep.details.filter === 'string' ? {
+            filter: buildFilterFromString(nextStep.details.filter, ownerId, sourceCoords || { row: 0, col: 0 }),
+            filterString: nextStep.details.filter
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
@@ -725,6 +1225,10 @@ export function advanceToNextStepWithCoords(
         sourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
+        // CRITICAL: Add originalOwnerId so handleSelectUnitForMove can use it for highlight color
+        originalOwnerId: ownerId,
         payload: {
           ...nextStep.details,
           // Pass targetCoords directly in payload for immediate access (synchronous)
@@ -739,20 +1243,49 @@ export function advanceToNextStepWithCoords(
         }
       }
     } else {
-      // Default interactive step handling (SACRIFICE_TARGET, PUSH, etc.)
+      // Default interactive step handling (SACRIFICE_TARGET, PUSH, SELECT_CELL, etc.)
       // CRITICAL: Normalize LINE_TARGET and ADJACENT_TARGET to SELECT_TARGET
       // These are targeting constraints, not separate modes. The constraint is stored in payload.
       const normalizedMode = (nextStep.mode === "LINE_TARGET" || nextStep.mode === "ADJACENT_TARGET")
         ? "SELECT_TARGET"
         : (nextStep.mode || "SELECT_TARGET")
 
+      // CRITICAL: For SELECT_CELL with useContextCard: true (False Orders), use contextCard coords as sourceCoords
+      // This allows calculateValidTargets to find valid empty cells within range of the context card
+      let effectiveSourceCoords = sourceCoords
+      let effectiveSourceCard = sourceCard
+      if (nextStep.mode === 'SELECT_CELL' && nextStep.details?.useContextCard) {
+        // Try to get coords from stepContext (where the previous action completed)
+        const contextCoords = stepContext?.lastMovedCardCoords || stepContext?.targetCoords || commandContext?.lastMovedCardCoords
+        console.log('[advanceToNextStepWithCoords] SELECT_CELL with useContextCard:', {
+          stepContextTargetCoords: stepContext?.targetCoords,
+          stepContextLastMoved: stepContext?.lastMovedCardCoords,
+          commandContextLastMoved: commandContext?.lastMovedCardCoords,
+          resolvedCoords: contextCoords,
+        })
+        if (contextCoords && contextCoords.row >= 0 && contextCoords.col >= 0) {
+          effectiveSourceCoords = contextCoords
+          // Also get the context card (the unit with Exploit token)
+          const freshGameState = getFreshGameState ? getFreshGameState() : gameState
+          const contextCard = freshGameState.board[effectiveSourceCoords.row]?.[effectiveSourceCoords]?.card
+          if (contextCard) {
+            effectiveSourceCard = contextCard
+          }
+        }
+      }
+
       stepAction = {
         type: 'ENTER_MODE',
         mode: normalizedMode,
-        sourceCard,
-        sourceCoords,
+        sourceCard: effectiveSourceCard,
+        sourceCoords: effectiveSourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for False Orders, Temporary Shelter, etc.)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
+        // CRITICAL: Add originalOwnerId so handleSelectUnitForMove can use it for highlight color
+        // This fixes Data Interception option 1 where cell selection highlight used wrong color when playing as dummy
+        originalOwnerId: ownerId,
         payload: {
           ...nextStep.details,
           actionType: nextStep.action,  // Set actionType so handleSelectTargetActionType knows how to handle this
@@ -760,12 +1293,25 @@ export function advanceToNextStepWithCoords(
           count: nextStep.details?.count,
           mustBeInLineWithSource: nextStep.mode === 'LINE_TARGET' ? true : undefined,
           mustBeAdjacentToSource: nextStep.mode === 'ADJACENT_TARGET' ? true : undefined,
+          // CRITICAL: Preserve commandCard (original sourceCard) for chained actions
+          // This fixes False Orders Option 1 where chained action needs command card owner, not unit card owner
+          // When useContextCard is true, effectiveSourceCard is the unit with Exploit, but commandCard is the False Orders card
+          _commandCard: (effectiveSourceCard !== sourceCard) ? sourceCard : undefined,
+          // CRITICAL: Convert string filters to functions for command cards
+          // This fixes Enhanced Interrogation option 2 where filter "hasCounterOwner_Aim" needs to be a function
+          ...(nextStep.details?.filter && typeof nextStep.details.filter === 'string' ? {
+            filter: buildFilterFromString(nextStep.details.filter, ownerId, effectiveSourceCoords),
+            filterString: nextStep.details.filter  // Keep original string for serialization
+          } : {}),
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
             originalType: autoStepsContext.originalType,
             supportRequired: autoStepsContext.supportRequired,
-            readyStatusToRemove: readyStatusToRemove
+            readyStatusToRemove: readyStatusToRemove,
+            // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct command card
+            // Priority: autoStepsContext.commandCardId > abilityMode.payload.commandCardId > sourceCard.id
+            commandCardId: autoStepsContext.commandCardId || (abilityMode.payload as any)?.commandCardId || sourceCard?.id
           }
         }
       }
@@ -786,8 +1332,29 @@ export function advanceToNextStepWithCoords(
     const lineSelectionModes = ['SELECT_LINE_START', 'SELECT_LINE_END', 'SELECT_LINE_FOR_EXPLOIT_SCORING', 'SELECT_LINE_FOR_SUPPORT_COUNTERS', 'SELECT_LINE_FOR_THREAT_COUNTERS', 'SELECT_DIAGONAL']
     const isLineSelectionMode = stepAction.mode && lineSelectionModes.includes(stepAction.mode)
 
-    if (setTargetingMode && calculateValidTargets && !isLineSelectionMode) {
-      const validTargets = calculateValidTargets(stepAction, gameState, ownerId, commandContext)
+    // EXCEPTION: CREATE_STACK with hand-only targets (Revealed status on opponent's face-down hand cards)
+    // These actions don't have board targets, so we should NOT skip the step even if validTargets is empty
+    const isHandTargetingCreateStack = stepAction.type === 'CREATE_STACK' &&
+      stepAction.tokenType === 'Revealed' &&
+      (stepAction.onlyOpponents || stepAction.payload?.onlyOpponents) &&
+      (stepAction.onlyFaceDown || stepAction.payload?.onlyFaceDown)
+
+    console.log('[advanceToNextStepWithCoords] Checking setTargetingMode condition:', {
+      hasSetTargetingMode: !!setTargetingMode,
+      hasCalculateValidTargets: !!calculateValidTargets,
+      isLineSelectionMode,
+      isHandTargetingCreateStack,
+      stepActionMode: stepAction.mode,
+      stepActionType: stepAction.type,
+    })
+
+    if (setTargetingMode && calculateValidTargets && !isLineSelectionMode && !isHandTargetingCreateStack) {
+      // CRITICAL: Use getFreshGameState() to get the latest state including tokens just placed
+      // This fixes Data Interception option 1 where SELECT_UNIT_FOR_MOVE needs to see
+      // the Exploit counter placed in the previous CREATE_STACK step
+      const freshGameState = getFreshGameState ? getFreshGameState() : gameState
+      const validTargets = calculateValidTargets(stepAction, freshGameState, ownerId, commandContext)
+
 
       if (validTargets.length === 0) {
         // Clear targeting mode and skip to next step
@@ -799,12 +1366,58 @@ export function advanceToNextStepWithCoords(
         return
       }
 
-      setTargetingMode(stepAction, ownerId, sourceCoords, validTargets, commandContext)
-    } else if (isLineSelectionMode) {
+      // CRITICAL: For CREATE_STACK actions, handleActionExecution will set targeting mode
+      // This fixes False Orders Option 1 where setTargetingMode was called with wrong ownerId
+      if (nextStep.action === "CREATE_STACK" && props.handleActionExecution) {
+        // CRITICAL: Update commandContext with lastPlacedToken from stepContext
+        // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
+        if (stepContext?.lastPlacedToken && props.setCommandContext) {
+          props.setCommandContext(prev => ({
+            ...prev,
+            lastPlacedToken: stepContext.lastPlacedToken,
+            sourceOwnerId: stepContext.sourceOwnerId,
+          }))
+        }
+        // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
+        setAbilityMode(stepAction)
+        // Call handleActionExecution synchronously to ensure cursorStack is set before any useEffect runs
+        props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
+      } else {
+        // For non-CREATE_STACK actions, set targeting mode normally
+        console.log('[advanceToNextStepWithCoords] Setting targetingMode for non-CREATE_STACK action:', {
+          mode: stepAction.mode,
+          ownerId,
+          validTargetsCount: validTargets.length,
+          stepActionKeys: Object.keys(stepAction),
+        })
+        setTargetingMode(stepAction, ownerId, sourceCoords, validTargets, commandContext)
+        // CRITICAL: Also set abilityMode so click handlers recognize the interaction
+        // This fixes SELECT_UNIT_FOR_MOVE not working in AUTO_STEPS (Data Interception option 1)
+        setAbilityMode(stepAction)
+      }
+    } else if (isLineSelectionMode || isHandTargetingCreateStack) {
       // CRITICAL: Line selection modes use abilityMode directly, NOT targetingMode!
       // GameBoard handles visual highlighting via isLineSelectionMode() check and abilityMode.payload.targetCoords
       // Use stepContext.lastMovedCardCoords or stepContext.targetCoords (synchronous), fallback to commandContext (async)
       void (stepContext?.lastMovedCardCoords || stepContext?.targetCoords || commandContext?.lastMovedCardCoords)
+
+      // CRITICAL: For CREATE_STACK with hand targets, call handleActionExecution to create cursorStack
+      // This ensures handleCreateStack is called which creates the cursorStack for hand card targeting
+      if (isHandTargetingCreateStack && props.handleActionExecution) {
+        // CRITICAL: Update commandContext with lastPlacedToken from stepContext
+        // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
+        if (stepContext?.lastPlacedToken && props.setCommandContext) {
+          props.setCommandContext(prev => ({
+            ...prev,
+            lastPlacedToken: stepContext.lastPlacedToken,
+            sourceOwnerId: stepContext.sourceOwnerId,
+          }))
+        }
+        // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
+        setAbilityMode(stepAction)
+        // Call handleActionExecution synchronously to ensure cursorStack is set before any useEffect runs
+        props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
+      }
     }
   }
 }
@@ -817,19 +1430,40 @@ function handleSelectTargetActionType(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  const { abilityMode, markAbilityUsed, setAbilityMode, moveItem, modifyBoardCardPower, addBoardCardStatus, removeBoardCardStatus, removeBoardCardStatusByOwner, removeStatusByType, resetDeployStatus, setCounterSelectionData, handleActionExecution, gameState, destroyCard, setCommandContext, updatePlayerScore, triggerFloatingText, clearTargetingMode } = props
+  const { abilityMode, markAbilityUsed, setAbilityMode, moveItem, modifyBoardCardPower, addBoardCardStatus, removeBoardCardStatus, removeBoardCardStatusByOwner, removeStatusByType, resetDeployStatus, setCounterSelectionData, handleActionExecution, gameState, destroyCard, setCommandContext, updatePlayerScore, triggerFloatingText, clearTargetingMode, setActionQueue } = props
   const { payload, sourceCoords, isDeployAbility, readyStatusToRemove, sourceCard } = abilityMode!
 
   const actorId = abilityMode!.sourceCard?.ownerId ?? (gameState.players.find(p => p.id === gameState.activePlayerId)?.isDummy ? gameState.activePlayerId : props.localPlayerId || gameState.activePlayerId)
 
   // OPEN_COUNTER_MODAL
   if (payload.actionType === 'OPEN_COUNTER_MODAL') {
-    if (payload.filter && !payload.filter(card)) {
+    console.log('[handleSelectTargetActionType] OPEN_COUNTER_MODAL triggered:', {
+      cardName: card.name,
+      rewardType: payload.rewardType,
+      hasAutoStepsContext: !!payload._autoStepsContext,
+    })
+    // CRITICAL: payload.filter may be a string (e.g., "isOwner") instead of a function
+    // Skip local filter check if filter is not a function - calculateValidTargets will handle it
+    if (payload.filter && typeof payload.filter === 'function' && !payload.filter(card)) {
       return false
     }
+    // CRITICAL: Pass AUTO_STEPS context so cleanup step can continue after modal confirmation
+    // CRITICAL: currentStepIndex in payload points to the NEXT step, so we use currentStepIndex - 1
+    // to get the CURRENT step that's being processed (OPEN_COUNTER_MODAL)
+    const actualCurrentStepIndex = (payload._autoStepsContext?.currentStepIndex ?? 1) - 1
+    console.log('[handleSelectTargetActionType] Setting counterSelectionData with autoStepsContext:', {
+      steps: payload._autoStepsContext?.steps?.length,
+      payloadCurrentStepIndex: payload._autoStepsContext?.currentStepIndex,
+      actualCurrentStepIndex,
+    })
     setCounterSelectionData({
       card: card,
       callbackAction: payload.rewardType,
+      autoStepsContext: payload._autoStepsContext ? {
+        steps: payload._autoStepsContext.steps,
+        currentStepIndex: actualCurrentStepIndex,
+        abilityAction: abilityMode,
+      } : undefined,
     })
     setAbilityMode(null)
     return true
@@ -1038,10 +1672,39 @@ function handleSelectTargetActionType(
 
   // RESET_DEPLOY (Experimental Stimulants)
   if (payload.actionType === 'RESET_DEPLOY') {
-    if (payload.filter && !payload.filter(card)) {
+    // CRITICAL: payload.filter may be a string (e.g., "hasType_Unit_and_not_Device") instead of a function
+    // Skip local filter check if filter is not a function - calculateValidTargets will handle it
+    if (payload.filter && typeof payload.filter === 'function' && !payload.filter(card)) {
       return false
     }
     resetDeployStatus(boardCoords)
+
+    // CRITICAL: If in AUTO_STEPS context, continue to CLEANUP_COMMAND
+    // This ensures the command card is discarded after the action completes
+    if (payload?._autoStepsContext && setActionQueue) {
+      const autoStepsContext = { ...payload._autoStepsContext }
+      const continueAction: any = {
+        type: 'CONTINUE_AUTO_STEPS',
+        sourceCard: abilityMode.sourceCard,
+        sourceCoords: abilityMode.sourceCoords,
+        isDeployAbility: abilityMode.isDeployAbility,
+        readyStatusToRemove: abilityMode.readyStatusToRemove,
+        payload: {
+          _autoStepsContext: autoStepsContext,
+          stepContext: {
+            targetCoords: boardCoords,
+            targetCardId: card.id
+          }
+        }
+      }
+
+      setActionQueue(prev => {
+        const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+        const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+        return [...otherActions, continueAction, ...cleanupActions]
+      })
+    }
+
     setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
     return true
   }
@@ -1237,12 +1900,13 @@ function handleSelectTargetActionType(
 
     // Perform the push
     const vacatedCoords = boardCoords
-    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
     // Continue to next step or finish ability
     const autoStepsContext = payload._autoStepsContext
     if (autoStepsContext && autoStepsContext.steps) {
+      // For auto-steps, set ability mode to null BEFORE moveItem
       advanceToNextStepWithCoords(props, boardCoords, autoStepsContext.currentStepIndex)
+      moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
       return true
     }
 
@@ -1263,12 +1927,17 @@ function handleSelectTargetActionType(
       payload: { vacatedCoords }
     }
 
+    // CRITICAL: Set ability mode BEFORE calling moveItem
+    // This prevents useEffect in App.tsx from clearing targeting mode prematurely
     setAbilityMode(pushMoveAction)
 
     // Set up targeting mode for PUSH_MOVE
     if (props.setTargetingMode) {
       props.setTargetingMode(pushMoveAction, ownerId, safeSourceCoords, pushMoveTargets)
     }
+
+    // Perform the push AFTER setting ability mode
+    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
     return true
   }
@@ -1336,8 +2005,6 @@ function handlePush(
   // vacatedCoords is the cell where the pushed card was (before being pushed)
   const vacatedCoords = boardCoords
 
-  moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
-
   // Calculate valid targets for PUSH_MOVE
   // Valid targets: sourceCoords (stay in place), vacatedCoords, and cells between them
   const pushMoveTargets: {row: number, col: number}[] = []
@@ -1380,6 +2047,8 @@ function handlePush(
     payload: { vacatedCoords }
   }
 
+  // CRITICAL: Set ability mode BEFORE calling moveItem
+  // This prevents useEffect in App.tsx from clearing targeting mode prematurely
   setAbilityMode(pushMoveAction)
 
   // Set up targeting mode for PUSH_MOVE
@@ -1387,6 +2056,9 @@ function handlePush(
   if (setTargetingMode) {
     setTargetingMode(pushMoveAction, ownerId, sourceCoords, pushMoveTargets)
   }
+
+  // Perform the push AFTER setting ability mode
+  moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
 
   return true
 }
@@ -1406,13 +2078,17 @@ function handlePushMove(
 ): boolean {
   const { abilityMode, moveItem, markAbilityUsed, setAbilityMode, clearTargetingMode } = props
 
+  console.log('[handlePushMove] Called with abilityMode:', abilityMode?.mode, 'boardCoords:', boardCoords)
+
   if (!abilityMode || abilityMode.mode !== 'PUSH_MOVE') {
+    console.log('[handlePushMove] Not PUSH_MOVE mode, returning false')
     return false
   }
 
   const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload } = abilityMode
 
   if (!sourceCoords || !sourceCard || !payload?.vacatedCoords) {
+    console.log('[handlePushMove] Missing required data, returning false')
     return false
   }
 
@@ -1492,7 +2168,7 @@ function handleShieldSelfThenPush(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem } = props
+  const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem, updateState } = props
 
   if (interactionLock.current) {
     return false
@@ -1507,6 +2183,40 @@ function handleShieldSelfThenPush(
   const ownerId = sourceCard.ownerId!
   const shieldAlreadyApplied = payload?.shieldApplied === true
 
+  // Helper function to add Shield synchronously using flushSync
+  const addShieldSync = () => {
+    if (!updateState) return
+    // CRITICAL: Use flushSync to ensure state is updated synchronously
+    // This prevents the double-click bug where Shield isn't applied before the push
+    flushSync(() => {
+      updateState((prev: GameState) => {
+        if (!prev.board[sourceCoords.row]?.[sourceCoords.col]) {
+          return prev
+        }
+        const updatedBoard = prev.board.map((row, rIdx) =>
+          row.map((cell, cIdx) => {
+            if (rIdx === sourceCoords.row && cIdx === sourceCoords.col && cell.card) {
+              const newStatus = {
+                type: 'Shield',
+                addedByPlayerId: ownerId,
+                id: `Shield_${ownerId}_${Date.now()}_${Math.random()}`
+              }
+              return {
+                ...cell,
+                card: {
+                  ...cell.card,
+                  statuses: [...(cell.card.statuses || []), newStatus]
+                }
+              }
+            }
+            return cell
+          })
+        )
+        return { ...prev, board: updatedBoard }
+      })
+    })
+  }
+
   // Check if clicking on self
   if (boardCoords.row === sourceCoords.row && boardCoords.col === sourceCoords.col) {
     if (shieldAlreadyApplied) {
@@ -1515,8 +2225,8 @@ function handleShieldSelfThenPush(
       setAbilityMode(null)
       return true
     } else {
-      // Old behavior: add Shield and transition to PUSH
-      addBoardCardStatus(sourceCoords, 'Shield', ownerId)
+      // Add Shield and transition to PUSH mode
+      addShieldSync()
 
       const pushAction: AbilityAction = {
         type: 'ENTER_MODE',
@@ -1563,7 +2273,7 @@ function handleShieldSelfThenPush(
         }
       }
 
-      setTargetingMode(pushAction, ownerId, sourceCoords, preCalculatedTargets, commandContext)
+      setTargetingMode(pushAction, ownerId, sourceCoords, preCalculatedTargets)
       return true
     }
   }
@@ -1577,9 +2287,9 @@ function handleShieldSelfThenPush(
 
   if (isAdj && card.ownerId !== ownerId && !isTeammate) {
     // IMPORTANT: Apply Shield first if not already applied
-    // This handles the case where player clicks directly on adjacent card
+    // Use synchronous update to ensure state is updated before proceeding
     if (!shieldAlreadyApplied) {
-      addBoardCardStatus(sourceCoords, 'Shield', ownerId)
+      addShieldSync()
     }
 
     const dRow = boardCoords.row - sourceCoords.row
@@ -1601,19 +2311,68 @@ function handleShieldSelfThenPush(
       return false
     }
 
-    // Perform the push
-    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
+    // Calculate valid targets for PUSH_MOVE (like handlePush does)
+    // Valid targets: sourceCoords (stay in place), vacatedCoords, and cells between them
+    const vacatedCoords = boardCoords
+    const pushMoveTargets: {row: number, col: number}[] = []
 
-    // Transition to PUSH_MOVE mode (move into vacated cell or intermediate cells)
-    setAbilityMode({
+    // 1. Source coords (stay in place)
+    pushMoveTargets.push(sourceCoords)
+
+    // 2. Vacated coords
+    pushMoveTargets.push(vacatedCoords)
+
+    // 3. Intermediate cells (if source and vacated are more than 1 cell apart)
+    if (sourceCoords.row === vacatedCoords.row) {
+      // Same row - add intermediate columns
+      const minCol = Math.min(sourceCoords.col, vacatedCoords.col)
+      const maxCol = Math.max(sourceCoords.col, vacatedCoords.col)
+      for (let c = minCol + 1; c < maxCol; c++) {
+        if (gameState.board[sourceCoords.row][c].card === null) {
+          pushMoveTargets.push({ row: sourceCoords.row, col: c })
+        }
+      }
+    } else if (sourceCoords.col === vacatedCoords.col) {
+      // Same column - add intermediate rows
+      const minRow = Math.min(sourceCoords.row, vacatedCoords.row)
+      const maxRow = Math.max(sourceCoords.row, vacatedCoords.row)
+      for (let r = minRow + 1; r < maxRow; r++) {
+        if (gameState.board[r][sourceCoords.col].card === null) {
+          pushMoveTargets.push({ row: r, col: sourceCoords.col })
+        }
+      }
+    }
+
+    const pushMoveAction: AbilityAction = {
       type: 'ENTER_MODE',
       mode: 'PUSH_MOVE',
       sourceCard,
       sourceCoords,
       isDeployAbility,
       readyStatusToRemove,
-      payload: { vacatedCoords: boardCoords }
+      payload: { vacatedCoords }
+    }
+
+    console.log('[handleShieldSelfThenPush] Setting PUSH_MOVE mode with targets:', pushMoveTargets)
+
+    // CRITICAL: Use flushSync to ensure all state updates happen synchronously
+    // This prevents useEffect in App.tsx from clearing targeting mode prematurely
+    flushSync(() => {
+      // Set ability mode to PUSH_MOVE first
+      setAbilityMode(pushMoveAction)
+      console.log('[handleShieldSelfThenPush] setAbilityMode PUSH_MOVE done')
+
+      // Set up targeting mode for PUSH_MOVE with valid targets
+      if (setTargetingMode) {
+        setTargetingMode(pushMoveAction, ownerId, sourceCoords, pushMoveTargets)
+        console.log('[handleShieldSelfThenPush] setTargetingMode done')
+      }
     })
+
+    console.log('[handleShieldSelfThenPush] After flushSync, calling moveItem')
+
+    // Perform the push AFTER setting ability mode and targeting mode
+    moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
     return true
   }
 
@@ -1815,6 +2574,20 @@ function handleSelectUnitForMove(
   // For other abilities, it might be at the top level. Check both.
   const actualChainedAction = directChainedAction || payload?.chainedAction
 
+  // DEBUG: Log chained action status
+  console.log('[handleSelectUnitForMove] chainedAction status:', {
+    hasDirectChainedAction: !!directChainedAction,
+    hasPayloadChainedAction: !!payload?.chainedAction,
+    actualChainedAction: actualChainedAction,
+    actualChainedActionKeys: actualChainedAction ? Object.keys(actualChainedAction) : [],
+    actualChainedActionAction: (actualChainedAction as any)?.action,
+    actualChainedActionType: (actualChainedAction as any)?.type,
+    actualChainedActionDetails: (actualChainedAction as any)?.details,
+    actualChainedActionPayload: (actualChainedAction as any)?.payload,
+    originalOwnerId,
+    sourceCardName: sourceCard?.name,
+  })
+
   if (sourceCard && sourceCard.id === card.id) {
     return false
   }
@@ -1825,24 +2598,21 @@ function handleSelectUnitForMove(
   const freshState = getFreshGameState ? getFreshGameState() : gameState
   const freshCard = freshState.board[boardCoords.row][boardCoords.col].card
 
-  // DIAGNOSTIC: Log filter check with both old and fresh card states
-  console.log('Filter check:', {
-    cardName: card.name,
-    cardId: card.id,
-    boardCoords,
-    hasFilter: !!payload.filter,
-    oldCardStatuses: card.statuses?.map(s => ({ type: s.type, addedBy: s.addedByPlayerId })) || [],
-    freshCardStatuses: freshCard?.statuses?.map(s => ({ type: s.type, addedBy: s.addedByPlayerId })) || [],
-    commandOwnerId: sourceCard?.ownerId,
-  })
-
-  if (payload.filter && !payload.filter(freshCard || card, boardCoords.row, boardCoords.col)) {
-    return false
+  // CRITICAL: Check if payload.filter is actually a function before calling it
+  // It might be an array or other type after serialization
+  if (payload.filter && typeof payload.filter === 'function') {
+    if (!payload.filter(freshCard || card, boardCoords.row, boardCoords.col)) {
+      return false
+    }
   }
 
 
   // Use freshCard if available, otherwise fall back to card parameter
   const cardToUse = freshCard || card
+
+  // CRITICAL: Remember the selected card's power at selection time for context rewards
+  // This is more reliable than searching for the card later (Tactical Maneuver draw/score)
+  const selectedCardPower = Math.max(0, cardToUse.power + (cardToUse.powerModifier || 0) + (cardToUse.bonusPower || 0))
 
   // CRITICAL: Clear targeting mode before setting new one to prevent stale highlights
   // This fixes the issue where targeting mode from SELECT_UNIT_FOR_MOVE persisted
@@ -1850,6 +2620,29 @@ function handleSelectUnitForMove(
 
   // Transition to SELECT_CELL mode
   // CRITICAL: Preserve chainedAction and originalOwnerId for reward (draw/score) after move
+  // CRITICAL FIX: Normalize chainedAction from JSON format (action/details) to AbilityAction format (type/payload)
+  const normalizedChainedAction = normalizeChainedAction(actualChainedAction)
+
+  // CRITICAL: Store the selected card's power in chainedAction payload for context rewards
+  // This ensures we use the correct power value even if the card moves or state changes
+  // CRITICAL FIX: Handle case where normalizedChainedAction is undefined (Data Interception option 2 has no chainedAction)
+  const baseChainedAction = normalizedChainedAction || {}
+  const enrichedChainedAction = normalizedChainedAction ? {
+    ...baseChainedAction,
+    sourceCard: abilityMode.sourceCard, // CRITICAL: Pass command card sourceCard for cleanup
+    sourceCoords: abilityMode.sourceCoords, // CRITICAL: Pass command card sourceCoords for cleanup
+    originalOwnerId, // CRITICAL: Pass command card owner for reward attribution
+    isDeployAbility: abilityMode.isDeployAbility,
+    readyStatusToRemove: abilityMode.readyStatusToRemove,
+    payload: {
+      ...(baseChainedAction.payload || {}),
+      contextCardPower: selectedCardPower,
+      // CRITICAL: Pass _autoStepsContext so handleContextReward can continue to CLEANUP_COMMAND
+      _autoStepsContext: abilityMode.payload?._autoStepsContext,
+    }
+  } : undefined
+
+  // CRITICAL: Build newMode with conditional chainedAction (only if it exists)
   const newMode: any = {
     type: 'ENTER_MODE',
     mode: 'SELECT_CELL',
@@ -1858,26 +2651,48 @@ function handleSelectUnitForMove(
     isDeployAbility,
     readyStatusToRemove,
     originalOwnerId, // Preserve command card owner for proper reward attribution
-    chainedAction: actualChainedAction, // Preserve reward action (DRAW_MOVED_POWER or SCORE_MOVED_POWER)
+    ...(enrichedChainedAction ? { chainedAction: enrichedChainedAction } : {}), // CRITICAL: Only add chainedAction if it exists
     payload: {
       range: payload.range || 2,
       moveFromHand: payload.moveFromHand || false,
       selectedCard: cardToUse,
       allowSelf: false,
-      useContextCard: true, // Mark that we should use the selected unit card for context
-      recordContext: true, // CRITICAL: Record moved card for context rewards (Tactical Maneuver draw/score)
+      useContextCard: !!enrichedChainedAction, // Only use context card if we have a chained action
+      recordContext: !!enrichedChainedAction, // Only record context if we have a chained action (Tactical Maneuver)
+      // CRITICAL: Pass _autoStepsContext so it's available in handleSelectCell for cleanup
+      _autoStepsContext: abilityMode.payload?._autoStepsContext,
     },
   }
+
+  console.log('[handleSelectUnitForMove] Created newMode:', {
+    newModeType: newMode.type,
+    newModeMode: newMode.mode,
+    selectedCardId: cardToUse.id,
+    selectedCardName: cardToUse.name,
+    selectedCardPower,
+    newModeChainedActionType: newMode.chainedAction?.type,
+    newModeChainedActionPayload: newMode.chainedAction?.payload,
+    newModeOriginalOwnerId: newMode.originalOwnerId,
+    hasAutoStepsContext: !!newMode.payload._autoStepsContext,
+    autoStepsContextStepIndex: newMode.payload._autoStepsContext?.currentStepIndex,
+    autoStepsContextStepsLength: newMode.payload._autoStepsContext?.steps?.length,
+  })
+  console.log('[handleSelectUnitForMove] _autoStepsContext DETAILS:', {
+    hasAbilityModePayload: !!abilityMode.payload,
+    hasAbilityModeAutoStepsContext: !!abilityMode.payload?._autoStepsContext,
+    abilityModeAutoStepsContext: abilityMode.payload?._autoStepsContext,
+    newModePayloadAutoStepsContext: newMode.payload._autoStepsContext,
+  })
 
   setAbilityMode(newMode)
 
   // Calculate valid targets and set targeting mode for visual highlights
   // CRITICAL: Use freshState for calculateValidTargets to get accurate targets
-  // CRITICAL: Use originalOwnerId (command card owner) for highlight color, NOT selected card owner
+  // CRITICAL: Use originalOwnerId (command card owner) for BOTH target calculation AND highlight color
   // This fixes Data Interception option 1 where highlight color changed to selected card's owner
   const actorId = originalOwnerId ?? localPlayerId ?? 0
   if (calculateValidTargets) {
-    const targets = calculateValidTargets(newMode, freshState, localPlayerId || 0, commandContext)
+    const targets = calculateValidTargets(newMode, freshState, actorId, commandContext)
     setTargetingMode(newMode, actorId, boardCoords, targets, commandContext)
   } else {
     setTargetingMode(newMode, actorId, boardCoords, undefined, commandContext)
@@ -2185,7 +3000,7 @@ function handleSelectCell(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  const { abilityMode, moveItem, markAbilityUsed, setAbilityMode, triggerClickWave, handleActionExecution, setCommandContext, clearTargetingMode } = props
+  const { abilityMode, moveItem, markAbilityUsed, setAbilityMode, triggerClickWave, handleActionExecution, setCommandContext, clearTargetingMode, setActionQueue } = props
 
   if (!abilityMode || abilityMode.mode !== 'SELECT_CELL') {
     return false
@@ -2196,6 +3011,18 @@ function handleSelectCell(
   // CRITICAL: For command cards like False Orders, chainedAction is in payload.chainedAction
   // For other abilities, it might be at the top level. Check both.
   const actualChainedAction = directChainedAction || payload?.chainedAction
+
+  // DEBUG: Log conditions for AUTO_STEPS continuation
+  console.log('[handleSelectCell] AUTO_STEPS context check:', {
+    hasPayload: !!payload,
+    hasAutoStepsContext: !!payload?._autoStepsContext,
+    hasActualChainedAction: !!actualChainedAction,
+    hasDirectChainedAction: !!directChainedAction,
+    hasPayloadChainedAction: !!payload?.chainedAction,
+    hasSetActionQueue: !!setActionQueue,
+    autoStepsContextStepIndex: payload?._autoStepsContext?.currentStepIndex,
+    autoStepsContextStepsLength: payload?._autoStepsContext?.steps?.length,
+  })
 
   if (payload?.filter && !payload.filter(null, boardCoords.row, boardCoords.col)) {
     return false
@@ -2250,27 +3077,245 @@ function handleSelectCell(
 
   markAbilityUsed(sourceCoords || boardCoords, isDeployAbility, false, readyStatusToRemove)
 
-  // CRITICAL: Execute chained action if present (e.g., Tactical Maneuver draw/score, False Orders Reveal x2/Stun x2)
-  // The chained action is executed AFTER the card is moved
+  // CRITICAL: Add chained action to actionQueue if present (e.g., Tactical Maneuver draw/score, False Orders Reveal x2/Stun x2)
+  // This ensures the action is processed sequentially after abilityMode is cleared, allowing cleanupCommand to execute
+  // The chained action is added to the queue AFTER the card is moved
   if (actualChainedAction) {
+    // CRITICAL FIX: Convert chainedAction from JSON format (action/details) to AbilityAction format (type/payload)
+    // In contentDatabase.json, chainedAction has: {action: "GLOBAL_AUTO_APPLY", details: {contextReward: "..."}}
+    // But AbilityAction expects: {type: "GLOBAL_AUTO_APPLY", payload: {contextReward: "..."}}
+    const originalFormat = (actualChainedAction as any).action && !(actualChainedAction as any).type
+    console.log('[handleSelectCell] chainedAction format check:', {
+      hasAction: !!(actualChainedAction as any).action,
+      hasType: !!(actualChainedAction as any).type,
+      hasDetails: !!(actualChainedAction as any).details,
+      hasPayload: !!(actualChainedAction as any).payload,
+      needsConversion: originalFormat,
+      rawChainedAction: actualChainedAction
+    })
+    const normalizedAction: any = originalFormat
+      ? {
+          type: (actualChainedAction as any).action,
+          // CRITICAL: Merge details with existing payload to preserve contextCardPower and _autoStepsContext
+          payload: {
+            ...((actualChainedAction as any).details || {}),
+            ...((actualChainedAction as any).payload || {})
+          }
+        }
+      : actualChainedAction
+
+    console.log('[handleSelectCell] Normalized chainedAction:', {
+      type: normalizedAction.type,
+      payload: normalizedAction.payload,
+      contextReward: normalizedAction.payload?.contextReward,
+      hasContextCardPower: !!normalizedAction.payload?.contextCardPower,
+      hasAutoStepsContext: !!normalizedAction.payload?._autoStepsContext,
+    })
+
+    // CRITICAL: Convert ownerId: "source" to actual command owner ID BEFORE creating enrichedChainedAction
+    // This ensures Stun tokens belong to the player who played the command
+    if (normalizedAction.type === 'GLOBAL_AUTO_APPLY' && normalizedAction.payload?.ownerId === 'source') {
+      normalizedAction.payload = {
+        ...(normalizedAction.payload || {}),
+        ownerId: originalOwnerId,
+      }
+      console.log('[handleSelectCell] Converting ownerId from "source" to:', originalOwnerId)
+    }
+
+    // CRITICAL: For False Orders Option 1 (Revealed tokens), resolve targetOwnerId before creating enrichedChainedAction
+    // This ensures the resolved value is preserved and not overwritten by payload spreading
+    let resolvedTargetOwnerId: number | undefined
+    const isRevealedTokens = normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed' && movedCard
+    if (isRevealedTokens && movedCard.ownerId !== undefined) {
+      resolvedTargetOwnerId = movedCard.ownerId
+      console.log('[handleSelectCell] Resolved targetOwnerId for Revealed tokens:', {
+        resolvedTargetOwnerId,
+        movedCardName: movedCard.name,
+        movedCardOwnerId: movedCard.ownerId,
+        originalPayloadTargetOwnerId: (normalizedAction.payload as any)?.targetOwnerId,
+        originalDetailsTargetOwnerId: (normalizedAction as any).details?.targetOwnerId,
+        isRevealedTokens,
+        hasMovedCard: !!movedCard,
+      })
+    } else {
+      console.log('[handleSelectCell] Skipping Revealed token resolution:', {
+        normalizedActionType: normalizedAction.type,
+        normalizedActionTokenType: normalizedAction.tokenType,
+        hasMovedCard: !!movedCard,
+        movedCardOwnerId: movedCard?.ownerId,
+        isRevealedTokens,
+      })
+    }
+
     // Add _tempContextId to help find the moved card in case state hasn't updated yet
     // Also add contextCardId for False Orders Option 1 (Stun x2 on moved card)
     const enrichedChainedAction: AbilityAction = {
-      ...actualChainedAction,
+      ...normalizedAction,
+      // CRITICAL: Preserve sourceCard from actualChainedAction (command card) if available
+      // Otherwise fall back to abilityMode.sourceCard (which might be the selected unit)
+      sourceCard: (actualChainedAction as any).sourceCard || abilityMode.sourceCard,
+      // CRITICAL: For CREATE_STACK with Revealed (hand targeting), use default sourceCoords {-1, -1}
+      // For GLOBAL_AUTO_APPLY with Stun (board targeting), use boardCoords
+      sourceCoords: normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed'
+        ? { row: -1, col: -1 }
+        : boardCoords,
+      originalOwnerId, // CRITICAL: Preserve command card owner for reward attribution (Tactical Maneuver)
+      isDeployAbility: abilityMode.isDeployAbility,
+      readyStatusToRemove: abilityMode.readyStatusToRemove,
+      // CRITICAL: Set targetOwnerId at top level for Revealed tokens
+      ...(resolvedTargetOwnerId !== undefined ? { targetOwnerId: resolvedTargetOwnerId } : {}),
       payload: {
-        ...actualChainedAction.payload,
+        // CRITICAL: Spread payload FIRST, then override specific values
+        // This prevents payload.targetOwnerId = -2 from overwriting resolvedTargetOwnerId
+        ...(normalizedAction.payload || {}),
         _tempContextId: movedCardId,  // Pass the moved card ID so handleContextReward can find it
         // Also pass the source coords BEFORE the move (for finding the card before it moves)
         _sourceCoordsBeforeMove: sourceCoords,
         // CRITICAL: Pass contextCardId for token placement on moved card (False Orders Option 1)
         contextCardId: movedCardId,
+        // CRITICAL: Pass _autoStepsContext so handleContextReward can continue to next steps (e.g., CLEANUP_COMMAND)
+        _autoStepsContext: payload?._autoStepsContext,
+        // CRITICAL: Pass _sourceOwnerId so handleCreateStack can resolve targetOwnerId correctly
+        // This fixes False Orders Option 1 where repeated uses would target wrong player's hand
+        ...(resolvedTargetOwnerId !== undefined ? { _sourceOwnerId: resolvedTargetOwnerId } : {}),
+        // CRITICAL: Override targetOwnerId in payload for Revealed tokens (must come after payload spread)
+        ...(resolvedTargetOwnerId !== undefined ? { targetOwnerId: resolvedTargetOwnerId } : {}),
       }
     }
-    // For False Orders and similar commands, use the new boardCoords as sourceCoords
-    // This ensures the chained action (like CREATE_STACK for Reveal tokens) originates from the moved card's new location
-    setTimeout(() => {
-      handleActionExecution(enrichedChainedAction, boardCoords)
-    }, TIMING.MODE_CLEAR_DELAY)
+
+    // Clear excludeOwnerId if we're using targetOwnerId instead
+    if (resolvedTargetOwnerId !== undefined) {
+      delete (enrichedChainedAction.payload as any).excludeOwnerId
+    }
+
+    // DEBUG: Log enrichedChainedAction to verify sourceCard is included
+    console.log('[handleSelectCell] enrichedChainedAction before queue:', {
+      hasSourceCard: !!enrichedChainedAction.sourceCard,
+      sourceCardId: enrichedChainedAction.sourceCard?.id,
+      sourceCardName: enrichedChainedAction.sourceCard?.name,
+      type: enrichedChainedAction.type,
+      contextReward: enrichedChainedAction.payload?.contextReward,
+      abilityModeSourceCardId: abilityMode.sourceCard?.id,
+    })
+
+    // CRITICAL: Execute chainedAction with proper handling based on type
+    // For CREATE_STACK (Revealed), execute through handleActionExecution to create cursorStack
+    // For GLOBAL_AUTO_APPLY (Stun), add to actionQueue
+    if (normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed') {
+      // For Revealed tokens, execute through handleActionExecution to create cursorStack
+      console.log('[handleSelectCell] Executing CREATE_STACK (Revealed) through handleActionExecution')
+      if (props.handleActionExecution) {
+        setTimeout(() => {
+          props.handleActionExecution(enrichedChainedAction, { row: -1, col: -1 })
+        }, 50)
+      }
+
+      // Also add CONTINUE_AUTO_STEPS after cursorStack completes
+      if (payload?._autoStepsContext && setActionQueue) {
+        const autoStepsContext = { ...payload._autoStepsContext }
+        const continueAction: any = {
+          type: 'CONTINUE_AUTO_STEPS',
+          sourceCard: abilityMode.sourceCard,
+          sourceCoords: boardCoords,
+          isDeployAbility: abilityMode.isDeployAbility,
+          readyStatusToRemove: abilityMode.readyStatusToRemove,
+          payload: {
+            _autoStepsContext: autoStepsContext,
+            stepContext: {
+              targetCoords: boardCoords,
+              targetCardId: movedCardId,
+              // CRITICAL: Pass sourceOwnerId for resolving targetOwnerId in chained actions
+              // This fixes False Orders Option 1 where Revealed tokens need to target the moved card's owner
+              ...(movedCard?.ownerId !== undefined ? { sourceOwnerId: movedCard.ownerId } : {})
+            }
+          }
+        }
+        setTimeout(() => {
+          setActionQueue(prev => {
+            const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+            const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+            return [...otherActions, continueAction, ...cleanupActions]
+          })
+        }, 100)
+      }
+    } else {
+      // For other actions (GLOBAL_AUTO_APPLY, etc.), add to actionQueue
+      if (setActionQueue) {
+        // Add chainedAction to actionQueue, but ensure cleanupCommand stays at the end
+        setActionQueue(prev => {
+          const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+          const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+
+          // CRITICAL: If this is part of AUTO_STEPS, also add CONTINUE_AUTO_STEPS after chainedAction
+          // This ensures command cards are discarded after all steps complete
+          const actionsToQueue: any[] = [enrichedChainedAction]
+          if (payload?._autoStepsContext) {
+            // CRITICAL: currentStepIndex already points to the next step, use as-is
+            const autoStepsContext = { ...payload._autoStepsContext }
+            const continueAction: any = {
+              type: 'CONTINUE_AUTO_STEPS',
+              sourceCard: abilityMode.sourceCard,
+              sourceCoords: boardCoords, // Use new coords as source
+              isDeployAbility: abilityMode.isDeployAbility,
+              readyStatusToRemove: abilityMode.readyStatusToRemove,
+              payload: {
+                _autoStepsContext: autoStepsContext,
+                stepContext: {
+                  targetCoords: boardCoords,
+                  targetCardId: movedCardId,
+                  // CRITICAL: Pass sourceOwnerId for resolving targetOwnerId in chained actions
+                  // This fixes False Orders Option 1 where Revealed tokens need to target the moved card's owner
+                  ...(movedCard?.ownerId !== undefined ? { sourceOwnerId: movedCard.ownerId } : {})
+                }
+              }
+            }
+            actionsToQueue.push(continueAction)
+            console.log('[handleSelectCell] Adding CONTINUE_AUTO_STEPS after chainedAction, stepIndex:', autoStepsContext.currentStepIndex)
+          }
+
+          // DEBUG: Log actionQueue state
+          console.log('[handleSelectCell] Adding chainedAction to queue:', {
+            prevLength: prev.length,
+            cleanupActionsCount: cleanupActions.length,
+            otherActionsCount: otherActions.length,
+            chainedActionType: enrichedChainedAction.type,
+            chainedActionMode: enrichedChainedAction.mode,
+            hasAutoStepsContext: !!payload?._autoStepsContext
+          })
+          // Insert chainedAction before cleanupCommand(s)
+          return [...otherActions, ...actionsToQueue, ...cleanupActions]
+        })
+      }
+    }
+  }
+
+  // CRITICAL FIX: Handle case where there's NO chainedAction but we're in AUTO_STEPS context
+  // This is for Data Interception option 2: CREATE_STACK → SELECT_UNIT_FOR_MOVE → SELECT_CELL → CLEANUP_COMMAND
+  // After the move completes, we need to continue AUTO_STEPS to trigger CLEANUP_COMMAND
+  if (!actualChainedAction && payload?._autoStepsContext && setActionQueue) {
+    const autoStepsContext = { ...payload._autoStepsContext }
+    const continueAction: any = {
+      type: 'CONTINUE_AUTO_STEPS',
+      sourceCard: abilityMode.sourceCard,
+      sourceCoords: boardCoords, // Use new coords as source
+      isDeployAbility: abilityMode.isDeployAbility,
+      readyStatusToRemove: abilityMode.readyStatusToRemove,
+      payload: {
+        _autoStepsContext: autoStepsContext,
+        stepContext: {
+          targetCoords: boardCoords,
+          targetCardId: movedCardId
+        }
+      }
+    }
+
+    console.log('[handleSelectCell] No chainedAction, adding CONTINUE_AUTO_STEPS directly, stepIndex:', autoStepsContext.currentStepIndex)
+
+    setActionQueue(prev => {
+      const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+      const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+      return [...otherActions, continueAction, ...cleanupActions]
+    })
   }
 
   // CRITICAL: Clear targeting mode when move is complete
@@ -2669,6 +3714,9 @@ function handleZiusLineSelect(
  * Two-step selection:
  * 1. First click: select center cell (any cell in active grid)
  * 2. Second click: select any cell on either diagonal through the center
+ *
+ * CRITICAL: After scoring, must continue AUTO_STEPS to execute CLEANUP_COMMAND
+ * which sends the command card to discard. This fixes Logistics Chain not discarding.
  */
 function handleSelectDiagonal(
   _card: Card,
@@ -2681,8 +3729,12 @@ function handleSelectDiagonal(
     return false
   }
 
-  const { payload } = currentAbilityMode
-  const ownerId = payload?.playerId ?? 0
+  const { payload, sourceCard } = currentAbilityMode
+  // CRITICAL: Use sourceCard.ownerId for command cards (the player who owns the command card)
+  // This fixes dummy player control in P2P mode - the dummy player should get points/draws
+  const autoStepsContext = (payload as any)?._autoStepsContext
+  const isCommandCard = !!(autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined)
+  const ownerId = payload?.playerId ?? sourceCard?.ownerId ?? 0
   const bonusType = payload?.bonusType || 'point_per_support'
 
   // Step 1: First click - select center point
@@ -2717,13 +3769,28 @@ function handleSelectDiagonal(
     scoreDiagonal(r1, c1, r2, c2, ownerId, bonusType)
   }
 
-  // Advance phase after scoring, unless skipNextPhase is set (e.g., Logistics Chain)
-  if (!payload.skipNextPhase && nextPhase) {
+  // CRITICAL: Do NOT advance phase for command cards (AUTO_STEPS)
+  // Command cards should stay in the same phase after execution
+  // Only advance phase for non-command abilities with explicit skipNextPhase: false
+  if (!isCommandCard && !payload.skipNextPhase && nextPhase) {
     nextPhase()
   }
 
-  // Clear ability mode
-  setAbilityMode(null)
+  // CRITICAL: Check if this is part of AUTO_STEPS (command cards like Logistics Chain)
+  // If so, continue to next step (CLEANUP_COMMAND) to discard the command card
+  if (isCommandCard) {
+    console.log('[handleSelectDiagonal] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
+      currentStepIndex: autoStepsContext.currentStepIndex,
+      totalSteps: autoStepsContext.steps.length,
+      ownerId,
+    })
+    // Use currentAbilityMode.sourceCoords for sourceCoords (command card location)
+    const sourceCoords = currentAbilityMode.sourceCoords || { row: 0, col: 0 }
+    advanceToNextStepWithCoords(props, sourceCoords, autoStepsContext.currentStepIndex + 1)
+  } else {
+    // Not part of AUTO_STEPS, just clear ability mode
+    setAbilityMode(null)
+  }
   return true
 }
 
@@ -3199,9 +4266,13 @@ function handleAutoSteps(
   // Get the owner ID for this ability
   const ownerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0
 
+  // CRITICAL: CREATE_STACK with mode: null is NOT an instant action - it requires targeting
+  // Commands like Data Interception, Temporary Shelter use CREATE_STACK with mode: null
+  // We need to treat them as targeting actions, not instant steps
+  const isTargetingCreateStack = currentStep.action === "CREATE_STACK" && !currentStep.mode
 
   // INSTANT STEPS (no mode) - execute automatically and move to next step
-  if (!currentStep.mode) {
+  if (!currentStep.mode && !isTargetingCreateStack) {
 
     // Use the universal instant step handler
     const instantStepProps: InstantStepProps = {
@@ -3221,11 +4292,21 @@ function handleAutoSteps(
   }
 
   // INTERACTIVE STEPS (with mode) - enter the mode and wait for player input
+  // OR CREATE_STACK with mode: null - treat as targeting action
   // CRITICAL: Normalize LINE_TARGET and ADJACENT_TARGET to SELECT_TARGET
   // These are targeting constraints, not separate modes. The constraint is stored in payload.
   const normalizedMode = (currentStep.mode === "LINE_TARGET" || currentStep.mode === "ADJACENT_TARGET")
     ? "SELECT_TARGET"
     : (currentStep.mode || "SELECT_TARGET")
+
+  // CRITICAL: Use buildDetailsFromContent to convert filter strings to functions
+  // This ensures filters like "isOwner" or "hasCounterOwner_Exploit" work correctly
+  const processedDetails = buildDetailsFromContent(
+    { details: currentStep.details, action: currentStep.action, mode: currentStep.mode } as any,
+    ownerId,
+    sourceCoords || { row: -1, col: -1 },
+    gameState
+  )
 
   // Build stepAction to check for valid targets
   const stepAction: AbilityAction = {
@@ -3235,23 +4316,28 @@ function handleAutoSteps(
     sourceCoords,
     isDeployAbility,
     readyStatusToRemove,
+    // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+    ...(currentStep.chainedAction ? { chainedAction: currentStep.chainedAction } : {}),
     payload: {
-      ...currentStep.details,
+      ...processedDetails,
       actionType: currentStep.action,  // Set actionType so handleSelectTargetActionType knows how to handle this
       _autoStepsContext: {
         steps: payload.steps,
         currentStepIndex: currentStepIndex + 1,
         originalType: abilityMode.payload?.originalType,
         supportRequired: abilityMode.payload?.supportRequired,
-        readyStatusToRemove: readyStatusToRemove
+        readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct card (Logistics Chain, etc.)
+        commandCardId: abilityMode.payload?.commandCardId || sourceCard?.id
       }
     }
   }
 
   // Handle CREATE_STACK - keep as CREATE_STACK, add targeting constraints
   // This will trigger handleCreateStack which creates the cursor stack
-  if (currentStep.action === "CREATE_STACK" && currentStep.mode) {
-    const details = currentStep.details || {}
+  // CRITICAL: Also handle CREATE_STACK with mode: null (e.g., Data Interception, Temporary Shelter)
+  if (currentStep.action === "CREATE_STACK") {
+    const details = processedDetails  // Use processedDetails with converted filters
     // Change type to CREATE_STACK (not OPEN_MODAL) so handleCreateStack is called
     stepAction.type = "CREATE_STACK"
     stepAction.count = details.count || 1  // handleCreateStack reads action.count
@@ -3260,6 +4346,33 @@ function handleAutoSteps(
     stepAction.sourceCoords = sourceCoords  // handleCreateStack needs this
     stepAction.isDeployAbility = isDeployAbility
     stepAction.readyStatusToRemove = readyStatusToRemove
+
+    // CRITICAL: Copy all targeting properties to action level (not just payload)
+    // handleCreateStack reads these from action, not from action.payload
+    const targetingProps = [
+      'targetOwnerId', 'excludeOwnerId', 'onlyOpponents', 'onlyFaceDown',
+      'targetType', 'requiredTargetStatus', 'requireStatusFromSourceOwner',
+      'mustBeAdjacentToSource', 'mustBeInLineWithSource',
+      'maxDistanceFromSource', 'maxOrthogonalDistance',
+      'placeAllAtOnce', 'replaceStatus', 'recordContext',
+      'dynamicCount'
+    ]
+    for (const prop of targetingProps) {
+      if (details[prop] !== undefined) {
+        (stepAction as any)[prop] = details[prop]
+      }
+    }
+
+    // Preserve all details in payload for handleCreateStack
+    stepAction.payload = {
+      ...details,
+      _autoStepsContext: stepAction.payload._autoStepsContext
+    }
+    // CRITICAL: Preserve chainedAction from step level (not details level)
+    // Temporary Shelter and other commands use this structure
+    if (currentStep.chainedAction) {
+      (stepAction as any).chainedAction = currentStep.chainedAction
+    }
     if (currentStep.mode === "LINE_TARGET") {
       stepAction.mustBeInLineWithSource = true
     } else if (currentStep.mode === "ADJACENT_TARGET") {
@@ -3271,6 +4384,10 @@ function handleAutoSteps(
   if (currentStep.action === "CREATE_TOKEN") {
     stepAction.type = "OPEN_MODAL"
     stepAction.mode = "PLACE_TOKEN"
+    // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+    if (currentStep.chainedAction) {
+      (stepAction as any).chainedAction = currentStep.chainedAction
+    }
     // Preserve _autoStepsContext for continuation after token placement
     stepAction.payload = {
       ...currentStep.details,
@@ -3410,6 +4527,8 @@ function advanceToNextStep(
         targetOwnerId: abilityMode.sourceCard?.ownerId,
         mustBeInLineWithSource: nextStep.mode === "LINE_TARGET" ? true : undefined,
         mustBeAdjacentToSource: nextStep.mode === "ADJACENT_TARGET" ? true : undefined,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
         payload: {
           ...nextStep.details,
           _autoStepsContext: {
@@ -3430,6 +4549,8 @@ function advanceToNextStep(
         sourceCoords: abilityMode.sourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
         payload: {
           ...nextStep.details,
           tokenId: nextStep.details?.tokenId,
@@ -3452,6 +4573,8 @@ function advanceToNextStep(
         sourceCoords: abilityMode.sourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
         payload: {
           ...nextStep.details,
           _autoStepsContext: {
@@ -3481,6 +4604,8 @@ function advanceToNextStep(
         sourceCoords: abilityMode.sourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: readyStatusToRemove,
+        // CRITICAL: Preserve chainedAction from step level (for multi-step commands)
+        ...(nextStep.chainedAction ? { chainedAction: nextStep.chainedAction } : {}),
         payload: {
           ...nextStep.details,
           actionType: nextStep.action,  // Set actionType so handleSelectTargetActionType knows how to handle this

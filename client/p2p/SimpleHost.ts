@@ -996,14 +996,6 @@ export class SimpleHost {
       state: this.state as any  // will be personalized for each
     }
 
-    // Log state changes for debugging
-    logger.info('[SimpleHost.broadcastAll] Broadcasting state:', {
-      version: this.version,
-      playersCount: this.state.players.length,
-      dummyPlayerCount: this.state.dummyPlayerCount,
-      players: this.state.players.map((p: any) => ({ id: p.id, name: p.name, isDummy: p.isDummy }))
-    })
-
     // Also notify host
     this.notifyStateUpdate()
 

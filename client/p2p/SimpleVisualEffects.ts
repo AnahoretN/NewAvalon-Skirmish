@@ -223,17 +223,6 @@ export class SimpleVisualEffects {
    * Set targeting mode for all guests
    */
   setTargetingMode(mode: TargetingModeData): void {
-    console.log('[SimpleVisualEffects] setTargetingMode called:', {
-      playerId: mode.playerId,
-      actionMode: mode.action.mode,
-      actionType: mode.action.payload?.actionType,
-      hasBoardTargets: !!mode.boardTargets,
-      boardTargetsCount: mode.boardTargets?.length || 0,
-      hasHandTargets: !!mode.handTargets,
-      handTargetsCount: mode.handTargets?.length || 0,
-      handTargets: mode.handTargets,
-    })
-
     // Sanitize the action to remove non-serializable properties like sourceCard
     const sanitizedAction = sanitizeAbilityAction(mode.action)
 

@@ -84,6 +84,10 @@ export interface Card {
   allowedPanels?: string[]; // Controls visibility in UI panels (e.g. 'DECK_BUILDER', 'TOKEN_PANEL')
   enteredThisTurn?: boolean; // True if the card entered the battlefield during the current turn
   isPlaceholder?: boolean; // True if this is a placeholder card (for WebRTC optimization)
+  // For command cards: the selected option index (1-based) when player chooses an option
+  selectedOption?: number;
+  // ABILITIES array from contentDatabase.json (used for both units and command cards)
+  ABILITIES?: any[];
 }
 
 /**
@@ -363,7 +367,7 @@ export interface CursorStackState {
     sourceCoords?: {row: number, col: number}; // Origin for ability tracking
     sourceCard?: Card; // Source card that created this stack (important for actorId validation)
     targetOwnerId?: number; // Optional restriction for 'Revealed' token usage (Recon Drone) - Inclusive
-    excludeOwnerId?: number; // Optional restriction - Exclusive (e.g. Vigilant Spotter: Don't reveal self)
+    excludeOwnerId?: number | 'source'; // Optional restriction - Exclusive (e.g. Vigilant Spotter: Don't reveal self)
     onlyOpponents?: boolean; // Optional restriction - Exclusive (Don't reveal self OR teammates)
     onlyFaceDown?: boolean; // Optional restriction - Only cards that are currently hidden (Face down or unrevealed hand)
     targetType?: string; // Optional: Restrict target by card Type (e.g., "Unit")
@@ -394,7 +398,12 @@ export interface CommandContext {
     sourceOwnerId?: number; // Owner of the ability source (e.g., Centurion's owner for BUFF_LINES_FROM_CONTEXT)
     selectedHandCard?: { playerId: number, cardIndex: number }; // For Quick Response Team
     pendingCommandCard?: { sourceCoords: { row: number; col: number }; isDeployAbility?: boolean; readyStatusToRemove?: string }; // For Quick Response Team - marks command as used when play completes
-    lastPlacedToken?: { boardCoords: { row: number; col: number } }; // For Data Interception - tracks token placement
+    lastPlacedToken?: {
+        boardCoords: { row: number; col: number };
+        cardId: string;
+        tokenType: string;
+        addedByPlayerId: number;
+    }; // For Data Interception, Overwatch - tracks token placement for dynamic count calculations
 }
 
 /**
@@ -408,6 +417,12 @@ export interface CounterSelectionData {
     sourceCoords?: {row: number, col: number};
     isDeployAbility?: boolean;
     readyStatusToRemove?: string[];
+    // AUTO_STEPS context for continuing to cleanup step after modal confirmation
+    autoStepsContext?: {
+      steps: any[];
+      currentStepIndex: number;
+      abilityAction: AbilityAction;
+    };
 }
 
 /**
@@ -418,12 +433,12 @@ export type AbilityAction = {
     mode?: string;
     tokenType?: string;
     count?: number;
-    dynamicCount?: { factor: string; ownerId: number }; // For dynamic stack counts (e.g. Overwatch Reveal)
+    dynamicCount?: { factor: string; ownerId: number | 'source' }; // For dynamic stack counts (e.g. Overwatch Reveal)
     onlyFaceDown?: boolean;
     onlyOpponents?: boolean;
     onlyAllies?: boolean; // Optional restriction - Only self OR teammates (Signal Prophet)
-    targetOwnerId?: number;
-    excludeOwnerId?: number;
+    targetOwnerId?: number | 'source';
+    excludeOwnerId?: number | 'source';
     targetType?: string; // Optional: Restrict target by card Type
     sourceCard?: Card;
     sourceCoords?: { row: number; col: number };
@@ -445,6 +460,7 @@ export type AbilityAction = {
     targetLocation?: 'hand' | 'board'; // Specifies target location for abilities (e.g., Vigilant Spotter targets hand cards)
     replaceStatus?: boolean; // If true, replace the requiredTargetStatus with tokenType (e.g., Censor: Exploit -> Stun)
     originalOwnerId?: number; // The owner of the card that initiated this action (for multi-step commands like Data Interception)
+    _sourceOwnerId?: number; // Internal: Owner ID of the card that was targeted/moved (used for resolving targetOwnerId: -2)
     skipChainedActionOnNoTargets?: boolean; // If true, chained action won't execute when no valid targets exist (e.g., Recon Drone Commit)
     supportRequired?: boolean; // If true, requires source card to have Support status (e.g., Inventive Maker Setup)
 };

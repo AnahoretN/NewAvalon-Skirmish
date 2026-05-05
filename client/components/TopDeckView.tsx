@@ -198,6 +198,9 @@ const TopDeckView: React.FC<TopDeckViewProps> = memo(({
     setDraggedCardId(card.id)
     draggedCardRef.current = card
     setDroppedOutside(false)
+    // Dispatch event to hide tooltips globally
+    window.dispatchEvent(new CustomEvent('cardDragStart'))
+    document.body.setAttribute('data-dragging-card', 'true')
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
@@ -215,7 +218,8 @@ const TopDeckView: React.FC<TopDeckViewProps> = memo(({
     const x = e.clientX
     const y = e.clientY
 
-    // If cursor is outside modal bounds, set up draggedItem and close modal
+    // If cursor is outside modal bounds, set up draggedItem for external drop
+    // Do NOT close the modal - only clicking outside should close it
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
       const card = draggedCardRef.current
       const index = draggedIndex ?? 0
@@ -230,13 +234,15 @@ const TopDeckView: React.FC<TopDeckViewProps> = memo(({
       }
 
       setDroppedOutside(true)
-
-      // Close modal immediately so drop can happen on underlying elements
-      onClose()
+      // Note: Modal stays open so player can continue working with top deck
     }
-  }, [draggedIndex, player.id, setDraggedItem, onClose])
+  }, [draggedIndex, player.id, setDraggedItem])
 
   const handleDragEnd = useCallback(() => {
+    // Dispatch event to show tooltips again
+    window.dispatchEvent(new CustomEvent('cardDragEnd'))
+    document.body.removeAttribute('data-dragging-card')
+
     // Only cleanup if we didn't drop outside (outside case is handled by dragLeave)
     if (!droppedOutside) {
       setDraggedCardId(null)
@@ -303,7 +309,10 @@ const TopDeckView: React.FC<TopDeckViewProps> = memo(({
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[250] backdrop-blur-sm">
+    <div
+      className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[250] backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div
         ref={modalRef}
         onDragLeave={handleDragLeave}

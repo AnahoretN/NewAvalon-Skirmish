@@ -18,6 +18,15 @@ This version uses a **split deployment** strategy:
 
 Players configure the WebSocket URL in Settings to connect to any game server.
 
+## Active Development Mode
+
+**IMPORTANT**: Currently, **only WebRTC P2P Mode is under active development**.
+
+- **WebRTC P2P Mode**: Fully functional, actively developed and maintained
+- **WebSocket Server Mode**: Currently disabled in settings, not under active development
+
+The "Server Settings" section in the Settings modal is permanently disabled. All development efforts are focused on the WebRTC P2P architecture.
+
 ## Workflow
 
 ### Development
@@ -155,11 +164,10 @@ Before commit **MANDATORY**:
 │   │   ├── GameLogger.ts        # Game action logging
 │   │   ├── PhaseManagement.ts   # Phase transitions, round management
 │   │   └── ReconnectionManager.ts
-│   ├── utils/                    # Client-side utilities (7 files)
-│   │   ├── boardUtils.ts         # export const createInitialBoard: () => Board, export const recalculateBoardStatuses: (gameState: GameState) => Board - NOW IMPORTED FROM SHARED
-│   │   ├── targeting.ts          # export const validateTarget: (action: AbilityAction, sourceCardId: string, targetCardId: string, sourceCoords: {row: number, col: number}, targetCoords: {row: number, col: number}, gameState: GameState, playerId: number) => boolean, export const calculateValidTargets: (action: AbilityAction, sourceCardId: string, sourceCoords: {row: number, col: number}, gameState: GameState, playerId: number) => {row: number, col: number}[], export const checkActionHasTargets: (action: AbilityAction, currentGameState: GameState, playerId: number | null, commandContext?: CommandContext) => boolean - NOW IMPORTED FROM SHARED
-│   │   ├── commandLogic.ts       # export const getCommandAction: (cardId: string) => AbilityAction[]
-│   │   ├── autoAbilities.ts      # Re-exports server autoAbilities for client
+│   ├── utils/                    # Client-side utilities (9 files)
+│   │   ├── boardUtils.ts         # NOW IMPORTED FROM SHARED
+│   │   ├── targeting.ts          # NOW IMPORTED FROM SHARED
+│   │   ├── autoAbilities.ts      # Re-exports shared abilities for client, includes getCommandOptions, getCommandActionByOption, isCommandCard
 │   │   ├── textFormatters.ts     # export const formatAbilityText: (ability: string) => React.ReactNode
 │   │   ├── textDeckFormat.ts     # Text-based deck format parser/exporter (format: "Nx Card Name"), export const parseTextDeckFormat: (textContent: string) => TextDeckParseResult, export const exportToTextDeckFormat: (deckFile: CustomDeckFile) => string
 │   │   ├── deckValidation.ts     # export const validateDeckData: (data: any) => DeckValidationResult
