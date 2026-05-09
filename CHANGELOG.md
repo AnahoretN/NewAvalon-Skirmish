@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-05-09
+
+### Fixed
+- **IP Agent Threat Scoring**: Fixed row/column highlighting now uses active grid bounds
+  - Added IP_AGENT_THREAT_SCORING mode support to GameBoard
+  - Fixed missing cell issue in vertical line selection
+  - Visual effects now match actual active grid area
+
+- **Targeting Mode Race Condition**: Fixed instant steps clearing targetingMode too early
+  - Added abilityMode clearing for instant AUTO_STEPS (e.g., Overwatch Option 2)
+  - Prevents visual highlights from persisting after instant action completion
+  - Added 500ms debounce to prevent re-setting targetingMode after clear
+
 ## [0.3.5] - 2026-05-03
 
 ### Fixed

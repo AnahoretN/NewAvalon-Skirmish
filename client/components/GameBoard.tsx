@@ -934,7 +934,8 @@ export const GameBoard = memo<GameBoardProps>(({
       abilityMode.mode === 'SELECT_LINE_END' ||
       abilityMode.mode === 'SELECT_DIAGONAL' ||
       abilityMode.mode === 'ZIUS_LINE_SELECT' ||
-      abilityMode.mode === 'SCORE_LAST_PLAYED_LINE'
+      abilityMode.mode === 'SCORE_LAST_PLAYED_LINE' ||
+      abilityMode.mode === 'IP_AGENT_THREAT_SCORING'
     )
 
     // Get target coords from ability mode for line selection
@@ -985,6 +986,12 @@ export const GameBoard = memo<GameBoardProps>(({
         // SELECT_LINE_FOR_THREAT_COUNTERS without targetCoords (Code Keeper Deploy)
         // Highlight row and column through source coords
         if (abilityMode?.mode === 'SELECT_LINE_FOR_THREAT_COUNTERS' && !lineSelectionTargetCoords && abilityMode?.sourceCoords) {
+          return row === abilityMode.sourceCoords.row || col === abilityMode.sourceCoords.col
+        }
+
+        // IP_AGENT_THREAT_SCORING (IP Dept Agent Setup)
+        // Highlight row and column through source coords
+        if (abilityMode?.mode === 'IP_AGENT_THREAT_SCORING' && abilityMode?.sourceCoords) {
           return row === abilityMode.sourceCoords.row || col === abilityMode.sourceCoords.col
         }
 

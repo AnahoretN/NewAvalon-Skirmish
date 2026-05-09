@@ -871,9 +871,10 @@ export function advanceToNextStepWithCoords(
   // CRITICAL: CREATE_STACK always requires player interaction (placing tokens via cursorStack)
   // even when mode is null, it should NOT be treated as instant
   if (!nextStep.mode && nextStep.action !== 'CREATE_STACK') {
-    // CRITICAL: Clear targetingMode BEFORE executing instant step
+    // CRITICAL: Clear targetingMode AND abilityMode BEFORE executing instant step
     // This fixes Overwatch Option 2 where CREATE_STACK sets targetingMode,
     // but the next step (GLOBAL_AUTO_APPLY) is instant and doesn't need targeting
+    // Without clearing abilityMode, visual highlights on cards would persist
     if (props.clearTargetingMode) {
       console.log('[advanceToNextStepWithCoords] Clearing targetingMode before instant step:', {
         stepIndex: nextStepIndex,
@@ -881,6 +882,10 @@ export function advanceToNextStepWithCoords(
       })
       props.clearTargetingMode()
     }
+    // CRITICAL: Also clear abilityMode to remove visual highlights
+    // The abilityMode remains set during AUTO_STEPS, but visual effects should be cleared
+    // for instant steps that don't require targeting
+    setAbilityMode(null)
 
     // Execute instant step directly
     const ownerId = sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0

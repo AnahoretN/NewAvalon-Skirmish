@@ -396,10 +396,16 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     }
 
     // CRITICAL: Prevent race condition where old targetingMode updates arrive after clear
-    // If targetingMode was recently cleared locally, ignore remote updates
+    // If targetingMode was recently cleared locally, ignore BOTH remote AND local updates
+    // This fixes Overwatch Option 2 where targetingMode is cleared for instant AUTO_STEPS
+    // but then re-set immediately due to cursorStack still existing
     const currentTargetingMode = currentGameState.targetingMode
-    if (!currentTargetingMode && targetingModeClearRef.current > 0 && !isLocal) {
-      console.log('[setTargetingMode] Targeting mode recently cleared, ignoring remote update')
+    const timeSinceClear = Date.now() - targetingModeClearRef.current
+    if (!currentTargetingMode && targetingModeClearRef.current > 0 && timeSinceClear < 500) {
+      console.log('[setTargetingMode] Targeting mode recently cleared, ignoring update:', {
+        timeSinceClear,
+        isLocal,
+      })
       return
     }
 
