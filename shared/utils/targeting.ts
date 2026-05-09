@@ -6,6 +6,7 @@
 import type { GameState, Card, CommandContext, AbilityAction } from '../../client/types.js'
 import { checkAdj } from '../abilities/abilityUtils.js'
 import { hasStatus } from '../abilities/index.js'
+import { calculateActiveBounds } from './lineSelection.js'
 
 /**
  * Get token targeting rules from countersDatabase
@@ -1193,12 +1194,17 @@ export const calculateValidTargets = (
   else if (mode === 'ZIUS_LINE_SELECT' && sourceCoords) {
     const { row: sourceRow, col: sourceCol } = sourceCoords
 
+    // CRITICAL: Use explicit active bounds calculation to ensure visual effects match active grid area
+    const activeBounds = calculateActiveBounds(gridSize, activeSize)
+    const activeMinBound = activeBounds.minBound
+    const activeMaxBound = activeBounds.maxBound
+
     // Add all cells in same row (within active bounds)
-    for (let c = minBound; c <= maxBound; c++) {
+    for (let c = activeMinBound; c <= activeMaxBound; c++) {
       targets.push({ row: sourceRow, col: c })
     }
     // Add all cells in same col (within active bounds)
-    for (let r = minBound; r <= maxBound; r++) {
+    for (let r = activeMinBound; r <= activeMaxBound; r++) {
       targets.push({ row: r, col: sourceCol })
     }
   }
@@ -1206,12 +1212,18 @@ export const calculateValidTargets = (
   else if (mode === 'IP_AGENT_THREAT_SCORING' && sourceCoords) {
     const { row: sourceRow, col: sourceCol } = sourceCoords
 
+    // CRITICAL: Use explicit active bounds calculation to ensure visual effects match active grid area
+    // This fixes a bug where vertical line selection was missing 1 cell due to incorrect bounds
+    const activeBounds = calculateActiveBounds(gridSize, activeSize)
+    const activeMinBound = activeBounds.minBound
+    const activeMaxBound = activeBounds.maxBound
+
     // Add all cells in same row (within active bounds)
-    for (let c = minBound; c <= maxBound; c++) {
+    for (let c = activeMinBound; c <= activeMaxBound; c++) {
       targets.push({ row: sourceRow, col: c })
     }
     // Add all cells in same col (within active bounds)
-    for (let r = minBound; r <= maxBound; r++) {
+    for (let r = activeMinBound; r <= activeMaxBound; r++) {
       targets.push({ row: r, col: sourceCol })
     }
   }
