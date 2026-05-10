@@ -8,7 +8,15 @@
 import { loadPeerJS } from './PeerJSLoader'
 import { getPeerJSOptions, tryNextPeerJSServer } from './rtcConfig'
 import type { PersonalizedState, SimpleGuestConfig, P2PMessage } from './SimpleP2PTypes'
-import { logger } from '../utils/logger'
+import {
+  logGuestConnecting,
+  logGuestConnected,
+  logGuestDisconnected,
+  logGuestReconnecting,
+  logGuestReconnected,
+  logGuestSignallingDisconnected,
+  logGuestError
+} from './P2PLogger'
 
 /**
  * SimpleGuest - simplified guest
@@ -44,10 +52,7 @@ export class SimpleGuest {
   async connect(hostPeerId: string): Promise<void> {
     this.hostPeerId = hostPeerId
 
-    logger.info('[SimpleGuest] Starting connection to host:', {
-      hostPeerId,
-      localPlayerId: this.localPlayerId
-    })
+    logGuestConnecting(hostPeerId)
 
     const { Peer } = await loadPeerJS()
 
@@ -57,7 +62,6 @@ export class SimpleGuest {
       this.resolveJoin = () => {
         if (!joinResolved) {
           joinResolved = true
-          logger.info('[SimpleGuest] Join completed successfully, playerId:', this.localPlayerId)
           resolve()
         }
       }
@@ -65,7 +69,6 @@ export class SimpleGuest {
       this.rejectJoin = (err: any) => {
         if (!joinResolved) {
           joinResolved = true
-          logger.error('[SimpleGuest] Join rejected:', err)
           reject(err)
         }
       }
@@ -74,14 +77,12 @@ export class SimpleGuest {
         this.peer = new Peer(getPeerJSOptions())
 
         this.peer.on('open', (myPeerId: string) => {
-          logger.info('[SimpleGuest] Local peer opened:', myPeerId)
 
           // Connect to host
           this.connectToHost(hostPeerId)
         })
 
         this.peer.on('connection', (conn: any) => {
-          logger.info('[SimpleGuest] Incoming connection from:', conn.peer)
           // Use first incoming connection as host
           if (!this.hostConnection) {
             this.hostConnection = conn
@@ -93,10 +94,10 @@ export class SimpleGuest {
           // Check if this is a connection error that might be fixed by trying a different server
           if (err?.type === 'peer-unavailable' || err?.type === 'network' || err?.message?.includes('WebSocket')) {
             const nextServerIndex = tryNextPeerJSServer()
-            console.warn('[SimpleGuest] Connection error, trying server', nextServerIndex)
+            logGuestError(`Ошибка подключения к хосту`, err)
             this.rejectJoin?.(new Error(`PeerJS connection failed. Try again or use WebSocket mode. (Server ${nextServerIndex})`))
           } else {
-            logger.error('[SimpleGuest] Peer error:', err)
+            logGuestError(`Ошибка PeerJS`, err)
             this.rejectJoin?.(err)
           }
         })
@@ -105,13 +106,11 @@ export class SimpleGuest {
           // Only attempt reconnection if this was not intentional
           // If we intentionally disconnected (disconnectedFromSignalling=true), don't reconnect
           if (this.disconnectedFromSignalling) {
-            logger.info('[SimpleGuest] Disconnected from signalling (intentional), skipping reconnect')
             return
           }
 
           // Attempt to reconnect to signalling server
           // Existing P2P connection to host should continue working
-          logger.info('[SimpleGuest] Disconnected from PeerJS signalling server, attempting to reconnect...')
           setTimeout(() => {
             if (this.peer && !this.disconnectedFromSignalling) {
               this.peer.reconnect()
@@ -122,13 +121,11 @@ export class SimpleGuest {
         // Connection timeout
         setTimeout(() => {
           if (!joinResolved) {
-            logger.error('[SimpleGuest] Connection timeout after 15s')
             this.rejectJoin?.(new Error('Connection timeout'))
           }
         }, 15000) // 15 seconds
 
       } catch (e) {
-        logger.error('[SimpleGuest] Exception during peer creation:', e)
         this.rejectJoin?.(e)
       }
     })
@@ -140,7 +137,6 @@ export class SimpleGuest {
   private connectToHost(hostPeerId: string): void {
     if (!this.peer) {return}
 
-    logger.info('[SimpleGuest] Connecting to host:', hostPeerId)
 
     const conn = this.peer.connect(hostPeerId, {
       reliable: true
@@ -155,15 +151,12 @@ export class SimpleGuest {
    */
   private setupHostConnection(conn: any): void {
     conn.on('open', () => {
-      logger.info('[SimpleGuest] Connection to host opened, sending JOIN_REQUEST')
-
       // Save host peer ID for auto-reconnect
       localStorage.setItem('webrtc_host_peer_id', this.hostPeerId || '')
 
       const playerName = localStorage.getItem('player_name') || `Player ${this.localPlayerId}`
       const playerToken = localStorage.getItem('player_token')
 
-      logger.info('[SimpleGuest] Sending JOIN_REQUEST:', { playerName, hasToken: !!playerToken })
 
       // Send join request
       conn.send({
@@ -176,17 +169,16 @@ export class SimpleGuest {
     })
 
     conn.on('data', (data: any) => {
-      logger.info('[SimpleGuest] Received message from host:', data.type)
       this.handleMessage(data)
     })
 
     conn.on('close', () => {
-      logger.warn('[SimpleGuest] Host connection closed')
+      logGuestDisconnected()
       this.config.onDisconnected?.()
     })
 
     conn.on('error', (err: any) => {
-      logger.error('[SimpleGuest] Connection error:', err)
+      logGuestError(`Ошибка соединения с хостом`, err)
       this.config.onError?.(err?.message || 'Connection error')
       this.rejectJoin?.(err)
     })
@@ -221,7 +213,6 @@ export class SimpleGuest {
     } else if (data.type === 'HOST_ENDED_GAME') {
       this.handleHostEndedGame()
     } else {
-      logger.warn('[SimpleGuest] Unknown message type:', data.type)
     }
   }
 
@@ -234,7 +225,9 @@ export class SimpleGuest {
     const state = data.state
     const version = data.version
 
-    logger.info('[SimpleGuest] Join accepted - playerId:', playerId, 'version:', version, 'players count:', state?.players?.length)
+    // Log with correct player ID from host
+    const playerName = state.players.find((p: any) => p.id === playerId)?.name || 'Guest'
+    logGuestConnected(this.hostPeerId || '', playerId, playerName)
 
     // Update local player ID
     this.localPlayerId = playerId
@@ -248,7 +241,6 @@ export class SimpleGuest {
       const myPlayer = state.players.find((p: any) => p.id === playerId)
       if (myPlayer?.playerToken) {
         localStorage.setItem('player_token', myPlayer.playerToken)
-        logger.info('[SimpleGuest] Stored player token for playerId:', playerId)
       }
 
       // Notify about state update
@@ -259,7 +251,6 @@ export class SimpleGuest {
 
     // Resolve join promise
     if (this.resolveJoin) {
-      logger.info('[SimpleGuest] Resolving join promise')
       this.resolveJoin()
       this.resolveJoin = null
       this.rejectJoin = null
@@ -272,9 +263,8 @@ export class SimpleGuest {
       try {
         this.peer.disconnect() // Disconnects from signalling server but keeps P2P connections
         this.disconnectedFromSignalling = true
-        logger.info('[SimpleGuest] Disconnected from signalling server (P2P connection active)')
+        logGuestSignallingDisconnected()
       } catch (e) {
-        logger.warn('[SimpleGuest] Failed to disconnect from signalling server:', e)
       }
     }
   }
@@ -285,7 +275,6 @@ export class SimpleGuest {
   private handleState(data: any): void {
     // Version control - only apply new states
     if (data.version <= this.lastVersion) {
-      logger.debug('[SimpleGuest] Ignoring old state:', data.version, '<=', this.lastVersion)
       return
     }
 
@@ -299,12 +288,8 @@ export class SimpleGuest {
       .map((p: any) => `Player${p.id}:${p.announcedCard.name}`)
       .join(', ')
     if (announcedCards) {
-      logger.info('[SimpleGuest] Received state version:', data.version, 'with announcedCards: [', announcedCards, ']')
     }
 
-    logger.info('[SimpleGuest] State updated, version:', data.version,
-      'phase:', this.state?.currentPhase,
-      'activePlayer:', this.state?.activePlayerId)
 
     // Notify
     if (this.config.onStateUpdate && this.state) {
@@ -340,7 +325,6 @@ export class SimpleGuest {
    */
   sendAction(action: string, data?: any): void {
     if (!this.hostConnection) {
-      logger.warn('[SimpleGuest] No host connection')
       return
     }
 
@@ -352,12 +336,10 @@ export class SimpleGuest {
       timestamp: Date.now()
     }
 
-    logger.info('[SimpleGuest] Sending action:', action)
 
     try {
       this.hostConnection.send(message)
     } catch (e) {
-      logger.error('[SimpleGuest] Failed to send action:', e)
     }
   }
 
@@ -371,7 +353,7 @@ export class SimpleGuest {
       throw new Error('No host peer ID')
     }
 
-    logger.info('[SimpleGuest] Reconnecting to:', hostId)
+    logGuestReconnecting(hostId)
 
     // Close old P2P connection to host
     if (this.hostConnection) {
@@ -382,13 +364,11 @@ export class SimpleGuest {
     // If we disconnected from signalling server, reconnect first
     if (this.disconnectedFromSignalling && this.peer) {
       try {
-        logger.info('[SimpleGuest] Reconnecting to signalling server...')
         this.peer.reconnect()
         this.disconnectedFromSignalling = false
         // Wait a bit for signalling connection to establish
         await new Promise(resolve => setTimeout(resolve, 500))
       } catch (e) {
-        logger.warn('[SimpleGuest] Failed to reconnect to signalling, creating new peer:', e)
         // If reconnect fails, create new peer
         this.peer.destroy()
         this.peer = null
@@ -449,15 +429,6 @@ export class SimpleGuest {
    */
   private handleTargetingMode(data: any): void {
     const { targetingMode } = data.data
-    if (targetingMode.handTargets && targetingMode.handTargets.length > 0) {
-      console.log('[DISCARD_FROM_HAND] Guest received targetingMode with handTargets:', {
-        playerId: targetingMode.playerId,
-        actionMode: targetingMode.action?.mode,
-        actionType: targetingMode.action?.payload?.actionType,
-        handTargetsCount: targetingMode.handTargets.length,
-        handTargets: targetingMode.handTargets,
-      })
-    }
     this.config.onTargetingMode?.(targetingMode)
   }
 
@@ -505,7 +476,6 @@ export class SimpleGuest {
    */
   private handleReconnectRejected(data: any): void {
     const { reason } = data
-    logger.warn('[SimpleGuest] Reconnect rejected:', reason)
 
     // Clear saved credentials to prevent further auto-reconnect attempts
     localStorage.removeItem('webrtc_host_peer_id')
@@ -534,13 +504,11 @@ export class SimpleGuest {
       throw new Error('No saved host peer ID')
     }
 
-    logger.info('[SimpleGuest] Auto-reconnecting to saved host:', hostPeerId)
-
     try {
       await this.reconnect(hostPeerId)
+      logGuestReconnected()
       return true
     } catch (e) {
-      logger.error('[SimpleGuest] Auto-reconnect failed:', e)
       return false
     }
   }
@@ -549,7 +517,6 @@ export class SimpleGuest {
    * Handle host ended game - host has exited the game
    */
   private handleHostEndedGame(): void {
-    logger.info('[SimpleGuest] Host ended the game')
 
     // Clear saved credentials to prevent auto-reconnect
     localStorage.removeItem('webrtc_host_peer_id')

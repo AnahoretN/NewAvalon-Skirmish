@@ -81,7 +81,6 @@ export const CounterSelectionModal: React.FC<CounterSelectionModalProps> = ({ is
   }, 0)
 
   const handleConfirmClick = () => {
-    console.log('[CounterSelectionModal] handleConfirmClick called')
     // Calculate the difference to pass back as "removed counts"
     const removedCounts: Record<string, number> = {}
     types.forEach(type => {
@@ -90,7 +89,6 @@ export const CounterSelectionModal: React.FC<CounterSelectionModalProps> = ({ is
         removedCounts[type] = diff
       }
     })
-    console.log('[CounterSelectionModal] Calling onConfirm with:', { removedCounts, data })
     onConfirm(removedCounts, data)
   }
 

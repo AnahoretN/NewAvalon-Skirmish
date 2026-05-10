@@ -239,6 +239,8 @@ export const sr: TranslationResource = {
     gridSize: 'Veličina polja',
     autoAbilities: 'Auto-sposobnosti',
     gameMode: 'Režim igre',
+    strictRules: 'Stroga pravila',
+    strictRulesTooltip: 'Stroga pravila: Uključi efekat kašnjenja (karte u ruci postaju neiskoristive nakon igranja na ploču)',
     '2v2': '2v2',
     '3v1': '3v1',
     reconnect: 'Poveži ponovo',

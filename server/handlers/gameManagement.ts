@@ -987,6 +987,8 @@ export function handleResetGame(ws: any, data: any) {
         isDisconnected: false,
         boardHistory: [],
         autoDrawEnabled: p.autoDrawEnabled !== false,
+        hasLateness: false,
+        clearLatenessOnNextPlay: false,
         hand: [],
         deck: createDeck(deckType, p.id, p.name),
         discard: [],

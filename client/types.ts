@@ -131,6 +131,7 @@ export interface Player {
   deckSize?: number; // Deck size (used when deck array is optimized out)
   discardSize?: number; // Discard size (used when discard array is optimized out)
   customDeckName?: string; // Name of the custom deck if selected (for display in dropdown)
+  hasLateness?: boolean; // True if player's non-command cards in hand are affected by lateness (when they have a new LastPlayed card on board)
 }
 
 /**
@@ -249,6 +250,7 @@ export interface GameState {
   preserveDeployAbilities: boolean; // If true, deploy abilities remain available after auto-transition to Main
   autoAbilitiesEnabled: boolean; // Server-side flag for auto-abilities
   autoDrawEnabled: boolean; // Server-side flag for auto-draw
+  strictRulesEnabled: boolean; // If true, lateness effect is enabled (non-command cards in hand become unplayable after playing a card to board)
 
   // Round Logic
   currentRound: number; // 1, 2, or 3
@@ -300,6 +302,7 @@ export interface DragItem {
   count?: number; // For counters: how many are being dragged/applied
   bypassOwnershipCheck?: boolean; // If true, allows moving cards owned by others (e.g. Destroy effects)
   isManual?: boolean; // True if the drag was initiated manually by the user (vs an ability effect)
+  clearLatenessOnNextPlay?: boolean; // If true, the next played card will clear hasLateness instead of setting it (for Quick Response Team option 1)
 }
 
 /**
@@ -398,6 +401,7 @@ export interface CommandContext {
     sourceOwnerId?: number; // Owner of the ability source (e.g., Centurion's owner for BUFF_LINES_FROM_CONTEXT)
     selectedHandCard?: { playerId: number, cardIndex: number }; // For Quick Response Team
     pendingCommandCard?: { sourceCoords: { row: number; col: number }; isDeployAbility?: boolean; readyStatusToRemove?: string }; // For Quick Response Team - marks command as used when play completes
+    clearLatenessOnNextPlay?: boolean; // When true, the next card played from hand will clear hasLateness instead of setting it (for Quick Response Team option 1)
     lastPlacedToken?: {
         boardCoords: { row: number; col: number };
         cardId: string;

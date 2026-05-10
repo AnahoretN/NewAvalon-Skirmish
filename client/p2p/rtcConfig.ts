@@ -20,6 +20,8 @@ export interface CustomSignalingServer {
   name?: string
 }
 
+import { logHostIceServers } from './P2PLogger'
+
 /**
  * RTC configuration with multiple STUN servers for fallback.
  *
@@ -38,6 +40,9 @@ export const RTC_CONFIG: RTCConfiguration = {
     { urls: ['stun:stun3.l.google.com:19302'] }
   ]
 }
+
+// Log ICE servers once on module load
+logHostIceServers(RTC_CONFIG.iceServers)
 
 /**
  * List of alternative PeerJS signaling servers.
@@ -169,7 +174,6 @@ function getLastServerIndex(): number {
   const allServers = getAllSignalingServers()
   // Reset if index is out of bounds (server list may have changed)
   if (isNaN(index) || index < 0 || index >= allServers.length) {
-    console.warn('[PeerJS] Invalid server index cached, resetting to default')
     localStorage.removeItem('peerjs_server_index')
     return 0
   }
@@ -220,7 +224,6 @@ export function getPeerJSOptions(customPeerId?: string, serverIndex?: number): {
   // This ensures users get the fix automatically
   if (localStorage.getItem('peerjs_server_index') !== null) {
     localStorage.removeItem('peerjs_server_index')
-    console.log('[PeerJS] Migrated to default server configuration')
   }
 
   const options: {
@@ -254,10 +257,9 @@ export function getPeerJSOptions(customPeerId?: string, serverIndex?: number): {
       // Using '/peerjs' explicitly causes '/peerjs/peerjs/id' double path issue
       options.path = url.pathname.replace(/\/$/, '') || '/'
       options.secure = url.protocol === 'https:'
-      console.log('[PeerJS] Using custom server:', options.host, options.port, options.path, options.secure)
       return options
     } catch (e) {
-      console.error('[PeerJS] Invalid custom server URL, using fallback:', e)
+      // Invalid URL, use fallback
     }
   }
 
@@ -299,7 +301,6 @@ export function tryNextPeerJSServer(): number {
   const currentIndex = getLastServerIndex()
   const nextIndex = (currentIndex + 1) % allServers.length
   saveServerIndex(nextIndex)
-  console.log('[PeerJS] Switching to server', nextIndex, 'of', allServers.length)
   return nextIndex
 }
 
@@ -308,5 +309,4 @@ export function tryNextPeerJSServer(): number {
  */
 export function resetPeerJSServer(): void {
   localStorage.removeItem('peerjs_server_index')
-  console.log('[PeerJS] Reset to default server')
 }

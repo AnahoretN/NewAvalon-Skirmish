@@ -193,9 +193,10 @@ function restoreLastPlayedToPreviousCard(
 
   if (historyWithoutRemoved.length === 0) {
     // No previous cards - just update boardHistory and lastPlayedCardId
+    // Also clear hasLateness since LastPlayed card is returning to hand
     const newPlayers = state.players.map(p =>
       p.id === ownerId
-        ? { ...p, boardHistory: historyWithoutRemoved, lastPlayedCardId: null }
+        ? { ...p, boardHistory: historyWithoutRemoved, lastPlayedCardId: null, hasLateness: false }
         : p
     )
     return { ...state, players: newPlayers }
@@ -221,9 +222,10 @@ function restoreLastPlayedToPreviousCard(
 
   if (!foundCardId) {
     // No cards from history are still on board - clear LastPlayed
+    // Also clear hasLateness since LastPlayed card is returning to hand
     const newPlayers = state.players.map(p =>
       p.id === ownerId
-        ? { ...p, boardHistory: historyWithoutRemoved, lastPlayedCardId: null }
+        ? { ...p, boardHistory: historyWithoutRemoved, lastPlayedCardId: null, hasLateness: false }
         : p
     )
     return { ...state, players: newPlayers }
@@ -609,6 +611,10 @@ export function applyAction(
       newState = GameSettingsHandlers.handleSetDummyPlayerCount(newState, data?.count)
       break
 
+    case 'SET_STRICT_RULES':
+      newState = GameSettingsHandlers.handleSetStrictRules(newState, data?.enabled)
+      break
+
     case 'REORDER_CARDS':
       newState = handleReorderCards(newState, playerId, data)
       break
@@ -655,7 +661,7 @@ function canPlayerAct(
   if (!state.isGameStarted) {
     return ['PLAYER_READY', 'CHANGE_PLAYER_NAME', 'CHANGE_PLAYER_COLOR',
             'CHANGE_PLAYER_DECK', 'LOAD_CUSTOM_DECK', 'SET_GAME_MODE', 'SET_GRID_SIZE',
-            'SET_PRIVACY', 'ASSIGN_TEAMS', 'SET_DUMMY_PLAYER_COUNT',
+            'SET_PRIVACY', 'ASSIGN_TEAMS', 'SET_DUMMY_PLAYER_COUNT', 'SET_STRICT_RULES',
             'ANNOUNCE_CARD', 'RESET_GAME'].includes(action)
   }
 
@@ -943,17 +949,23 @@ function handleSetPhase(state: GameState, phaseNumber: number): GameState {
  */
 function executePreparationPhase(state: GameState, activePlayerId: number): GameState {
   let newState = { ...state }
-  const player = newState.players.find(p => p.id === activePlayerId)
+  const playerIndex = newState.players.findIndex(p => p.id === activePlayerId)
 
-  if (!player) {return state}
+  if (playerIndex === -1) {return state}
+  const player = newState.players[playerIndex]
+
+  // Clear lateness effect at the start of player's turn
+  // This allows all cards in hand to be playable again
+  const updatedPlayer = { ...player, hasLateness: false }
+  newState.players[playerIndex] = updatedPlayer
 
   // Auto-draw if enabled and deck has cards
-  if (state.autoDrawEnabled && player.deck && player.deck.length > 0) {
-    const drawnCard = player.deck.shift()
+  if (state.autoDrawEnabled && updatedPlayer.deck && updatedPlayer.deck.length > 0) {
+    const drawnCard = updatedPlayer.deck.shift()
     if (drawnCard) {
-      player.hand.push(drawnCard)
-      player.handSize = player.hand.length
-      player.deckSize = player.deck.length
+      newState.players[playerIndex].hand.push(drawnCard)
+      newState.players[playerIndex].handSize = newState.players[playerIndex].hand.length
+      newState.players[playerIndex].deckSize = newState.players[playerIndex].deck.length
     }
   }
 
@@ -986,7 +998,7 @@ function executePreparationPhase(state: GameState, activePlayerId: number): Game
  * Supports fromDiscard parameter for Lucius's passive (+2 power if exited from Discard)
  */
 function handlePlayCard(state: GameState, playerId: number, data: any): GameState {
-  const { card, cardIndex, boardCoords, faceDown = false, playerId: targetPlayerId, fromDiscard = false } = data || {}
+  const { card, cardIndex, boardCoords, faceDown = false, playerId: targetPlayerId, fromDiscard = false, clearLatenessOnNextPlay = false } = data || {}
   const actualPlayerId = targetPlayerId ?? playerId
   const player = state.players.find(p => p.id === actualPlayerId)
 
@@ -1098,6 +1110,17 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
   const newBoardHistory = isFromHand ? [...player.boardHistory, cardToPlay.id] : player.boardHistory
   const newLastPlayedCardId = isFromHand ? cardToPlay.id : player.lastPlayedCardId
 
+  // Lateness effect: When a non-command card is played from hand to board,
+  // all other non-command cards in that player's hand get lateness effect
+  // Command cards are excluded from triggering lateness
+  // EXCEPTION: clearLatenessOnNextPlay flag (Quick Response Team option 1) clears lateness instead of setting it
+  // EXCEPTION: strictRulesEnabled = false disables lateness effect entirely
+  const isCommandCard = cardToPlay.deck === 'Command' || cardToPlay.types?.includes('Command') || cardToPlay.faction === 'Command'
+  const strictRulesEnabled = state.strictRulesEnabled ?? true // Default to true if undefined
+  const shouldTriggerLateness = isFromHand && !isCommandCard && strictRulesEnabled
+  // When clearLatenessOnNextPlay is true, clear hasLateness instead of setting it
+  const newHasLateness = clearLatenessOnNextPlay ? false : shouldTriggerLateness
+
   // Update player
   const newPlayers = state.players.map(p =>
     p.id === actualPlayerId
@@ -1106,16 +1129,15 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
           hand: newHand,
           handSize: newHandSize,
           boardHistory: newBoardHistory,
-          lastPlayedCardId: newLastPlayedCardId
+          lastPlayedCardId: newLastPlayedCardId,
+          hasLateness: newHasLateness
         }
       : p
   )
 
-  // Check if this is a Command card - Command cards go through announce → discard flow
-  // and should NOT trigger phase switch here (phase switches when command goes to discard)
-  const isCommandCard = cardToPlay.deck === 'Command' || cardToPlay.types?.includes('Command') || cardToPlay.faction === 'Command'
-
   // Switch to Main phase (2) - this should happen before ready status recalculation
+  // Note: isCommandCard was already calculated above (line 1107) for lateness logic
+  // Command cards go through announce → discard flow and should NOT trigger phase switch here
   // CRITICAL: Command cards do NOT switch phase here - they switch when moved to discard
   let newState: GameState = {
     ...state,
@@ -2240,17 +2262,6 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
     ownerId: actualPlayerId  // CRITICAL: Set ownerId so command cards know which player owns them
   }
 
-  // Debug: Log announced card creation for command cards
-  if (announcedCard.deck === 'Command' || announcedCard.types?.includes('Command')) {
-    console.log('[handleAnnounceCard] Created announced command card:', {
-      id: announcedCard.id,
-      baseId: announcedCard.baseId,
-      hasABILITIES: !!(announcedCard as any).ABILITIES,
-      abilitiesCount: (announcedCard as any).ABILITIES?.length || 0,
-      ownerId: announcedCard.ownerId
-    })
-  }
-
   const newPlayers = state.players.map(p => {
     if (p.id === actualPlayerId) {
       return {
@@ -2657,13 +2668,6 @@ function handleDrawCardsBatch(state: GameState, playerId: number, data?: any): G
   const actualCount = count || 1
   const targetId = targetPlayerId ?? playerId
 
-  console.log('[handleDrawCardsBatch] P2P host processing:', {
-    targetId,
-    actualCount,
-    deckSize: state.players.find(p => p.id === targetId)?.deck?.length,
-    timestamp: Date.now()
-  })
-
   const player = state.players.find(p => p.id === targetId)
   if (!player || !player.deck || player.deck.length === 0) {return state}
 
@@ -2677,12 +2681,6 @@ function handleDrawCardsBatch(state: GameState, playerId: number, data?: any): G
       drawnCards.push(card)
     }
   }
-
-  console.log('[handleDrawCardsBatch] Drawing cards:', {
-    cardsToDraw,
-    drawnCardIds: drawnCards.map(c => c.id),
-    newHandSize: player.hand.length + drawnCards.length
-  })
 
   const newDeck = player.deck.slice(cardsToDraw)
   const newHand = [...player.hand, ...drawnCards]
@@ -2841,13 +2839,6 @@ function handleExecuteAbilityChained(state: GameState, playerId: number, data: a
   if (!sourceCoords || !chainedAction) {
     return state
   }
-
-  console.log('Chained action data:', {
-    playerId,
-    sourceCoords,
-    chainedActionType: chainedAction.type,
-    chainedActionMode: chainedAction.mode,
-  })
 
   let newState = state
 
@@ -3066,13 +3057,6 @@ function handleGlobalAutoApply(state: GameState, playerId: number, data: any): G
     }
 
     if (!targetCoords) {
-      console.warn('[handleGlobalAutoApply] Could not find target card for token placement:', {
-        tokenType: payload.tokenType,
-        count: payload.count,
-        contextCardId: payload.contextCardId,
-        _tempContextId: payload._tempContextId,
-        lastMovedCardCoords: payload.lastMovedCardCoords,
-      })
       return state
     }
 
@@ -3161,13 +3145,6 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
   // sourceCard might be the selected unit, not the command card
   const rewardOwnerId = data.originalOwnerId ?? sourceCard.ownerId ?? playerId
 
-  console.log('[handleContextReward] Host processing:', {
-    rewardType,
-    amount,
-    hasCardPower: !!(payload?._cardPower || payload?.contextCardPower),
-    rewardOwnerId,
-  })
-
   // Handle different reward types
   if (rewardType === 'DRAW_MOVED_POWER' || rewardType === 'DRAW_EQUAL_POWER') {
     // Draw cards for the reward owner
@@ -3181,12 +3158,6 @@ function handleContextReward(state: GameState, playerId: number, data: any): Gam
             drawnCards.push(cardDrawn)
           }
         }
-        console.log('[handleContextReward] Drawing cards:', {
-          playerId: p.id,
-          cardsToDraw,
-          drawnCardIds: drawnCards.map(c => c.id),
-          newHandSize: p.hand.length + drawnCards.length
-        })
         return {
           ...p,
           deck: p.deck,
@@ -3290,29 +3261,19 @@ function handleCleanupCommandAction(state: GameState, playerId: number, data: an
   const { cardId } = data || {}
 
   if (!cardId) {
-    console.warn('[handleCleanupCommandAction] No cardId provided')
     return state
   }
 
   // Find the player and their announced card
   const player = state.players.find(p => p.id === playerId)
   if (!player) {
-    console.warn('[handleCleanupCommandAction] Player not found:', playerId)
     return state
   }
 
   const announcedCard = player.announcedCard
   if (!announcedCard) {
-    console.warn('[handleCleanupCommandAction] No announced card for player:', playerId)
     return state
   }
-
-  console.log('[handleCleanupCommandAction] Discarding command card:', {
-    playerId,
-    cardId,
-    announcedCardId: announcedCard.id,
-    announcedCardName: announcedCard.name
-  })
 
   // Move the announced card to discard
   const newPlayers = state.players.map(p => {

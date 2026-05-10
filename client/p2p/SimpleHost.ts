@@ -7,6 +7,16 @@
 
 import { loadPeerJS } from './PeerJSLoader'
 import { getPeerJSOptions, tryNextPeerJSServer } from './rtcConfig'
+import {
+  logHostInitializing,
+  logHostSignallingConnected,
+  logHostSignallingDisconnected,
+  logHostPlayerJoined,
+  logHostPlayerDisconnected,
+  logHostPlayerReconnected,
+  logHostPlayerConvertedToDummy,
+  logHostError
+} from './P2PLogger'
 import type { GameState, AbilityAction, Card } from '../types'
 import type {
   ActionMessage,
@@ -16,7 +26,6 @@ import type {
   PersonalizedPlayer
 } from './SimpleP2PTypes'
 import { applyAction } from './SimpleGameLogic'
-import { logger } from '../utils/logger'
 import { createDeck, createInitialState } from '../hooks/core/gameCreators'
 import { getDecksData } from '../content'
 import type { DeckType } from '../types'
@@ -275,13 +284,6 @@ export class SimpleHost {
     // Save host token
     localStorage.setItem('player_token', hostToken)
 
-    logger.info('[SimpleHost.initializeLocal] Game initialized:', {
-      gameId,
-      gameMode,
-      dummyPlayerCount: dummyCount,
-      totalPlayers: newPlayers.length,
-      playerIds: newPlayers.map(p => ({ id: p.id, name: p.name, isDummy: p.isDummy }))
-    })
 
     // Notify about initial state
     this.notifyStateUpdate()
@@ -302,12 +304,15 @@ export class SimpleHost {
       this.initializeLocal()
     }
 
+    logHostInitializing(customPeerId)
+
     return new Promise((resolve, reject) => {
       try {
-        this.peer = new Peer(getPeerJSOptions(customPeerId))
+        const options = getPeerJSOptions(customPeerId)
+        this.peer = new Peer(options)
 
         this.peer.on('open', (_peerId: string) => {
-          logger.info('[SimpleHost] Connected to signalling server, peerId:', _peerId)
+          logHostSignallingConnected(_peerId, options)
           resolve(_peerId)
         })
 
@@ -319,10 +324,11 @@ export class SimpleHost {
           // Check if this is a connection error that might be fixed by trying a different server
           if (err?.type === 'peer-unavailable' || err?.type === 'network' || err?.message?.includes('WebSocket')) {
             const nextServerIndex = tryNextPeerJSServer()
-            console.warn('[SimpleHost] Connection error, trying server', nextServerIndex)
+            logHostError(`Ошибка подключения к сигнальному серверу`, err)
             // Note: The caller will need to recreate the SimpleHost with new options
             reject(new Error(`PeerJS connection failed. Try again or use WebSocket mode. (Server ${nextServerIndex})`))
           } else {
+            logHostError(`Ошибка PeerJS`, err)
             reject(err)
           }
         })
@@ -330,13 +336,11 @@ export class SimpleHost {
         this.peer.on('disconnected', () => {
           // Only attempt reconnection if this was not intentional
           if (this.disconnectedFromSignalling) {
-            logger.info('[SimpleHost] Disconnected from signalling (intentional), skipping reconnect')
             return
           }
 
           // Attempt to reconnect to signalling server
           // Existing P2P connections continue to work, but we need signalling for new connections
-          logger.info('[SimpleHost] Disconnected from PeerJS signalling server, attempting to reconnect...')
           setTimeout(() => {
             if (this.peer && !this.disconnectedFromSignalling) {
               this.peer.reconnect()
@@ -416,8 +420,7 @@ export class SimpleHost {
       // Host-only actions: reject from guests
       if (action === 'SET_DUMMY_PLAYER_COUNT' || action === 'SET_GAME_MODE' ||
           action === 'SET_GRID_SIZE' || action === 'SET_PRIVACY' ||
-          action === 'ASSIGN_TEAMS') {
-        logger.warn('[SimpleHost] Rejected host-only action from guest:', { action, playerId })
+          action === 'ASSIGN_TEAMS' || action === 'SET_STRICT_RULES') {
         return
       }
     }
@@ -435,14 +438,6 @@ export class SimpleHost {
       // This ensures PlayerPanel receives the targetingMode for highlighting hand cards
       // SANITIZE: Remove non-serializable properties (functions) before storing
       const sanitizedTargetingMode = sanitizeTargetingModeForP2P(data)
-      if (sanitizedTargetingMode.handTargets && sanitizedTargetingMode.handTargets.length > 0) {
-        console.log('[DISCARD_FROM_HAND] Host received TARGETING_MODE with handTargets:', {
-          playerId: sanitizedTargetingMode.playerId,
-          actionType: sanitizedTargetingMode.action?.payload?.actionType,
-          handTargetsCount: sanitizedTargetingMode.handTargets.length,
-          handTargets: sanitizedTargetingMode.handTargets,
-        })
-      }
       this.state = {
         ...this.state,
         targetingMode: sanitizedTargetingMode
@@ -468,19 +463,14 @@ export class SimpleHost {
 
     // Handle RESTORE_GAME_STATE - restore game state to a previous point (host only, for rewind)
     if (action === 'RESTORE_GAME_STATE') {
-      console.log('[SimpleHost] RESTORE_GAME_STATE received:', { fromPeerId, data })
       if (fromPeerId !== 'host') {
-        logger.warn('[SimpleHost] RESTORE_GAME_STATE is host-only action')
         return
       }
       const restoredState = data.gameState
-      console.log('[SimpleHost] Restored state:', restoredState)
       if (restoredState) {
         this.state = restoredState
         this.version++
         this.broadcastAll()
-        logger.info('[SimpleHost] Game state restored to log entry:', data.logId)
-        console.log('[SimpleHost] State restored, broadcasting to all players')
       }
       return
     }
@@ -686,7 +676,6 @@ export class SimpleHost {
       if (!oldState.isGameStarted && newState.isGameStarted) {
         const shouldDisconnect = this.config.disconnectFromSignallingOnGameStart !== false  // Default is true
         if (shouldDisconnect) {
-          logger.info('[SimpleHost] Game started, disconnecting from signalling server...')
           this.disconnectFromSignalling()
         }
       }
@@ -710,19 +699,11 @@ export class SimpleHost {
   private handleJoinRequest(data: any, fromPeerId: string): void {
     const { playerName, playerToken } = data
 
-    logger.info('[SimpleHost] JOIN_REQUEST received:', {
-      fromPeerId,
-      playerName,
-      hasToken: !!playerToken,
-      currentPlayers: this.state.players.length,
-      playerIdCounter: this.playerIdCounter
-    })
 
     // Check for reconnection
     if (playerToken) {
       const existingPlayerId = this.findPlayerByToken(playerToken)
       if (existingPlayerId) {
-        logger.info('[SimpleHost] Reconnecting existing player:', existingPlayerId)
         // Cancel reconnection timer if exists
         const timer = this.reconnectTimers.get(existingPlayerId)
         if (timer) {
@@ -767,6 +748,11 @@ export class SimpleHost {
         // Broadcast updated state to all players
         this.broadcastAll()
 
+        const player = this.state.players.find(p => p.id === existingPlayerId)
+        if (player) {
+          logHostPlayerReconnected(existingPlayerId, player.name)
+        }
+
         return
       }
     }
@@ -774,11 +760,6 @@ export class SimpleHost {
     // New player
     const newPlayerId = this.playerIdCounter++
 
-    logger.info('[SimpleHost] Creating new player:', {
-      newPlayerId,
-      playerName,
-      fromPeerId
-    })
 
     // Generate token if not provided
     const finalToken = playerToken || this.generatePlayerToken()
@@ -823,12 +804,6 @@ export class SimpleHost {
     // Create personalized state
     const personalizedState = this.personalizeForPlayer(newPlayerId)
 
-    logger.info('[SimpleHost] Sending JOIN_ACCEPT to new player:', {
-      newPlayerId,
-      fromPeerId,
-      totalPlayers: this.state.players.length,
-      version: this.version
-    })
 
     // Send confirmation
     const conn = this.connections.get(fromPeerId)
@@ -844,6 +819,8 @@ export class SimpleHost {
 
     // Notify host about state change
     this.notifyStateUpdate()
+
+    logHostPlayerJoined(newPlayerId, playerName || `Player ${newPlayerId}`, fromPeerId)
 
     this.config.onPlayerJoin?.(newPlayerId)
   }
@@ -948,6 +925,11 @@ export class SimpleHost {
 
       this.reconnectTimers.set(playerId, timer)
 
+      const disconnectedPlayer = this.state.players.find(p => p.id === playerId)
+      if (disconnectedPlayer) {
+        logHostPlayerDisconnected(playerId, disconnectedPlayer.name)
+      }
+
       this.config.onPlayerLeave?.(playerId)
     }
   }
@@ -982,6 +964,11 @@ export class SimpleHost {
     // Increment version and broadcast
     this.version++
     this.broadcastAll()
+
+    const dummyPlayer = this.state.players.find(p => p.id === playerId)
+    if (dummyPlayer) {
+      logHostPlayerConvertedToDummy(playerId, dummyPlayer.name)
+    }
 
     this.config.onPlayerLeave?.(playerId)
   }
@@ -1162,8 +1149,6 @@ export class SimpleHost {
     if (scoreEvents.length > 0) {
       const calculatedScore = scoreEvents.reduce((sum, e) => sum + parseInt(e.text), 0)
 
-      console.log('[SimpleHost] broadcastFloatingTextForScoring: scoreEvents:', scoreEvents)
-
       const message = {
         type: 'FLOATING_TEXT',
         data: { batch: scoreEvents.map((item, i) => ({ ...item, timestamp: Date.now() + i })) }
@@ -1179,10 +1164,7 @@ export class SimpleHost {
       })
 
       // Notify host locally
-      console.log('[SimpleHost] Calling onFloatingTextBatch callback, exists:', !!this.config.onFloatingTextBatch)
       this.config.onFloatingTextBatch?.(scoreEvents)
-    } else {
-      console.log('[SimpleHost] broadcastFloatingTextForScoring: NO scoreEvents!')
     }
   }
 
@@ -1254,6 +1236,7 @@ export class SimpleHost {
             announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
             boardHistory: player.boardHistory,
             lastPlayedCardId: player.lastPlayedCardId || null,
+            hasLateness: player.hasLateness || false,
             hasMulliganed: player.hasMulliganed,
             mulliganAttempts: player.mulliganAttempts,
             disconnectTimestamp: player.disconnectTimestamp,
@@ -1321,6 +1304,7 @@ export class SimpleHost {
             discardSize: player.discard?.length || 0,
             announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
             lastPlayedCardId: player.lastPlayedCardId || null,
+            hasLateness: player.hasLateness || false,
             hasMulliganed: player.hasMulliganed,
             mulliganAttempts: player.mulliganAttempts,
             disconnectTimestamp: player.disconnectTimestamp,
@@ -1390,6 +1374,7 @@ export class SimpleHost {
           // Make deep copy of announcedCard to avoid reference issues
           announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
           lastPlayedCardId: player.lastPlayedCardId || null,
+          hasLateness: player.hasLateness || false,
           hasMulliganed: player.hasMulliganed,
           mulliganAttempts: player.mulliganAttempts,
           disconnectTimestamp: player.disconnectTimestamp,
@@ -1439,7 +1424,6 @@ export class SimpleHost {
     if (this.config.onStateUpdate) {
       // For host - local player is always 1
       const hostState = this.personalizeForPlayer(1)
-
       this.config.onStateUpdate(hostState)
     }
   }
@@ -1448,6 +1432,7 @@ export class SimpleHost {
    * Execute action from host
    */
   hostAction(action: string, data?: any): void {
+    // Debug log for PLAY_CARD action
     // Host is always player 1
     this.handleAction({
       type: 'ACTION',
@@ -1570,11 +1555,10 @@ export class SimpleHost {
       try {
         this.peer.disconnect() // Disconnects from signalling server but keeps P2P connections
         this.disconnectedFromSignalling = true
-        logger.info('[SimpleHost] Disconnected from signalling server (P2P connections active)')
+        logHostSignallingDisconnected()
         // Notify app if callback provided
         this.config.onSignallingDisconnected?.()
       } catch (e) {
-        logger.warn('[SimpleHost] Failed to disconnect from signalling server:', e)
       }
     }
   }
@@ -1588,9 +1572,7 @@ export class SimpleHost {
       try {
         this.peer.reconnect()
         this.disconnectedFromSignalling = false
-        logger.info('[SimpleHost] Reconnected to signalling server')
       } catch (e) {
-        logger.warn('[SimpleHost] Failed to reconnect to signalling server:', e)
       }
     }
   }
@@ -1621,11 +1603,9 @@ export function createHostFromSavedSession(
   // Check if session is too old (more than 1 hour)
   const maxAge = 60 * 60 * 1000 // 1 hour
   if (Date.now() - savedData.timestamp > maxAge) {
-    logger.warn('[createHostFromSavedSession] Saved session is too old, creating fresh host')
     return new SimpleHost(createInitialState(), config)
   }
 
-  logger.info('[createHostFromSavedSession] Restoring host with peerId:', savedData.peerId)
   return new SimpleHost(savedData.state, config)
 }
 

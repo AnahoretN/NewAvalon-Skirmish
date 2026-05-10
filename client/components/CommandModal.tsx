@@ -25,14 +25,6 @@ export const CommandModal: React.FC<CommandModalProps> = ({ isOpen, card, player
   const commandOptions = React.useMemo(() => {
     const baseId = displayCard.baseId || displayCard.id.split('_')[1] || displayCard.id
     const options = getCommandOptions(baseId)
-    // Debug logging
-    console.log('[CommandModal] Fetching options:', {
-      baseId: baseId,
-      displayCardBaseId: displayCard.baseId,
-      displayCardId: displayCard.id,
-      optionsCount: options.length,
-      options: options
-    })
     return options
   }, [displayCard.baseId, displayCard.id])
 

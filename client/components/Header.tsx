@@ -45,12 +45,10 @@ interface HeaderProps {
   onPrevPhase: () => void;
   activePlayerId: number | null;
   playerColorMap: Map<number, string>;
-  isAutoAbilitiesEnabled: boolean;
-  onToggleAutoAbilities: (enabled: boolean) => void;
-  isAutoDrawEnabled: boolean;
-  onToggleAutoDraw: (enabled: boolean) => void;
   hideDummyCards: boolean;
   onToggleHideDummyCards: (enabled: boolean) => void;
+  strictRulesEnabled: boolean;
+  onStrictRulesToggle: (enabled: boolean) => void;
   currentRound?: number;
   turnNumber?: number;
   isScoringStep?: boolean;
@@ -118,7 +116,7 @@ const RoundTracker = memo<{
   onMouseLeave: () => void;
   showTooltip: boolean;
   isGameStarted: boolean;
-  t: (key: keyof TranslationResource['ui']) => string;
+  t: (key: keyof TranslationResource['ui'] | string) => string;
   }>(({ currentRound, turnNumber, onMouseEnter, onMouseLeave, showTooltip, isGameStarted, t }) => {
     const threshold = useMemo(() => (currentRound * 10) + 10, [currentRound])
 
@@ -164,10 +162,6 @@ const GameSettingsMenu = memo<{
   isOpen: boolean;
   onClose: () => void;
   anchorEl: HTMLElement | null;
-  isAutoAbilitiesEnabled: boolean;
-  onToggleAutoAbilities: (enabled: boolean) => void;
-  isAutoDrawEnabled: boolean;
-  onToggleAutoDraw: (enabled: boolean) => void;
   dummyPlayerCount: number;
   onDummyPlayerCountChange: (count: number) => void;
   realPlayerCount: number;
@@ -179,15 +173,13 @@ const GameSettingsMenu = memo<{
   isHost: boolean;
   hideDummyCards: boolean;
   onToggleHideDummyCards: (enabled: boolean) => void;
-  t: (key: keyof TranslationResource['ui']) => string;
+  strictRulesEnabled: boolean;
+  onStrictRulesToggle: (enabled: boolean) => void;
+  t: (key: keyof TranslationResource['ui'] | string) => string;
 }>(({
   isOpen,
   onClose,
   anchorEl,
-  isAutoAbilitiesEnabled,
-  onToggleAutoAbilities,
-  isAutoDrawEnabled,
-  onToggleAutoDraw,
   dummyPlayerCount,
   onDummyPlayerCountChange,
   realPlayerCount,
@@ -199,6 +191,8 @@ const GameSettingsMenu = memo<{
   isHost,
   hideDummyCards,
   onToggleHideDummyCards,
+  strictRulesEnabled,
+  onStrictRulesToggle,
   t,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -228,36 +222,28 @@ const GameSettingsMenu = memo<{
       className="fixed z-[100] bg-gray-800 rounded-vu-2 shadow-xl border border-gray-700 p-vu-md min-w-vu-settings"
       style={{ top: `calc(${rect.bottom}px + var(--vu-gap-min))`, left: `${rect.left}px` }}
     >
-      {/* Auto-Abilities */}
-      <div className="flex items-center justify-between" style={{ marginBottom: `${getVuSize(8)}px` }}>
-        <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('autoAbilities')}</span>
-        <button
-          onClick={() => onToggleAutoAbilities(!isAutoAbilitiesEnabled)}
-          disabled={!isHost}
-          className={`px-vu-md rounded font-bold transition-colors ${
-            isAutoAbilitiesEnabled
-              ? 'bg-green-600 text-white'
-              : 'bg-gray-600 text-gray-400'
-          } ${!isHost ? 'opacity-50 cursor-not-allowed' : ''}`}
-          style={{ fontSize: `${getVuSize(13)}px`, height: `${getVuSize(29)}px` }}
-        >
-          {isAutoAbilitiesEnabled ? t('on') : t('off')}
-        </button>
-      </div>
+      {/* Auto-Abilities and Auto-Draw are always enabled, hidden from UI */}
 
-      {/* Auto-Draw */}
+      {/* Strict Rules */}
       <div className="flex items-center justify-between" style={{ marginBottom: `${getVuSize(8)}px` }}>
-        <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('autoDraw')}</span>
+        <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('strictRules')}</span>
         <button
-          onClick={() => onToggleAutoDraw(!isAutoDrawEnabled)}
-          className={`px-vu-md rounded font-bold transition-colors ${
-            isAutoDrawEnabled
-              ? 'bg-green-600 text-white'
-              : 'bg-gray-600 text-gray-400'
-          }`}
-          style={{ fontSize: `${getVuSize(13)}px`, height: `${getVuSize(29)}px` }}
+          onClick={() => onStrictRulesToggle(!strictRulesEnabled)}
+          disabled={!isHost || isGameStarted}
+          className={`relative inline-flex items-center rounded-full transition-colors ${
+            strictRulesEnabled ? 'bg-indigo-600' : 'bg-gray-600'
+          } ${!isHost || isGameStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
+          style={{ width: `${getVuSize(44)}px`, height: `${getVuSize(24)}px` }}
+          title={t('strictRulesTooltip')}
         >
-          {isAutoDrawEnabled ? t('on') : t('off')}
+          <span
+            className={`inline-block rounded-full bg-white transition-transform`}
+            style={{
+              width: `${getVuSize(20)}px`,
+              height: `${getVuSize(20)}px`,
+              transform: strictRulesEnabled ? `translateX(${getVuSize(20)}px)` : `translateX(${getVuSize(2)}px)`
+            }}
+          />
         </button>
       </div>
 
@@ -350,6 +336,7 @@ interface InvitePlayerMenuProps {
   isHost: boolean;
   isGameStarted: boolean;
   hostId?: string | null;
+  webrtcEnabled: boolean;
   t: (key: keyof TranslationResource['ui'] | string) => string;
   connectToSignalling?: () => Promise<string>;
   isConnectedToSignalling?: () => boolean;
@@ -365,6 +352,7 @@ function InvitePlayerMenu({
   isHost,
   isGameStarted,
   hostId,
+  webrtcEnabled,
   t,
   connectToSignalling,
   isConnectedToSignalling,
@@ -507,40 +495,30 @@ function InvitePlayerMenu({
         </div>
       </div>
 
-      {/* Privacy Toggle */}
-      <div className="flex items-center justify-between" style={{ marginBottom: `${getVuSize(8)}px` }}>
-        <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('hiddenGame')}</span>
-        <div className={`flex rounded overflow-hidden ${!isHost || isGameStarted ? 'opacity-50' : ''}`} style={{ gap: `${getVuSize(3)}px` }}>
+      {/* Privacy Toggle - hidden in WebRTC mode (games are always private in P2P) */}
+      {!webrtcEnabled && (
+        <div className="flex items-center justify-between" style={{ marginBottom: `${getVuSize(8)}px` }}>
+          <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('hiddenGame')}</span>
           <button
-            onClick={() => !isPrivate && onPrivacyChange(true)}
+            onClick={() => onPrivacyChange(!isPrivate)}
             disabled={!isHost || isGameStarted}
-            className={`px-vu-md flex items-center justify-center transition-colors rounded font-bold ${
-              isPrivate ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-            } ${!isHost || isGameStarted ? 'cursor-not-allowed' : ''}`}
-            title={t('private')}
-            style={{ fontSize: `${getVuSize(13)}px`, height: `${getVuSize(29)}px`, width: `${getVuSize(50)}px` }}
+            className={`relative inline-flex items-center rounded-full transition-colors ${
+              isPrivate ? 'bg-red-600' : 'bg-green-600'
+            } ${!isHost || isGameStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
+            style={{ width: `${getVuSize(44)}px`, height: `${getVuSize(24)}px` }}
+            title={isPrivate ? t('private') : t('public')}
           >
-            <svg style={{ width: `${getVuSize(14)}px`, height: `${getVuSize(14)}px` }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M1 1l22 22"/>
-              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-            </svg>
-          </button>
-          <button
-            onClick={() => isPrivate && onPrivacyChange(false)}
-            disabled={!isHost || isGameStarted}
-            className={`px-vu-md flex items-center justify-center transition-colors rounded font-bold ${
-              !isPrivate ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
-            } ${!isHost || isGameStarted ? 'cursor-not-allowed' : ''}`}
-            title={t('public')}
-            style={{ fontSize: `${getVuSize(13)}px`, height: `${getVuSize(29)}px`, width: `${getVuSize(50)}px` }}
-          >
-            <svg style={{ width: `${getVuSize(14)}px`, height: `${getVuSize(14)}px` }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
+            <span
+              className={`inline-block rounded-full bg-white transition-transform`}
+              style={{
+                width: `${getVuSize(20)}px`,
+                height: `${getVuSize(20)}px`,
+                transform: isPrivate ? `translateX(${getVuSize(20)}px)` : `translateX(${getVuSize(2)}px)`
+              }}
+            />
           </button>
         </div>
-      </div>
+      )}
 
       {/* Copy Link Button */}
       <button
@@ -594,12 +572,10 @@ const Header = memo<HeaderProps>(({
   onPrevPhase,
   activePlayerId,
   playerColorMap,
-  isAutoAbilitiesEnabled,
-  onToggleAutoAbilities,
-  isAutoDrawEnabled,
-  onToggleAutoDraw,
   hideDummyCards,
   onToggleHideDummyCards,
+  strictRulesEnabled,
+  onStrictRulesToggle,
   currentRound = 1,
   turnNumber = 1,
   isScoringStep = false,
@@ -620,6 +596,7 @@ const Header = memo<HeaderProps>(({
   // Invite Player Menu
   const [inviteMenuOpen, setInviteMenuOpen] = useState(false)
   const inviteButtonRef = useRef<HTMLButtonElement>(null)
+  const webrtcEnabled = getWebRTCEnabled()
 
   // Force re-render on window resize to update VU-based text sizes
   const [, forceUpdate] = useState({})
@@ -842,10 +819,6 @@ const Header = memo<HeaderProps>(({
         isOpen={settingsMenuOpen}
         onClose={() => setSettingsMenuOpen(false)}
         anchorEl={settingsButtonRef.current}
-        isAutoAbilitiesEnabled={isAutoAbilitiesEnabled}
-        onToggleAutoAbilities={onToggleAutoAbilities}
-        isAutoDrawEnabled={isAutoDrawEnabled}
-        onToggleAutoDraw={onToggleAutoDraw}
         dummyPlayerCount={dummyPlayerCount}
         onDummyPlayerCountChange={onDummyPlayerCountChange}
         realPlayerCount={realPlayerCount}
@@ -857,6 +830,8 @@ const Header = memo<HeaderProps>(({
         isHost={isHost}
         hideDummyCards={hideDummyCards}
         onToggleHideDummyCards={onToggleHideDummyCards}
+        strictRulesEnabled={strictRulesEnabled}
+        onStrictRulesToggle={onStrictRulesToggle}
         t={t}
       />
 
@@ -871,6 +846,7 @@ const Header = memo<HeaderProps>(({
         isHost={isHost}
         isGameStarted={isGameStarted}
         hostId={hostId}
+        webrtcEnabled={webrtcEnabled}
         t={t}
         connectToSignalling={connectToSignalling}
         isConnectedToSignalling={isConnectedToSignalling}

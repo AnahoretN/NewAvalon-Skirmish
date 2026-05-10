@@ -14,7 +14,6 @@ import type {
   SimpleHostConfig
 } from './SimpleP2PTypes'
 import { applyAction } from './SimpleGameLogic'
-import { logger } from '../utils/logger'
 import { createDeck, createInitialState } from '../hooks/core/gameCreators'
 import { getDecksData } from '../content'
 import type { DeckType } from '../types'
@@ -274,7 +273,6 @@ export class TrysteroHost {
         // Notify about initial state
         this.notifyStateUpdate()
 
-        logger.info('[TrysteroHost] Initialized', { roomId: actualRoomId, peerId: selfId })
         resolve(actualRoomId)
 
       } catch (e) {
@@ -298,14 +296,6 @@ export class TrysteroHost {
     // Handle special actions
     if (action === 'TARGETING_MODE') {
       const sanitizedTargetingMode = sanitizeTargetingModeForP2P(data)
-      if (sanitizedTargetingMode.handTargets && sanitizedTargetingMode.handTargets.length > 0) {
-        console.log('[DISCARD_FROM_HAND] TrysteroHost received TARGETING_MODE with handTargets:', {
-          playerId: sanitizedTargetingMode.playerId,
-          actionType: sanitizedTargetingMode.action?.payload?.actionType,
-          handTargetsCount: sanitizedTargetingMode.handTargets.length,
-          handTargets: sanitizedTargetingMode.handTargets,
-        })
-      }
       this.state = {
         ...this.state,
         targetingMode: sanitizedTargetingMode
@@ -390,17 +380,11 @@ export class TrysteroHost {
   private handleJoinRequest(data: any, trysteroId: string): void {
     const { playerName, playerToken } = data
 
-    logger.info('[TrysteroHost] JOIN_REQUEST received:', {
-      trysteroId,
-      playerName,
-      hasToken: !!playerToken
-    })
 
     // Check for reconnection
     if (playerToken) {
       const existingPlayerId = this.findPlayerByToken(playerToken)
       if (existingPlayerId) {
-        logger.info('[TrysteroHost] Reconnecting existing player:', existingPlayerId)
 
         const timer = this.reconnectTimers.get(existingPlayerId)
         if (timer) {
@@ -839,11 +823,9 @@ export function createHostFromSavedSession(
 ): TrysteroHost {
   const maxAge = 60 * 60 * 1000
   if (Date.now() - savedData.timestamp > maxAge) {
-    logger.warn('[createHostFromSavedSession] Saved session is too old, creating fresh host')
     return new TrysteroHost(createInitialState(), config)
   }
 
-  logger.info('[createHostFromSavedSession] Restoring host with roomId:', savedData.roomId)
   return new TrysteroHost(savedData.state, config)
 }
 

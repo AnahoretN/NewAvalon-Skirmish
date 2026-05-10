@@ -128,6 +128,7 @@ export interface Player {
   disconnectTimestamp?: number; // Timestamp when player disconnected (for timeout tracking)
   reconnectionDeadline?: number; // Unix timestamp when reconnection window closes (30 seconds after disconnect)
   position?: number; // Position in turn order (0-based)
+  hasLateness?: boolean; // True if player's non-command cards in hand are affected by lateness (when they have a new LastPlayed card on board)
 }
 
 /**
@@ -250,6 +251,7 @@ export interface GameState {
   autoAbilitiesEnabled: boolean; // If true, auto-activate card abilities
   autoDrawEnabled: boolean; // If true, auto-draw at start of turn (via Draw phase)
   preserveDeployAbilities: boolean; // If true, deploy abilities remain available after auto-transition to Main
+  strictRulesEnabled: boolean; // If true, lateness effect is enabled (non-command cards in hand become unplayable after playing a card to board)
 
   // Round Logic
   currentRound: number; // 1, 2, or 3
@@ -282,6 +284,7 @@ export interface DragItem {
   count?: number; // For counters: how many are being dragged/applied
   bypassOwnershipCheck?: boolean; // If true, allows moving cards owned by others (e.g. Destroy effects)
   isManual?: boolean; // True if the drag was initiated manually by the user (vs an ability effect)
+  clearLatenessOnNextPlay?: boolean; // If true, the next played card will clear hasLateness instead of setting it (for Quick Response Team option 1)
 }
 
 /**

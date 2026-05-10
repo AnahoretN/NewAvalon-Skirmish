@@ -491,6 +491,19 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
     }
   }, [onCommandPlayClick, player, canPerformActions])
 
+  // Helper: Check if a card is affected by lateness
+  // Lateness applies to non-command cards when player has hasLateness flag set
+  const cardHasLateness = useCallback((card: CardType): boolean => {
+    // Lateness only applies when player has the flag set
+    if (!player.hasLateness) {
+      return false
+    }
+    // Command cards are NOT affected by lateness
+    // Use same logic as SimpleGameLogic for consistency
+    const isCommandCard = card.deck === 'Command' || card.types?.includes('Command') || card.faction === 'Command'
+    return !isCommandCard
+  }, [player.hasLateness, player.id])
+
   // Reconnection countdown timer state
   const [reconnectTimeLeft, setReconnectTimeLeft] = useState<number>(0)
 
@@ -911,22 +924,11 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                   const recentSelection = handCardSelections?.find(
                     cs => cs.playerId === player.id && cs.cardIndex === index && (now - cs.timestamp) < 1000
                   )
-
-                  // OPTIMIZATION: Use Map lookup instead of filtering - O(1) instead of O(n)
-                  // NOTE: cardClickWaves is currently unused (React wave disabled, using instant direct DOM approach only)
-                  // const cardClickWaves = clickWavesMap.get(`${player.id}-${index}`) || []
-
-                  // Card container style with highlight if target
-                  const cardContainerStyle = isTarget ? {
-                    boxShadow: `0 0 12px 2px ${rgba(calculateGlowColor(rgb), 0.5)}`,
-                    border: '3px solid rgb(255, 255, 255)',
-                  } : {}
-
                   const isPlaceholder = (card as any)._isPlaceholder
                   const isRealCard = !isPlaceholder
                   const realCard = card as CardType
 
-                  // Card visibility logic for Revealed status
+                  // Card visibility logic for Revealed status (moved here before hasCardLateness)
                   const isRevealedToAll = realCard.revealedTo === 'all'
                   const isRevealedToMe = localPlayerId !== null &&
                     Array.isArray(realCard.revealedTo) &&
@@ -945,6 +947,25 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                   const isVisible: boolean = (player.isDummy && hideDummyCards) ? false :
                     (isOwner || isTeammate || !!isRevealedToAll || !!isRevealedToMe || !!isRevealedByStatus ||
                     (!hideDummyCards && !!player.isDummy))
+
+                  // Lateness effect: Check if this card is affected by lateness
+                  // Lateness applies to non-command cards when player has hasLateness flag set
+                  // IMPORTANT: Lateness is only visible on face-up cards and NOT when card is a targeting target
+                  const hasCardLateness = isRealCard && !isPlaceholder && isVisible && !isTarget && cardHasLateness(realCard)
+
+                  // OPTIMIZATION: Use Map lookup instead of filtering - O(1) instead of O(n)
+                  // NOTE: cardClickWaves is currently unused (React wave disabled, using instant direct DOM approach only)
+                  // const cardClickWaves = clickWavesMap.get(`${player.id}-${index}`) || []
+
+                  // Card container style with highlight if target
+                  const cardContainerStyle = isTarget ? {
+                    boxShadow: `0 0 12px 2px ${rgba(calculateGlowColor(rgb), 0.5)}`,
+                    border: '3px solid rgb(255, 255, 255)',
+                  } : hasCardLateness ? {
+                    // Lateness effect: 50% saturation
+                    filter: 'saturate(0.5)',
+                    opacity: 0.8,
+                  } : {}
 
                   return (
                     <div
@@ -975,11 +996,11 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                         />
                       )}
                       <div
-                        className={`flex items-center bg-gray-900 rounded-vu-5 p-2 min-w-0`}
+                        className={`flex items-center bg-gray-900 rounded-vu-5 p-2 min-w-0 ${hasCardLateness ? 'cursor-not-allowed' : ''}`}
                         style={cardContainerStyle}
-                        draggable={canDrag && !isPlaceholder}
+                        draggable={canDrag && !isPlaceholder && !hasCardLateness}
                         onDragStart={(e) => {
-                          if (canDrag && !isPlaceholder) {
+                          if (canDrag && !isPlaceholder && !hasCardLateness) {
                             setDraggedItem({
                               card,
                               source: 'hand',
@@ -1014,7 +1035,14 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                         data-interactive="true"
                       >
                         <div className="aspect-square flex-shrink-0 mr-3 w-[28.75%] max-w-[230px] min-w-[40px] overflow-hidden rounded-vu-5">
-                          <div data-card-image="true" className="w-full h-full">
+                          <div
+                            data-card-image="true"
+                            className="w-full h-full"
+                            style={hasCardLateness ? {
+                              filter: 'saturate(0.5)',
+                              opacity: 0.8,
+                            } : undefined}
+                          >
                             {isPlaceholder ? (
                               // Show card back for placeholder cards (remote players in WebRTC)
                               // CRITICAL: Preserve card.ownerId so Card component can get correct color from playerColorMap
@@ -1411,17 +1439,6 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                 const recentSelection = handCardSelections?.find(
                   cs => cs.playerId === player.id && cs.cardIndex === index && (now - cs.timestamp) < 1000
                 )
-
-                // OPTIMIZATION: Use Map lookup instead of filtering - O(1) instead of O(n)
-                // NOTE: cardClickWaves is currently unused (React wave disabled, using instant direct DOM approach only)
-                // const cardClickWaves = clickWavesMap.get(`${player.id}-${index}`) || []
-
-                // Card container style with highlight if target
-                const cardHighlightStyle = isTarget ? {
-                  boxShadow: `0 0 12px 2px ${rgba(calculateGlowColor(rgb), 0.5)}`,
-                  border: '3px solid rgb(255, 255, 255)',
-                } : {}
-
                 const isPlaceholder = (card as any)._isPlaceholder
                 const isRealCard = !isPlaceholder
                 const realCard = card as CardType
@@ -1454,14 +1471,33 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                   (isOwner || isTeammate || !!isRevealedToAll || !!isRevealedToMe || !!isRevealedByStatus ||
                   (!hideDummyCards && !!player.isDummy))
 
+                // Lateness effect: Check if this card is affected by lateness
+                // IMPORTANT: Lateness is only visible on face-up cards and NOT when card is a targeting target
+                const hasCardLateness = isRealCard && !isPlaceholder && isVisible && !isTarget && cardHasLateness(realCard)
+
+
+                // OPTIMIZATION: Use Map lookup instead of filtering - O(1) instead of O(n)
+                // NOTE: cardClickWaves is currently unused (React wave disabled, using instant direct DOM approach only)
+                // const cardClickWaves = clickWavesMap.get(`${player.id}-${index}`) || []
+
+                // Card container style with highlight if target
+                const cardHighlightStyle = isTarget ? {
+                  boxShadow: `0 0 12px 2px ${rgba(calculateGlowColor(rgb), 0.5)}`,
+                  border: '3px solid rgb(255, 255, 255)',
+                } : hasCardLateness ? {
+                  // Lateness effect: 50% saturation
+                  filter: 'saturate(0.5)',
+                  opacity: 0.8,
+                } : {}
+
                 return (
                   <div
                     key={`${player.id}-hand-${index}-${card.id}`}
-                    className="aspect-square relative"
+                    className={`aspect-square relative ${hasCardLateness ? 'cursor-not-allowed' : ''}`}
                     data-hand-card={`${player.id},${index}`}
-                    draggable={canDrag && !isPlaceholder}
+                    draggable={canDrag && !isPlaceholder && !hasCardLateness}
                     onDragStart={(e) => {
-                      if (canDrag && !isPlaceholder) {
+                      if (canDrag && !isPlaceholder && !hasCardLateness) {
                         setDraggedItem({ card, source: 'hand', playerId: player.id, cardIndex: index, isManual: true })
                         // Set custom drag image to only include the card, not tooltip
                         const cardElement = e.currentTarget.querySelector('[data-card-image]')
@@ -1530,7 +1566,14 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                       />
                     )}
                     <div className="w-full h-full rounded-vu-5" style={cardHighlightStyle}>
-                      <div data-card-image="true" className="w-full h-full">
+                      <div
+                        data-card-image="true"
+                        className="w-full h-full"
+                        style={hasCardLateness ? {
+                          filter: 'saturate(0.5)',
+                          opacity: 0.8,
+                        } : undefined}
+                      >
                         {isPlaceholder ? (
                           // Show card back for placeholder cards (remote players in WebRTC)
                           // CRITICAL: Preserve card.ownerId so Card component can get correct color from playerColorMap
@@ -1668,6 +1711,7 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
     prevProps.player.color === nextProps.player.color &&
     prevProps.player.name === nextProps.player.name &&
     prevProps.player.selectedDeck === nextProps.player.selectedDeck &&
+    prevProps.player.hasLateness === nextProps.player.hasLateness &&
     getHandSizeForCompare(prevProps.player) === getHandSizeForCompare(nextProps.player) &&
     getDeckSizeForCompare(prevProps.player) === getDeckSizeForCompare(nextProps.player) &&
     getDiscardSizeForCompare(prevProps.player) === getDiscardSizeForCompare(nextProps.player) &&

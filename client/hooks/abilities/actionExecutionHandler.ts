@@ -248,20 +248,6 @@ function handleContinueAutoSteps(
   // This fixes False Orders Option 2 where Stun x2 needs to be placed after move
   const chainedActionFromStep = action.payload?.chainedAction
 
-  console.log('[handleContinueAutoSteps] Processing:', {
-    currentStepIndex,
-    stepsLength: steps.length,
-    steps: steps.map((s, i) => `${i}: ${s.action}`),
-    nextStep: steps[currentStepIndex] ? `${steps[currentStepIndex].action} (mode: ${steps[currentStepIndex].mode})` : 'undefined',
-    sourceCardId: action.sourceCard?.id,
-    stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-    stepContextTargetOwnerId: (stepContext as any)?._sourceOwnerId,
-    hasChainedAction: !!chainedActionFromStep,
-    chainedActionType: chainedActionFromStep?.type,
-    stepContextLastPlacedToken: stepContext?.lastPlacedToken,
-    commandContextLastPlacedToken: commandContext?.lastPlacedToken,
-  })
-
   // CRITICAL: currentStepIndex is the COMPLETED step index from autoStepsContext
   // advanceToNextStepWithCoords expects the COMPLETED step index and will calculate nextStepIndex itself
   const completedStepIndex = currentStepIndex
@@ -269,18 +255,10 @@ function handleContinueAutoSteps(
   // Check if there are more steps
   if (completedStepIndex >= steps.length) {
     // All steps complete!
-    console.log('[handleContinueAutoSteps] All steps complete, no more steps to execute')
     markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
     setAbilityMode(null)
     return
   }
-
-  console.log('[handleContinueAutoSteps] Advancing from completed step:', {
-    completedStepIndex,
-    nextStepIndex: completedStepIndex + 1,
-    nextStepAction: steps[completedStepIndex + 1]?.action,
-    nextStepMode: steps[completedStepIndex + 1]?.mode,
-  })
 
   // Create a temporary abilityMode for advanceToNextStepWithCoords
   const tempAbilityMode: AbilityAction = {
@@ -354,15 +332,6 @@ function handleGlobalAutoApply(
       markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
       return
     }
-    // CRITICAL: If no sendAction (local mode) or no context, try to handle locally
-    console.log('[handleGlobalAutoApply] Token placement without sendAction or context:', {
-      tokenType: action.payload.tokenType,
-      count: action.payload.count,
-      contextCardId: action.payload.contextCardId,
-      _tempContextId: action.payload._tempContextId,
-      lastMovedCardCoords: action.payload.lastMovedCardCoords,
-      hasSendAction: !!sendAction,
-    })
   }
 
   // FINN_SCORING
@@ -503,11 +472,6 @@ function handleGlobalAutoApply(
     // This ensures CLEANUP_COMMAND is executed after contextReward step (Tactical Maneuver)
     const autoStepsContext = (action.payload as any)?._autoStepsContext
     if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
-      console.log('[contextReward] Continuing AUTO_STEPS after reward:', {
-        rewardType: action.payload.contextReward,
-        currentStepIndex: autoStepsContext.currentStepIndex,
-        totalSteps: autoStepsContext.steps.length,
-      })
       // CRITICAL: Do NOT increment currentStepIndex here!
       // handleContinueAutoSteps will pass it to advanceToNextStepWithCoords as the COMPLETED step index,
       // and advanceToNextStepWithCoords will correctly calculate the next step index.
@@ -560,8 +524,6 @@ function handleGlobalAutoApply(
 
       const totalToDraw = baseCount + tokenCount
 
-      console.log('dynamicResource draw:', { factor, baseCount, tokenCount, totalToDraw, ownerId })
-
       if (totalToDraw > 0 && props.drawCardsBatch) {
         // Draw cards using batch method
         props.drawCardsBatch(ownerId, totalToDraw)
@@ -581,10 +543,6 @@ function handleGlobalAutoApply(
       // This ensures CLEANUP_COMMAND is executed after dynamicResource step
       const autoStepsContext = (action.payload as any)?._autoStepsContext
       if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
-        console.log('[dynamicResource] Continuing AUTO_STEPS after draw:', {
-          currentStepIndex: autoStepsContext.currentStepIndex,
-          totalSteps: autoStepsContext.steps.length,
-        })
         // Create CONTINUE_AUTO_STEPS action to advance to the next step
         const continueAction: AbilityAction = {
           type: 'CONTINUE_AUTO_STEPS',
@@ -634,10 +592,6 @@ function handleGlobalAutoApply(
   // This executes the chainedAction (e.g., CREATE_STACK for Revealed tokens) after the GLOBAL_AUTO_APPLY step
   // The chainedAction is included in the action by advanceToNextStepWithCoords
   if (action.chainedAction) {
-    console.log('[handleGlobalAutoApply] Executing chainedAction for GLOBAL_AUTO_APPLY:', {
-      chainedActionType: action.chainedAction.type,
-      chainedActionToken: (action.chainedAction as any).tokenType || (action.chainedAction as any).payload?.tokenType,
-    })
     // CRITICAL: Use shorter delay for AUTO_STEPS chainedAction to maintain flow
     setTimeout(() => {
       if (props.pendingChainedActionRef) {
@@ -656,7 +610,6 @@ function handleGlobalAutoApply(
   // Handle CLEANUP_COMMAND customAction - send command card to discard after all steps complete
   // This is added automatically by contentAbilities.ts for all command cards
   if (action.payload?.customAction === 'CLEANUP_COMMAND') {
-    console.log('[handleGlobalAutoApply] CLEANUP_COMMAND triggered, discarding command card')
     markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
 
     // CRITICAL: Use commandCardId and commandCardOwnerId from _autoStepsContext if available
@@ -676,16 +629,6 @@ function handleGlobalAutoApply(
       // sourceCard is not a command card, use commandCardId from context
       finalCardId = commandCardId
     }
-
-    console.log('[handleGlobalAutoApply] Sending CLEANUP_COMMAND:', {
-      ownerId,
-      cardId: finalCardId,
-      sourceCard: action.sourceCard,
-      hasAutoStepsContext: !!autoStepsContext,
-      commandCardId: autoStepsContext?.commandCardId,
-      commandCardOwnerId: autoStepsContext?.commandCardOwnerId,
-      sourceCardIsCommand: action.sourceCard?.id?.startsWith('CMD_')
-    })
 
     if (props.sendAction && finalCardId) {
       // Use CLEANUP_COMMAND action for P2P mode (requires cardId)
@@ -767,39 +710,6 @@ function handleCreateStack(
   // CRITICAL: Extract commandContext first before logging
   const { gameState, getFreshGameState, setAbilityMode, setCursorStack, triggerNoTarget, localPlayerId, setTargetingMode, addBoardCardStatus, markAbilityUsed, handleActionExecution: execAction, commandContext } = props
 
-  const callStack = new Error().stack?.split('\n').slice(2, 5).map(line => line.trim())
-  console.log('CREATE_STACK action:', {
-    tokenType: action.tokenType,
-    payloadTokenType: action.payload?.tokenType,
-    count: action.count,
-    payloadCount: action.payload?.count,
-    sourceCard: action.sourceCard?.name,
-    sourceCardOwnerId: action.sourceCard?.ownerId,
-    hasChainedAction: !!action.chainedAction,
-    chainedActionType: action.chainedAction?.type,
-    chainedActionMode: action.chainedAction?.mode,
-    chainedActionPayloadCustomAction: action.chainedAction?.payload?.customAction,
-    onlyOpponents: action.onlyOpponents,
-    payloadOnlyOpponents: action.payload?.onlyOpponents,
-    detailsOnlyOpponents: (action as any).details?.onlyOpponents,
-    onlyFaceDown: action.onlyFaceDown,
-    payloadOnlyFaceDown: action.payload?.onlyFaceDown,
-    detailsOnlyFaceDown: (action as any).details?.onlyFaceDown,
-    excludeOwnerId: action.excludeOwnerId,
-    payloadExcludeOwnerId: action.payload?.excludeOwnerId,
-    detailsExcludeOwnerId: (action as any).details?.excludeOwnerId,
-    targetOwnerId: action.targetOwnerId,
-    payloadTargetOwnerId: action.payload?.targetOwnerId,
-    detailsTargetOwnerId: (action as any).details?.targetOwnerId,
-    actionSourceOwnerId: (action as any)._sourceOwnerId,
-    commandContextSourceOwnerId: commandContext?.sourceOwnerId,
-    targetLocation: action.payload?.targetLocation,
-    localPlayerId: props.localPlayerId,
-    maxDistanceFromSource: action.maxDistanceFromSource ?? action.payload?.maxDistanceFromSource,
-    maxOrthogonalDistance: action.maxOrthogonalDistance ?? action.payload?.maxOrthogonalDistance,
-    callStack,
-  })
-
   // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) before processing CREATE_STACK
   // This fixes False Orders Option 1 where chainedAction is executed directly from useAppCounters
   // bypassing advanceToNextStepWithCoords where the resolution normally happens
@@ -813,14 +723,6 @@ function handleCreateStack(
       ((action as any).details?.targetOwnerId === -2)
 
     if (needsResolution) {
-      console.log('[handleCreateStack] Resolving targetOwnerId -2:', {
-        actionTargetOwnerId: action.targetOwnerId,
-        payloadTargetOwnerId: action.payload?.targetOwnerId,
-        detailsTargetOwnerId: (action as any).details?.targetOwnerId,
-        actionSourceOwnerId,
-        resolvedTargetOwnerId: actionSourceOwnerId,
-      })
-
       // Update ALL locations with resolved value
       if (action.targetOwnerId === -2) {
         action.targetOwnerId = actionSourceOwnerId
@@ -850,23 +752,7 @@ function handleCreateStack(
     (payloadTargetOwnerId === 'source') ||
     (detailsTargetOwnerId === 'source')
 
-  // DIAGNOSTIC: Log targetOwnerId values to debug Temporary Shelter
-  console.log('[handleCreateStack] Checking targetOwnerId for "source":', {
-    actionTargetOwnerId,
-    payloadTargetOwnerId,
-    detailsTargetOwnerId,
-    needsSourceResolution,
-    sourceOwnerIdForResolution,
-  })
-
   if (needsSourceResolution) {
-    console.log('[handleCreateStack] Resolving targetOwnerId "source":', {
-      actionTargetOwnerId,
-      payloadTargetOwnerId,
-      detailsTargetOwnerId,
-      resolvedOwnerId: sourceOwnerIdForResolution,
-    })
-
     // Update ALL locations with resolved value
     if (actionTargetOwnerId === 'source') {
       action.targetOwnerId = sourceOwnerIdForResolution
@@ -947,18 +833,6 @@ function handleCreateStack(
       }
     }
 
-    // DIAGNOSTIC: Log dynamic count calculation with detailed info
-    console.log('[CREATE_STACK] Dynamic count calculation:', {
-      factor,
-      ownerId,
-      dynamic,
-      tokenLocations,
-      tokenLocationsCount: tokenLocations.length,
-      justPlacedCounted,
-      finalCount: dynamic,
-      tokenType: action.tokenType || action.payload?.tokenType,
-    })
-
     count = dynamic
   }
 
@@ -1027,18 +901,6 @@ function handleCreateStack(
       tokenOwnerId = localPlayerId
     }
 
-    // DIAGNOSTIC: Log token owner determination
-    console.log('[CREATE_STACK] Token owner determination:', {
-      tokenType: action.tokenType || action.payload?.tokenType,
-      sourceCardId: action.sourceCard?.id,
-      sourceCardBaseId: action.sourceCard?.baseId,
-      sourceCardOwnerId: action.sourceCard?.ownerId,
-      tokenOwnerId,
-      localPlayerId,
-      actionTargetOwnerId: action.targetOwnerId,
-      actionPayloadTargetOwnerId: action.payload?.targetOwnerId,
-    })
-
     // Use universal token targeting system to create cursorStack
     // CRITICAL: Merge payload properties for chained actions (which use payload format)
     // This fixes False Orders option 1 where chainedAction has properties in payload
@@ -1076,20 +938,6 @@ function handleCreateStack(
       _originalReadyStatusToRemove: action.readyStatusToRemove,
     }
 
-    // DIAGNOSTIC: Log modifications to verify onlyOpponents and onlyFaceDown are set
-    console.log('[CREATE_STACK] modifications created:', {
-      tokenType: action.tokenType || action.payload?.tokenType,
-      modificationsTargetOwnerId: modifications.targetOwnerId,
-      modificationsOnlyOpponents: modifications.onlyOpponents,
-      modificationsOnlyFaceDown: modifications.onlyFaceDown,
-      actionOnlyOpponents: action.onlyOpponents,
-      actionOnlyFaceDown: action.onlyFaceDown,
-      payloadPropsOnlyOpponents: payloadProps.onlyOpponents,
-      payloadPropsOnlyFaceDown: payloadProps.onlyFaceDown,
-      detailsPropsOnlyOpponents: detailsProps.onlyOpponents,
-      detailsPropsOnlyFaceDown: detailsProps.onlyFaceDown,
-    })
-
     // CRITICAL: Read tokenType from both action and payload (chained actions use payload format)
     // This fixes False Orders option 1 where chainedAction has tokenType in payload
     const tokenType = action.tokenType || action.payload?.tokenType || 'Aim'
@@ -1108,16 +956,6 @@ function handleCreateStack(
       // CRITICAL: Also collect board targets (face-down cards on battlefield)
       // This fixes False Orders Option 1 which should reveal BOTH hand cards AND face-down board cards
       const boardTargets = calculateValidTargets(action, gameState, tokenOwnerId, commandContext)
-
-      // DIAGNOSTIC: Log Revealed token targeting setup
-      console.log('[CREATE_STACK] Revealed token targets:', {
-        tokenOwnerId,
-        targetOwnerId,
-        handTargetsCount: handTargets.length,
-        boardTargetsCount: boardTargets.length,
-        handTargets,
-        boardTargets,
-      })
 
       // CRITICAL: If no hand targets AND no board targets, skip Revealed placement
       // For command cards with chainedAction (e.g., Enhanced Interrogation, Data Interception),
@@ -1146,10 +984,6 @@ function handleCreateStack(
         // This ensures CLEANUP_COMMAND is executed after the step completes
         const autoStepsContext = (action.payload as any)?._autoStepsContext
         if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
-          console.log('[No hand targets specific] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
-            currentStepIndex: autoStepsContext.currentStepIndex,
-            totalSteps: autoStepsContext.steps.length,
-          })
           // Create CONTINUE_AUTO_STEPS action to advance to the next step
           const continueAction: AbilityAction = {
             type: 'CONTINUE_AUTO_STEPS',
@@ -1201,14 +1035,6 @@ function handleCreateStack(
 
       // CRITICAL: Create cursorStack BEFORE setTargetingMode to prevent race condition
       // This ensures cursorStack is set before any useEffect can run with stale abilityMode
-      console.log('[CREATE_CURSOR_STACK] Specific target branch:', {
-        tokenType,
-        tokenOwnerId,
-        count,
-        targetOwnerId,
-        modificationsTargetOwnerId: modifications.targetOwnerId,
-        modificationsExcludeOwnerId: modifications.excludeOwnerId,
-      })
       const newCursorStack = createTokenCursorStack(tokenType, tokenOwnerId, null, modifications)
       setCursorStack(newCursorStack)
 
@@ -1235,29 +1061,10 @@ function handleCreateStack(
       const sourceOwnerId = payloadSourceOwnerId ?? commandContextSourceOwnerId
       const specificTargetId = sourceOwnerId ?? action.targetOwnerId ?? action.payload?.targetOwnerId ?? (action as any).details?.targetOwnerId
 
-      console.log('[Revealed token] Source owner resolution:', {
-        payloadSourceOwnerId,
-        commandContextSourceOwnerId,
-        resolvedSourceOwnerId: sourceOwnerId,
-        actionTargetOwnerId: action.targetOwnerId,
-        payloadTargetOwnerId: action.payload?.targetOwnerId,
-        detailsTargetOwnerId: (action as any).details?.targetOwnerId,
-        finalSpecificTargetId: specificTargetId,
-      })
       const handTargets: {playerId: number, cardIndex: number}[] = []
       // CRITICAL: Also collect board targets (face-down cards on battlefield)
       // This fixes abilities that should reveal BOTH hand cards AND face-down board cards
       const boardTargets = calculateValidTargets(action, freshState, tokenOwnerId, commandContext)
-
-      console.log('[Revealed token] Board targets calculated:', {
-        tokenOwnerId,
-        actionTargetOwnerId: action.targetOwnerId,
-        payloadTargetOwnerId: action.payload?.targetOwnerId,
-        detailsTargetOwnerId: (action as any).details?.targetOwnerId,
-        specificTargetId,
-        boardTargetsCount: boardTargets.length,
-        boardTargets,
-      })
 
       // CRITICAL: Only use specificTargetId branch if ID is positive (valid player ID)
       // Exclude -1 (all opponents) and -2 (TARGET_MOVED_OWNER placeholder not yet replaced)
@@ -1278,24 +1085,8 @@ function handleCreateStack(
           }
         }
 
-        console.log('[Revealed token] Hand targets collected:', {
-          specificTargetId,
-          targetPlayerName: targetPlayer?.name,
-          targetPlayerHandSize: targetPlayer?.hand?.length,
-          handTargetsCount: handTargets.length,
-          handTargets,
-          allPlayers: freshState.players.map(p => ({ id: p.id, name: p.name, handSize: p.hand?.length || 0 })),
-        })
-
         // CRITICAL: If no hand targets AND no board targets, skip Revealed placement and execute chainedAction directly
         if (handTargets.length === 0 && boardTargets.length === 0) {
-          console.log('[Specific target] No hand/board targets found, skipping Revealed placement:', {
-            tokenOwnerId,
-            specificTargetId,
-            handTargetsCount: handTargets.length,
-            boardTargetsCount: boardTargets.length,
-          })
-
           // CRITICAL: If this action has a chainedAction, add it to actionQueue directly
           if (action.chainedAction) {
             if (props.setActionQueue) {
@@ -1379,18 +1170,6 @@ function handleCreateStack(
       // This fixes cases where onlyOpponents is in payload but not on action
       const onlyOpponents = action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents
 
-      console.log('[Revealed token] All opponents mode:', {
-        tokenOwnerId,
-        excludedId,
-        onlyOpponents,
-        actionExcludeOwnerId: action.excludeOwnerId,
-        payloadExcludeOwnerId: action.payload?.excludeOwnerId,
-        detailsExcludeOwnerId: (action as any).details?.excludeOwnerId,
-        actionOnlyOpponents: action.onlyOpponents,
-        payloadOnlyOpponents: action.payload?.onlyOpponents,
-        detailsOnlyOpponents: (action as any).details?.onlyOpponents,
-      })
-
       for (const player of freshState.players) {
         // Skip excluded player (token owner's own hand)
         if (player.id === excludedId) {
@@ -1413,14 +1192,6 @@ function handleCreateStack(
         }
         // Add this player's hand cards
         if (player.hand) {
-          console.log('[Revealed token] Processing player hand:', {
-            playerId: player.id,
-            playerName: player.name,
-            isLocal: player.id === props.localPlayerId,
-            isExcluded: player.id === excludedId,
-            handSize: player.hand.length,
-            onlyFaceDown: action.onlyFaceDown ?? action.payload?.onlyFaceDown ?? (action as any).details?.onlyFaceDown,
-          })
           for (let i = 0; i < player.hand.length; i++) {
             const card = player.hand[i]
             // Check if card doesn't already have our Revealed token
@@ -1433,56 +1204,19 @@ function handleCreateStack(
             // So we skip the face-down check entirely for hand targets
             const passesFaceDownCheck = true // Always true for hand cards
 
-            // DIAGNOSTIC: Log why each card is or isn't added
             if (hasOurRevealed) {
-              console.log('[Revealed token] Skipping card - already has our Revealed token:', {
-                playerId: player.id,
-                cardIndex: i,
-                cardName: card.name,
-                cardBaseId: card.baseId,
-              })
+              // Skip
             } else if (!passesFaceDownCheck) {
-              console.log('[Revealed token] Skipping card - face-down check failed:', {
-                playerId: player.id,
-                cardIndex: i,
-                cardName: card.name,
-              })
+              // Skip
             } else {
-              console.log('[Revealed token] Adding card to handTargets:', {
-                playerId: player.id,
-                cardIndex: i,
-                cardName: card.name,
-                cardBaseId: card.baseId,
-              })
               handTargets.push({ playerId: player.id, cardIndex: i })
             }
           }
         }
       }
 
-      // DIAGNOSTIC: Log Revealed token targeting setup (all opponents)
-      console.log('Revealed token targeting setup:', {
-        tokenOwnerId,
-        excludedId,
-        onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
-        totalPlayers: freshState.players.length,
-        playersWithHand: freshState.players.filter(p => p.hand && p.hand.length > 0).length,
-        handTargets: handTargets.map(t => ({ playerId: t.playerId, cardIndex: t.cardIndex }))
-      })
-
       // CRITICAL: If no hand targets AND no board targets, skip Revealed placement and execute chainedAction directly
       if (handTargets.length === 0 && boardTargets.length === 0) {
-        console.log('No hand targets found, skipping Revealed placement:', {
-          tokenOwnerId,
-          excludedId,
-          onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
-          players: freshState.players.map(p => ({ id: p.id, name: p.name, handLength: p.hand?.length || 0, isDummy: p.isDummy })),
-          // DIAGNOSTIC: Check if this is a guest without fresh opponent hand data
-          localPlayerId: props.localPlayerId,
-          isGuest: props.localPlayerId !== 1 && props.localPlayerId !== tokenOwnerId,
-          hasSendAction: !!props.sendAction,
-        })
-
         // CRITICAL FIX: For guests in WebRTC mode, send the full CREATE_STACK action to host
         // The host has complete game state and can properly calculate targets for opponent hands
         const isGuestInWebRTCMode = props.localPlayerId !== 1 && props.sendAction
@@ -1511,13 +1245,7 @@ function handleCreateStack(
         if (props.localPlayerId !== 1 && props.localPlayerId !== tokenOwnerId) {
           // Try to get fresh state one more time after a short delay
           setTimeout(() => {
-            const retryState = getFreshGameState()
-            console.log('Retry state check:', {
-              players: retryState.players.map(p => ({
-                id: p.id,
-                handLength: p.hand?.length || 0
-              }))
-            })
+            getFreshGameState()
           }, 100)
         }
         if (action.chainedAction) {
@@ -1539,10 +1267,6 @@ function handleCreateStack(
         // This ensures CLEANUP_COMMAND is executed after the step completes
         const autoStepsContext = (action.payload as any)?._autoStepsContext
         if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
-          console.log('[No hand targets] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
-            currentStepIndex: autoStepsContext.currentStepIndex,
-            totalSteps: autoStepsContext.steps.length,
-          })
           // Create CONTINUE_AUTO_STEPS action to advance to the next step
           const continueAction: AbilityAction = {
             type: 'CONTINUE_AUTO_STEPS',
@@ -1598,15 +1322,6 @@ function handleCreateStack(
 
       // CRITICAL: Create cursorStack BEFORE setTargetingMode to prevent race condition
       // This ensures cursorStack is set before any useEffect can run with stale abilityMode
-      console.log('[CREATE_CURSOR_STACK] Before creating cursorStack:', {
-        tokenType,
-        tokenOwnerId,
-        count,
-        modificationsTargetOwnerId: modifications.targetOwnerId,
-        modificationsExcludeOwnerId: modifications.excludeOwnerId,
-        actionTargetOwnerId: action.targetOwnerId,
-        actionPayloadTargetOwnerId: action.payload?.targetOwnerId,
-      })
       setCursorStack(createTokenCursorStack(tokenType, tokenOwnerId, null, modifications))
 
       // CRITICAL: Set targeting mode LAST to ensure it's not overwritten by useEffect
@@ -1615,13 +1330,6 @@ function handleCreateStack(
     }
   } else {
       // Normal token placement (board only)
-      console.log('[CREATE_CURSOR_STACK] Board token placement:', {
-        tokenType,
-        tokenOwnerId,
-        count,
-        modificationsTargetOwnerId: modifications.targetOwnerId,
-        modificationsExcludeOwnerId: modifications.excludeOwnerId,
-      })
       setCursorStack(createTokenCursorStack(tokenType, tokenOwnerId, null, modifications))
       // Don't clear abilityMode here - it will be cleared when cursorStack is depleted (in useAppAbilities.ts)
     }
@@ -2724,11 +2432,6 @@ function handleEnterMode(
 
         // Special handling for OPEN_MODAL as first step (Quick Response Team option 2, etc.)
         if (firstStep.action === 'OPEN_MODAL' && firstStep.mode === 'SEARCH_DECK') {
-          console.log('[handleEnterMode] OPEN_MODAL SEARCH_DECK step:', {
-            filterType: firstStep.details?.filterType,
-            shuffleOnClose: firstStep.details?.shuffleOnClose,
-          })
-
           // Set abilityMode with AUTO_STEPS context for continuation after modal closes
           const modalAction: AbilityAction = {
             type: 'ENTER_MODE',
@@ -2796,18 +2499,6 @@ function handleEnterMode(
           ? "SELECT_TARGET"
           : (firstStep.mode || "SELECT_TARGET")
 
-        // DIAGNOSTIC: Log firstStep details for debugging chainedAction
-        console.log('[handleEnterMode] First interactive step (SELECT_UNIT_FOR_MOVE etc):', {
-          stepAction: firstStep.action,
-          stepMode: firstStep.mode,
-          hasChainedAction: !!firstStep.chainedAction,
-          chainedActionKeys: firstStep.chainedAction ? Object.keys(firstStep.chainedAction) : [],
-          chainedActionType: firstStep.chainedAction?.type,
-          chainedActionAction: (firstStep.chainedAction as any)?.action,
-          chainedActionPayload: firstStep.chainedAction?.payload,
-          chainedActionDetails: (firstStep.chainedAction as any)?.details,
-        })
-
         const stepAction: AbilityAction = {
           type: 'ENTER_MODE',
           mode: normalizedMode,
@@ -2841,13 +2532,6 @@ function handleEnterMode(
           }
         }
 
-        console.log('[handleEnterMode] Created stepAction:', {
-          stepActionType: stepAction.type,
-          stepActionMode: stepAction.mode,
-          hasStepActionChainedAction: !!stepAction.chainedAction,
-          stepActionChainedActionType: stepAction.chainedAction?.type,
-          stepActionChainedActionPayload: stepAction.chainedAction?.payload,
-        })
         setAbilityMode(stepAction)
 
         // Calculate targets for the interactive mode
@@ -3019,13 +2703,6 @@ function handleContextReward(
     isDeployAbility: action.isDeployAbility,
     readyStatusToRemove: action.readyStatusToRemove,
   }
-
-  console.log('[handleContextReward] Sending GLOBAL_AUTO_APPLY to host:', {
-    rewardType,
-    cardPower,
-    coords: displayCoords,
-    sourceCardId: action.sourceCard?.id,
-  })
 
   sendAction('GLOBAL_AUTO_APPLY', globalAutoApplyData)
 

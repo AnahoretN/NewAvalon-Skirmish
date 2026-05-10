@@ -210,6 +210,11 @@ export interface PersonalizedPlayer {
   playerToken?: string  // Only for local player identification
   announcedCard?: GameState['players'][0]['announcedCard']  // Showcase visible to all
   lastPlayedCardId?: string | null  // Last played card (for scoring)
+  hasLateness?: boolean  // True if player's non-command cards in hand are affected by lateness
+  hasMulliganed?: boolean
+  mulliganAttempts?: number
+  disconnectTimestamp?: number
+  reconnectionDeadline?: number
 
   // For local player: full data
   hand?: GameState['players'][0]['hand']

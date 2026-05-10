@@ -476,10 +476,6 @@ export function handleLineSelection(
       setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
     } else if (isCommandCard && continueAutoSteps) {
       // For command cards, continue to next step (CLEANUP_COMMAND)
-      console.log('[lineSelectionHandlers] SELECT_DIAGONAL command card, continuing AUTO_STEPS:', {
-        currentStepIndex: autoStepsContext.currentStepIndex,
-        totalSteps: autoStepsContext.steps.length,
-      })
       // Continue to next step (CLEANUP_COMMAND)
       continueAutoSteps(autoStepsContext.currentStepIndex + 1)
     } else {

@@ -153,11 +153,6 @@ export function executeInstantAutoStep(
       // Handle instant GLOBAL_AUTO_APPLY actions (e.g., CLEANUP_COMMAND, draw cards)
       const customAction = step.details?.customAction
       const dynamicResource = step.details?.dynamicResource
-      console.log('[executeInstantAutoStep] GLOBAL_AUTO_APPLY:', {
-        customAction,
-        dynamicResource,
-        stepDetails: step.details,
-      })
       // CRITICAL: All GLOBAL_AUTO_APPLY actions need execution through handleActionExecution
       // This includes CLEANUP_COMMAND and dynamicResource actions (e.g., draw cards)
       // executeInstantAutoStep doesn't have access to drawCards, updatePlayerScore, etc.
@@ -657,21 +652,10 @@ export function advanceToNextStepWithCoords(
   // completedCoords is where the action completed (e.g., destroyed card location), not the source card
   const sourceCoords = abilityMode.sourceCoords
 
-  console.log('[advanceToNextStepWithCoords] Called with:', {
-    nextStepIndex,
-    stepsLength: steps.length,
-    steps: steps.map((s, i) => `${i}: ${s.action}`),
-    nextStep: steps[nextStepIndex] ? `${steps[nextStepIndex].action} (mode: ${steps[nextStepIndex].mode})` : 'undefined',
-    stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-    commandContextSourceOwnerId: commandContext?.sourceOwnerId,
-    commandContextLastMovedCardCoords: commandContext?.lastMovedCardCoords,
-  })
-
   // CRITICAL: Clear commandContext.sourceOwnerId at the start of each AUTO_STEPS chain
   // This prevents stale values from previous ability uses (e.g., False Orders targeting wrong player)
   // Only clear at the first step (index 0) to not interfere with ongoing multi-step abilities
   if (nextStepIndex === 0 && commandContext?.sourceOwnerId && !stepContext?.sourceOwnerId) {
-    console.log('[advanceToNextStepWithCoords] Clearing stale commandContext.sourceOwnerId:', commandContext.sourceOwnerId)
     props.setCommandContext?.(prev => {
       const { sourceOwnerId, ...rest } = prev
       return rest
@@ -690,15 +674,6 @@ export function advanceToNextStepWithCoords(
       // This fixes False Orders Option 1 where chained action targets the moved card's owner's hand
       // Priority: stepContext.sourceOwnerId > chainedAction._sourceOwnerId (from useAppCounters) > commandContext.sourceOwnerId
       const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
-
-      console.log('[advanceToNextStepWithCoords] Resolving targetOwnerId:', {
-        detailsTargetOwnerId: (chainedActionFromStep as any).details?.targetOwnerId,
-        payloadTargetOwnerId: (chainedActionFromStep as any).payload?.targetOwnerId,
-        stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-        chainedActionSourceOwnerId: (chainedActionFromStep as any)._sourceOwnerId,
-        commandContextSourceOwnerId: commandContext?.sourceOwnerId,
-        resolvedContextOwnerId: contextOwnerId,
-      })
 
       // CRITICAL: Always resolve targetOwnerId if stepContext.sourceOwnerId is set
       // This prevents stale values from previous chainedAction uses (e.g., False Orders repeated)
@@ -729,19 +704,6 @@ export function advanceToNextStepWithCoords(
         } : {})
       }
 
-      // DIAGNOSTIC: Log chained action execution for debugging
-      console.log('[advanceToNextStepWithCoords] Executing chainedAction:', {
-        chainedActionType: chainedActionFromStep.type,
-        chainedActionToken: (chainedActionFromStep as any).tokenType || (chainedActionFromStep as any).payload?.tokenType,
-        abilityModeSourceCardId: abilityMode.sourceCard?.id,
-        abilityModeSourceCardOwnerId: abilityMode.sourceCard?.ownerId,
-        resolvedSourceCardId: sourceCard?.id,
-        resolvedSourceCardOwnerId: sourceCard?.ownerId,
-        nextActionSourceCardId: nextAction.sourceCard?.id,
-        nextActionSourceCardOwnerId: nextAction.sourceCard?.ownerId,
-        resolvedTargetOwnerId,
-      })
-
       handleActionExecution(nextAction, _completedCoords)
     }
 
@@ -749,15 +711,7 @@ export function advanceToNextStepWithCoords(
     // This fixes Logistics Chain not discarding after diagonal selection
     // Check if the last step is CLEANUP_COMMAND
     const lastStep = steps[steps.length - 1]
-    console.log('[advanceToNextStepWithCoords] Checking last step for CLEANUP_COMMAND:', {
-      lastStep,
-      lastStepAction: lastStep?.action,
-      lastStepDetailsCustomAction: lastStep?.details?.customAction,
-      stepsLength: steps.length,
-      stepsActions: steps.map(s => s.action),
-    })
     if (lastStep && lastStep.action === 'GLOBAL_AUTO_APPLY' && lastStep.details?.customAction === 'CLEANUP_COMMAND') {
-      console.log('[advanceToNextStepWithCoords] Executing CLEANUP_COMMAND as final step')
       const cleanupAction: AbilityAction = {
         type: 'GLOBAL_AUTO_APPLY',
         mode: null,
@@ -773,7 +727,6 @@ export function advanceToNextStepWithCoords(
       handleActionExecution(cleanupAction, sourceCoords || { row: 0, col: 0 })
     } else {
       // No CLEANUP_COMMAND step, just mark ability as used
-      console.log('[advanceToNextStepWithCoords] No CLEANUP_COMMAND found, marking ability as used')
       markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
     }
     setAbilityMode(null)
@@ -782,32 +735,10 @@ export function advanceToNextStepWithCoords(
 
   const nextStep = steps[nextStepIndex]
 
-  // DIAGNOSTIC: Log nextStep details for debugging chainedAction
-  console.log('[advanceToNextStepWithCoords] nextStep details:', {
-    nextStepIndex,
-    stepAction: nextStep.action,
-    stepMode: nextStep.mode,
-    hasChainedAction: !!nextStep.chainedAction,
-    chainedActionType: nextStep.chainedAction?.type,
-    chainedActionAction: (nextStep.chainedAction as any)?.action,
-    chainedActionPayload: nextStep.chainedAction?.payload,
-    chainedActionDetails: (nextStep.chainedAction as any)?.details,
-  })
-
   // CRITICAL: Execute chainedAction from previous step BEFORE processing the next step
   // This fixes False Orders Option 2 where Stun x2 (chainedAction of step 1) should be placed
   // before advancing to step 2 (CLEANUP_COMMAND)
   if (chainedActionFromStep) {
-    console.log('[advanceToNextStepWithCoords] Executing chainedAction from previous step:', {
-      chainedActionType: chainedActionFromStep.type,
-      chainedActionPayload: chainedActionFromStep.payload,
-      chainedActionDetails: (chainedActionFromStep as any).details,
-      nextStepIndex,
-      nextStepAction: nextStep.action,
-      _completedCoords,
-      commandContextLastMovedCardCoords: commandContext?.lastMovedCardCoords,
-    })
-
     // Resolve targetOwnerId if needed
     const contextOwnerId = stepContext?.sourceOwnerId ?? (chainedActionFromStep as any)._sourceOwnerId ?? commandContext?.sourceOwnerId
     const needsResolution = (chainedActionFromStep as any).details?.targetOwnerId === -2 ||
@@ -851,14 +782,6 @@ export function advanceToNextStepWithCoords(
           isDeployAbility: abilityMode.isDeployAbility,
         }
 
-    console.log('[advanceToNextStepWithCoords] About to execute chainedAction:', {
-      type: resolvedChainedAction.type,
-      payload: resolvedChainedAction.payload,
-      details: (resolvedChainedAction as any).details,
-      sourceCoords: resolvedChainedAction.sourceCoords,
-      hasCommandContext: !!resolvedChainedAction.payload._commandContext,
-    })
-
     // Execute the chainedAction
     props.handleActionExecution(resolvedChainedAction, resolvedChainedAction.sourceCoords)
 
@@ -876,10 +799,6 @@ export function advanceToNextStepWithCoords(
     // but the next step (GLOBAL_AUTO_APPLY) is instant and doesn't need targeting
     // Without clearing abilityMode, visual highlights on cards would persist
     if (props.clearTargetingMode) {
-      console.log('[advanceToNextStepWithCoords] Clearing targetingMode before instant step:', {
-        stepIndex: nextStepIndex,
-        stepAction: nextStep.action,
-      })
       props.clearTargetingMode()
     }
     // CRITICAL: Also clear abilityMode to remove visual highlights
@@ -910,12 +829,6 @@ export function advanceToNextStepWithCoords(
     if (result.needsExecution) {
       const stepCustomAction = nextStep.details?.customAction
       const stepDynamicResource = nextStep.details?.dynamicResource
-      console.log('[advanceToNextStepWithCoords] Step needs execution:', {
-        stepAction: nextStep.action,
-        stepCustomAction,
-        stepDynamicResource,
-        stepDetails: nextStep.details,
-      })
       // CRITICAL: Clear targetingMode before executing GLOBAL_AUTO_APPLY
       // This fixes Overwatch Option 2 where targetingMode from CREATE_STACK step
       // should be cleared before the draw step executes
@@ -933,13 +846,6 @@ export function advanceToNextStepWithCoords(
                                stepContext?.sourceOwnerId !== undefined
 
         if (needsResolution && contextOwnerId !== undefined) {
-          console.log('[advanceToNextStepWithCoords] Resolving chainedAction targetOwnerId:', {
-            detailsTargetOwnerId: (chainedActionFromStep as any).details?.targetOwnerId,
-            payloadTargetOwnerId: (chainedActionFromStep as any).payload?.targetOwnerId,
-            stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-            contextOwnerId,
-            resolvedTargetOwnerId: contextOwnerId,
-          })
           // Create a new action with resolved targetOwnerId
           resolvedChainedAction = {
             ...chainedActionFromStep,
@@ -979,17 +885,12 @@ export function advanceToNextStepWithCoords(
         // This fixes False Orders Option 1 where Revealed tokens need to be placed after step 2 completes
         ...(resolvedChainedAction ? { chainedAction: resolvedChainedAction } : {}),
       }
-      console.log('[advanceToNextStepWithCoords] Calling handleActionExecution for GLOBAL_AUTO_APPLY', {
-        hasChainedAction: !!resolvedChainedAction,
-        chainedActionType: resolvedChainedAction?.type,
-      })
       handleActionExecution(actionToExecute, sourceCoords || { row: 0, col: 0 })
 
       // After execution, check if there are more steps
       const followingStepIndex = nextStepIndex + 1
       if (followingStepIndex >= steps.length) {
         // All steps complete!
-        console.log('[advanceToNextStepWithCoords] All steps complete after execution')
         markAbilityUsed(sourceCoords || { row: 0, col: 0 }, abilityMode.isDeployAbility, false, readyStatusToRemove)
         setAbilityMode(null)
         return
@@ -1065,19 +966,6 @@ export function advanceToNextStepWithCoords(
       const previousStep = nextStepIndex > 0 ? steps[nextStepIndex - 1] : null
       const previousStepChainedAction = previousStep?.chainedAction
 
-      console.log('[advanceToNextStepWithCoords] CREATE_STACK step: Converting to SELECT_TARGET mode', {
-        tokenType: nextStep.details?.tokenType,
-        count: nextStep.details?.count,
-        dynamicCount: nextStep.details?.dynamicCount,
-        detailsTargetOwnerId: nextStep.details?.targetOwnerId,
-        stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-        commandContextSourceOwnerId: commandContext?.sourceOwnerId,
-        nextStepIndex,
-        hasPreviousStep: !!previousStep,
-        previousStepAction: previousStep?.action,
-        hasPreviousStepChainedAction: !!previousStepChainedAction,
-        previousStepChainedActionType: previousStepChainedAction?.type,
-      })
       const details = nextStep.details || {}
 
       // CRITICAL: Convert "source" string to actual owner ID in dynamicCount
@@ -1088,7 +976,7 @@ export function advanceToNextStepWithCoords(
         ownerId: dynamicCount.ownerId === 'source' ? (sourceCard?.ownerId ?? gameState.activePlayerId ?? props.localPlayerId ?? 0) : dynamicCount.ownerId
       } : undefined
 
-      // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) with proper logging
+      // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER)
       // CRITICAL: Initialize as undefined, not details.targetOwnerId, to prevent string "source" from being assigned
       let resolvedTargetOwnerId: number | undefined = undefined
       if (details.targetOwnerId === 'source') {
@@ -1096,11 +984,6 @@ export function advanceToNextStepWithCoords(
       } else if (details.targetOwnerId === -2) {
         const contextOwnerId = stepContext?.sourceOwnerId ?? commandContext?.sourceOwnerId
         resolvedTargetOwnerId = contextOwnerId ?? details.targetOwnerId
-        console.log('[advanceToNextStepWithCoords] Resolved -2 to:', {
-          stepContextSourceOwnerId: stepContext?.sourceOwnerId,
-          commandContextSourceOwnerId: commandContext?.sourceOwnerId,
-          resolvedTargetOwnerId,
-        })
       } else if (typeof details.targetOwnerId === 'number') {
         // Use the number value directly (specific player ID)
         resolvedTargetOwnerId = details.targetOwnerId
@@ -1172,18 +1055,6 @@ export function advanceToNextStepWithCoords(
           }
         }
       }
-
-      // DIAGNOSTIC: Log stepAction properties
-      console.log('[advanceToNextStepWithCoords] stepAction created for CREATE_STACK:', {
-        stepActionToken: stepAction.tokenType,
-        stepActionOnlyOpponents: (stepAction as any).onlyOpponents,
-        stepActionOnlyFaceDown: (stepAction as any).onlyFaceDown,
-        stepActionTargetOwnerId: (stepAction as any).targetOwnerId,
-        detailsOnlyOpponents: details.onlyOpponents,
-        detailsOnlyFaceDown: details.onlyFaceDown,
-        detailsTargetOwnerId: details.targetOwnerId,
-        nextStepDetails: nextStep.details,
-      })
     } else if (nextStep.action === "CREATE_TOKEN") {
       // CREATE_TOKEN needs to be converted to OPEN_MODAL with PLACE_TOKEN mode
       stepAction = {
@@ -1262,12 +1133,6 @@ export function advanceToNextStepWithCoords(
       if (nextStep.mode === 'SELECT_CELL' && nextStep.details?.useContextCard) {
         // Try to get coords from stepContext (where the previous action completed)
         const contextCoords = stepContext?.lastMovedCardCoords || stepContext?.targetCoords || commandContext?.lastMovedCardCoords
-        console.log('[advanceToNextStepWithCoords] SELECT_CELL with useContextCard:', {
-          stepContextTargetCoords: stepContext?.targetCoords,
-          stepContextLastMoved: stepContext?.lastMovedCardCoords,
-          commandContextLastMoved: commandContext?.lastMovedCardCoords,
-          resolvedCoords: contextCoords,
-        })
         if (contextCoords && contextCoords.row >= 0 && contextCoords.col >= 0) {
           effectiveSourceCoords = contextCoords
           // Also get the context card (the unit with Exploit token)
@@ -1344,15 +1209,6 @@ export function advanceToNextStepWithCoords(
       (stepAction.onlyOpponents || stepAction.payload?.onlyOpponents) &&
       (stepAction.onlyFaceDown || stepAction.payload?.onlyFaceDown)
 
-    console.log('[advanceToNextStepWithCoords] Checking setTargetingMode condition:', {
-      hasSetTargetingMode: !!setTargetingMode,
-      hasCalculateValidTargets: !!calculateValidTargets,
-      isLineSelectionMode,
-      isHandTargetingCreateStack,
-      stepActionMode: stepAction.mode,
-      stepActionType: stepAction.type,
-    })
-
     if (setTargetingMode && calculateValidTargets && !isLineSelectionMode && !isHandTargetingCreateStack) {
       // CRITICAL: Use getFreshGameState() to get the latest state including tokens just placed
       // This fixes Data Interception option 1 where SELECT_UNIT_FOR_MOVE needs to see
@@ -1389,12 +1245,6 @@ export function advanceToNextStepWithCoords(
         props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
       } else {
         // For non-CREATE_STACK actions, set targeting mode normally
-        console.log('[advanceToNextStepWithCoords] Setting targetingMode for non-CREATE_STACK action:', {
-          mode: stepAction.mode,
-          ownerId,
-          validTargetsCount: validTargets.length,
-          stepActionKeys: Object.keys(stepAction),
-        })
         setTargetingMode(stepAction, ownerId, sourceCoords, validTargets, commandContext)
         // CRITICAL: Also set abilityMode so click handlers recognize the interaction
         // This fixes SELECT_UNIT_FOR_MOVE not working in AUTO_STEPS (Data Interception option 1)
@@ -1442,11 +1292,6 @@ function handleSelectTargetActionType(
 
   // OPEN_COUNTER_MODAL
   if (payload.actionType === 'OPEN_COUNTER_MODAL') {
-    console.log('[handleSelectTargetActionType] OPEN_COUNTER_MODAL triggered:', {
-      cardName: card.name,
-      rewardType: payload.rewardType,
-      hasAutoStepsContext: !!payload._autoStepsContext,
-    })
     // CRITICAL: payload.filter may be a string (e.g., "isOwner") instead of a function
     // Skip local filter check if filter is not a function - calculateValidTargets will handle it
     if (payload.filter && typeof payload.filter === 'function' && !payload.filter(card)) {
@@ -1456,11 +1301,6 @@ function handleSelectTargetActionType(
     // CRITICAL: currentStepIndex in payload points to the NEXT step, so we use currentStepIndex - 1
     // to get the CURRENT step that's being processed (OPEN_COUNTER_MODAL)
     const actualCurrentStepIndex = (payload._autoStepsContext?.currentStepIndex ?? 1) - 1
-    console.log('[handleSelectTargetActionType] Setting counterSelectionData with autoStepsContext:', {
-      steps: payload._autoStepsContext?.steps?.length,
-      payloadCurrentStepIndex: payload._autoStepsContext?.currentStepIndex,
-      actualCurrentStepIndex,
-    })
     setCounterSelectionData({
       card: card,
       callbackAction: payload.rewardType,
@@ -2083,17 +1923,13 @@ function handlePushMove(
 ): boolean {
   const { abilityMode, moveItem, markAbilityUsed, setAbilityMode, clearTargetingMode } = props
 
-  console.log('[handlePushMove] Called with abilityMode:', abilityMode?.mode, 'boardCoords:', boardCoords)
-
   if (!abilityMode || abilityMode.mode !== 'PUSH_MOVE') {
-    console.log('[handlePushMove] Not PUSH_MOVE mode, returning false')
     return false
   }
 
   const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload } = abilityMode
 
   if (!sourceCoords || !sourceCard || !payload?.vacatedCoords) {
-    console.log('[handlePushMove] Missing required data, returning false')
     return false
   }
 
@@ -2358,23 +2194,17 @@ function handleShieldSelfThenPush(
       payload: { vacatedCoords }
     }
 
-    console.log('[handleShieldSelfThenPush] Setting PUSH_MOVE mode with targets:', pushMoveTargets)
-
     // CRITICAL: Use flushSync to ensure all state updates happen synchronously
     // This prevents useEffect in App.tsx from clearing targeting mode prematurely
     flushSync(() => {
       // Set ability mode to PUSH_MOVE first
       setAbilityMode(pushMoveAction)
-      console.log('[handleShieldSelfThenPush] setAbilityMode PUSH_MOVE done')
 
       // Set up targeting mode for PUSH_MOVE with valid targets
       if (setTargetingMode) {
         setTargetingMode(pushMoveAction, ownerId, sourceCoords, pushMoveTargets)
-        console.log('[handleShieldSelfThenPush] setTargetingMode done')
       }
     })
-
-    console.log('[handleShieldSelfThenPush] After flushSync, calling moveItem')
 
     // Perform the push AFTER setting ability mode and targeting mode
     moveItem({ card, source: 'board', boardCoords, bypassOwnershipCheck: true }, { target: 'board', boardCoords: { row: targetRow, col: targetCol } })
@@ -2579,20 +2409,6 @@ function handleSelectUnitForMove(
   // For other abilities, it might be at the top level. Check both.
   const actualChainedAction = directChainedAction || payload?.chainedAction
 
-  // DEBUG: Log chained action status
-  console.log('[handleSelectUnitForMove] chainedAction status:', {
-    hasDirectChainedAction: !!directChainedAction,
-    hasPayloadChainedAction: !!payload?.chainedAction,
-    actualChainedAction: actualChainedAction,
-    actualChainedActionKeys: actualChainedAction ? Object.keys(actualChainedAction) : [],
-    actualChainedActionAction: (actualChainedAction as any)?.action,
-    actualChainedActionType: (actualChainedAction as any)?.type,
-    actualChainedActionDetails: (actualChainedAction as any)?.details,
-    actualChainedActionPayload: (actualChainedAction as any)?.payload,
-    originalOwnerId,
-    sourceCardName: sourceCard?.name,
-  })
-
   if (sourceCard && sourceCard.id === card.id) {
     return false
   }
@@ -2668,26 +2484,6 @@ function handleSelectUnitForMove(
       _autoStepsContext: abilityMode.payload?._autoStepsContext,
     },
   }
-
-  console.log('[handleSelectUnitForMove] Created newMode:', {
-    newModeType: newMode.type,
-    newModeMode: newMode.mode,
-    selectedCardId: cardToUse.id,
-    selectedCardName: cardToUse.name,
-    selectedCardPower,
-    newModeChainedActionType: newMode.chainedAction?.type,
-    newModeChainedActionPayload: newMode.chainedAction?.payload,
-    newModeOriginalOwnerId: newMode.originalOwnerId,
-    hasAutoStepsContext: !!newMode.payload._autoStepsContext,
-    autoStepsContextStepIndex: newMode.payload._autoStepsContext?.currentStepIndex,
-    autoStepsContextStepsLength: newMode.payload._autoStepsContext?.steps?.length,
-  })
-  console.log('[handleSelectUnitForMove] _autoStepsContext DETAILS:', {
-    hasAbilityModePayload: !!abilityMode.payload,
-    hasAbilityModeAutoStepsContext: !!abilityMode.payload?._autoStepsContext,
-    abilityModeAutoStepsContext: abilityMode.payload?._autoStepsContext,
-    newModePayloadAutoStepsContext: newMode.payload._autoStepsContext,
-  })
 
   setAbilityMode(newMode)
 
@@ -3017,18 +2813,6 @@ function handleSelectCell(
   // For other abilities, it might be at the top level. Check both.
   const actualChainedAction = directChainedAction || payload?.chainedAction
 
-  // DEBUG: Log conditions for AUTO_STEPS continuation
-  console.log('[handleSelectCell] AUTO_STEPS context check:', {
-    hasPayload: !!payload,
-    hasAutoStepsContext: !!payload?._autoStepsContext,
-    hasActualChainedAction: !!actualChainedAction,
-    hasDirectChainedAction: !!directChainedAction,
-    hasPayloadChainedAction: !!payload?.chainedAction,
-    hasSetActionQueue: !!setActionQueue,
-    autoStepsContextStepIndex: payload?._autoStepsContext?.currentStepIndex,
-    autoStepsContextStepsLength: payload?._autoStepsContext?.steps?.length,
-  })
-
   if (payload?.filter && !payload.filter(null, boardCoords.row, boardCoords.col)) {
     return false
   }
@@ -3090,14 +2874,7 @@ function handleSelectCell(
     // In contentDatabase.json, chainedAction has: {action: "GLOBAL_AUTO_APPLY", details: {contextReward: "..."}}
     // But AbilityAction expects: {type: "GLOBAL_AUTO_APPLY", payload: {contextReward: "..."}}
     const originalFormat = (actualChainedAction as any).action && !(actualChainedAction as any).type
-    console.log('[handleSelectCell] chainedAction format check:', {
-      hasAction: !!(actualChainedAction as any).action,
-      hasType: !!(actualChainedAction as any).type,
-      hasDetails: !!(actualChainedAction as any).details,
-      hasPayload: !!(actualChainedAction as any).payload,
-      needsConversion: originalFormat,
-      rawChainedAction: actualChainedAction
-    })
+
     const normalizedAction: any = originalFormat
       ? {
           type: (actualChainedAction as any).action,
@@ -3109,14 +2886,6 @@ function handleSelectCell(
         }
       : actualChainedAction
 
-    console.log('[handleSelectCell] Normalized chainedAction:', {
-      type: normalizedAction.type,
-      payload: normalizedAction.payload,
-      contextReward: normalizedAction.payload?.contextReward,
-      hasContextCardPower: !!normalizedAction.payload?.contextCardPower,
-      hasAutoStepsContext: !!normalizedAction.payload?._autoStepsContext,
-    })
-
     // CRITICAL: Convert ownerId: "source" to actual command owner ID BEFORE creating enrichedChainedAction
     // This ensures Stun tokens belong to the player who played the command
     if (normalizedAction.type === 'GLOBAL_AUTO_APPLY' && normalizedAction.payload?.ownerId === 'source') {
@@ -3124,7 +2893,6 @@ function handleSelectCell(
         ...(normalizedAction.payload || {}),
         ownerId: originalOwnerId,
       }
-      console.log('[handleSelectCell] Converting ownerId from "source" to:', originalOwnerId)
     }
 
     // CRITICAL: For False Orders Option 1 (Revealed tokens), resolve targetOwnerId before creating enrichedChainedAction
@@ -3133,23 +2901,6 @@ function handleSelectCell(
     const isRevealedTokens = normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed' && movedCard
     if (isRevealedTokens && movedCard.ownerId !== undefined) {
       resolvedTargetOwnerId = movedCard.ownerId
-      console.log('[handleSelectCell] Resolved targetOwnerId for Revealed tokens:', {
-        resolvedTargetOwnerId,
-        movedCardName: movedCard.name,
-        movedCardOwnerId: movedCard.ownerId,
-        originalPayloadTargetOwnerId: (normalizedAction.payload as any)?.targetOwnerId,
-        originalDetailsTargetOwnerId: (normalizedAction as any).details?.targetOwnerId,
-        isRevealedTokens,
-        hasMovedCard: !!movedCard,
-      })
-    } else {
-      console.log('[handleSelectCell] Skipping Revealed token resolution:', {
-        normalizedActionType: normalizedAction.type,
-        normalizedActionTokenType: normalizedAction.tokenType,
-        hasMovedCard: !!movedCard,
-        movedCardOwnerId: movedCard?.ownerId,
-        isRevealedTokens,
-      })
     }
 
     // Add _tempContextId to help find the moved card in case state hasn't updated yet
@@ -3193,22 +2944,11 @@ function handleSelectCell(
       delete (enrichedChainedAction.payload as any).excludeOwnerId
     }
 
-    // DEBUG: Log enrichedChainedAction to verify sourceCard is included
-    console.log('[handleSelectCell] enrichedChainedAction before queue:', {
-      hasSourceCard: !!enrichedChainedAction.sourceCard,
-      sourceCardId: enrichedChainedAction.sourceCard?.id,
-      sourceCardName: enrichedChainedAction.sourceCard?.name,
-      type: enrichedChainedAction.type,
-      contextReward: enrichedChainedAction.payload?.contextReward,
-      abilityModeSourceCardId: abilityMode.sourceCard?.id,
-    })
-
     // CRITICAL: Execute chainedAction with proper handling based on type
     // For CREATE_STACK (Revealed), execute through handleActionExecution to create cursorStack
     // For GLOBAL_AUTO_APPLY (Stun), add to actionQueue
     if (normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed') {
       // For Revealed tokens, execute through handleActionExecution to create cursorStack
-      console.log('[handleSelectCell] Executing CREATE_STACK (Revealed) through handleActionExecution')
       if (props.handleActionExecution) {
         setTimeout(() => {
           props.handleActionExecution(enrichedChainedAction, { row: -1, col: -1 })
@@ -3275,18 +3015,8 @@ function handleSelectCell(
               }
             }
             actionsToQueue.push(continueAction)
-            console.log('[handleSelectCell] Adding CONTINUE_AUTO_STEPS after chainedAction, stepIndex:', autoStepsContext.currentStepIndex)
           }
 
-          // DEBUG: Log actionQueue state
-          console.log('[handleSelectCell] Adding chainedAction to queue:', {
-            prevLength: prev.length,
-            cleanupActionsCount: cleanupActions.length,
-            otherActionsCount: otherActions.length,
-            chainedActionType: enrichedChainedAction.type,
-            chainedActionMode: enrichedChainedAction.mode,
-            hasAutoStepsContext: !!payload?._autoStepsContext
-          })
           // Insert chainedAction before cleanupCommand(s)
           return [...otherActions, ...actionsToQueue, ...cleanupActions]
         })
@@ -3313,8 +3043,6 @@ function handleSelectCell(
         }
       }
     }
-
-    console.log('[handleSelectCell] No chainedAction, adding CONTINUE_AUTO_STEPS directly, stepIndex:', autoStepsContext.currentStepIndex)
 
     setActionQueue(prev => {
       const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
@@ -3784,11 +3512,6 @@ function handleSelectDiagonal(
   // CRITICAL: Check if this is part of AUTO_STEPS (command cards like Logistics Chain)
   // If so, continue to next step (CLEANUP_COMMAND) to discard the command card
   if (isCommandCard) {
-    console.log('[handleSelectDiagonal] Continuing AUTO_STEPS to CLEANUP_COMMAND:', {
-      currentStepIndex: autoStepsContext.currentStepIndex,
-      totalSteps: autoStepsContext.steps.length,
-      ownerId,
-    })
     // Use currentAbilityMode.sourceCoords for sourceCoords (command card location)
     const sourceCoords = currentAbilityMode.sourceCoords || { row: 0, col: 0 }
     advanceToNextStepWithCoords(props, sourceCoords, autoStepsContext.currentStepIndex + 1)

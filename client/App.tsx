@@ -18,7 +18,6 @@ import { ReconnectingModal } from './components/ReconnectingModal'
 import { ModalsRenderer, ModalsProvider, useModals } from './components/ModalsRenderer'
 import { VUTestPanel } from './components/VUTestPanel'
 import GameLogModal from './components/GameLogModal'
-import { logger } from './utils/logger'
 import { useGameState } from './hooks/useGameState'
 import { useAppAbilities } from './hooks/useAppAbilities'
 import { useAppCommand } from './hooks/useAppCommand'
@@ -94,6 +93,7 @@ const AppInner = function AppInner() {
     setGamePrivacy,
     setActiveGridSize,
     setDummyPlayerCount,
+    setStrictRulesEnabled,
     updatePlayerName,
     changePlayerColor,
     updatePlayerScore,
@@ -130,7 +130,6 @@ const AppInner = function AppInner() {
     respondToRevealRequest,
     syncGame,
     toggleActivePlayer,
-    toggleAutoDraw,
     forceReconnect,
     connectToSignalling,
     isConnectedToSignalling,
@@ -299,38 +298,14 @@ const AppInner = function AppInner() {
   }, [gameState.isMulliganActive, gameState.isGameStarted, gameState, localPlayerId, imageRefreshVersion, openMulliganModal, closeMulliganModal, confirmMulligan])
 
   const [contextMenuProps, setContextMenuProps] = useState<ContextMenuParams | null>(null)
-  const [playMode, setPlayMode] = useState<{ card: Card; sourceItem: DragItem; faceDown?: boolean } | null>(null)
+  const [playMode, setPlayMode] = useState<{ card: Card; sourceItem: DragItem; faceDown?: boolean; clearLatenessOnNextPlay?: boolean } | null>(null)
 
   const [highlight, setHighlight] = useState<HighlightData | { row: number; col: number; color: string; duration?: number; timestamp: number } | null>(null)
   const [activeFloatingTexts, setActiveFloatingTexts] = useState<FloatingTextData[] | { id: string; text: string; coords?: { row: number; col: number }; color: string; timestamp: number }[]>([])
 
-  // Track when we last received highlights from server (to prevent clearing them prematurely)
-  const [isAutoAbilitiesEnabled, setIsAutoAbilitiesEnabled] = useState(() => {
-    try {
-      const saved = localStorage.getItem('auto_abilities_enabled')
-      return saved === null ? true : saved === 'true'
-    } catch {
-      return true
-    }
-  })
-
-  // Save auto-abilities setting to localStorage when it changes
-  useEffect(() => {
-    try {
-      localStorage.setItem('auto_abilities_enabled', String(isAutoAbilitiesEnabled))
-    } catch {
-      // Ignore localStorage errors
-    }
-  }, [isAutoAbilitiesEnabled])
-
-  // Auto-draw is now stored per-player in gameState.players
-  const isAutoDrawEnabled = useMemo(() => {
-    if (!localPlayerId || !gameState) {
-      return false
-    }
-    const localPlayer = gameState.players.find(p => p.id === localPlayerId)
-    return localPlayer?.autoDrawEnabled ?? true // Default to true if not set
-  }, [gameState, localPlayerId])
+  // Auto-abilities and Auto-draw are always enabled (hidden from UI)
+  const isAutoAbilitiesEnabled = true
+  const isAutoDrawEnabled = true
 
   // Memoize board size to avoid unnecessary effect re-renders
   const boardSize = useMemo(() => gameState?.board?.length ?? 6, [gameState?.board?.length])
@@ -800,7 +775,13 @@ const AppInner = function AppInner() {
   }, [handleDrop, gameLogHook])
 
   const localPlayer = useMemo(
-    () => gameState?.players?.find(p => p.id === localPlayerId),
+    () => {
+      const found = gameState?.players?.find(p => p.id === localPlayerId)
+      if (found && found.hasLateness) {
+        // hasLateness set
+      }
+      return found
+    },
     [gameState?.players, localPlayerId],
   )
 
@@ -814,18 +795,6 @@ const AppInner = function AppInner() {
       const localPlayerExists = localPlayerId !== null && gameState?.players?.some(p => p.id === localPlayerId)
       const active = gameState?.gameId && (localPlayerExists || isSpectator)
 
-      // Debug logging for WebRTC P2P restore
-      // if (getWebRTCEnabled()) {
-      //   logger.debug('[isGameActive] Check:', {
-      //     hasGameId: !!gameState?.gameId,
-      //     gameId: gameState?.gameId,
-      //     localPlayerExists,
-      //     localPlayerId,
-      //     hasIsSpectator: isSpectator,
-      //     playersCount: gameState?.players?.length || 0,
-      //     isActive: active
-      //   })
-      // }
       return active
     },
     [gameState?.gameId, gameState?.players, localPlayerId, isSpectator],
@@ -1374,12 +1343,6 @@ const AppInner = function AppInner() {
 
       // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
       if (_autoStepsContext && setActionQueue) {
-        console.log('[App.tsx] Continuing AUTO_STEPS after playMode completes:', {
-          currentStepIndex: _autoStepsContext.currentStepIndex,
-          totalSteps: _autoStepsContext.steps.length,
-          commandCardId: _autoStepsContext.commandCardId,
-        })
-
         // Find the command card for sourceCard
         // CRITICAL: Player has announcedCard (singular), not announced (array)
         const commandCard = gameState.players
@@ -2329,16 +2292,6 @@ const AppInner = function AppInner() {
     // wait for it to complete before processing the next action in the queue
     if (actionQueue.length > 0 && !abilityMode && !cursorStack && !pendingChainedActionRef.current) {
       const nextAction = actionQueue[0]
-      // DEBUG: Log actionQueue processing
-      console.log('[actionQueue] Processing action:', {
-        actionQueueLength: actionQueue.length,
-        actionType: nextAction.type,
-        actionMode: nextAction.mode,
-        hasCleanupCommand: nextAction.payload?.cleanupCommand,
-        abilityMode,
-        cursorStack,
-        pendingChainedAction: pendingChainedActionRef.current
-      })
       setActionQueue(prev => prev.slice(1))
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
@@ -2405,13 +2358,6 @@ const AppInner = function AppInner() {
               })
             )
             if (!alreadyCounted) {
-              console.log('[calculateDynamicCount] Adding lastPlaced Aim token to count:', {
-                tokenType: justPlaced.tokenType,
-                boardCoords: justPlaced.boardCoords,
-                addedByPlayerId: justPlaced.addedByPlayerId,
-                countBefore: count,
-                countAfter: count + 1
-              })
               count += 1
             }
           }
@@ -2439,13 +2385,6 @@ const AppInner = function AppInner() {
               })
             )
             if (!alreadyCounted) {
-              console.log('[calculateDynamicCount] Adding lastPlaced Exploit token to count:', {
-                tokenType: justPlaced.tokenType,
-                boardCoords: justPlaced.boardCoords,
-                addedByPlayerId: justPlaced.addedByPlayerId,
-                countBefore: count,
-                countAfter: count + 1
-              })
               count += 1
             }
           }
@@ -2533,14 +2472,6 @@ const AppInner = function AppInner() {
           // but we call executeAction to trigger it
           // CRITICAL: contextReward (DRAW_MOVED_POWER, SCORE_MOVED_POWER) doesn't require sourceCard
           // It finds the moved card via commandContext and uses its power
-          console.log('[actionQueue] Processing contextReward action:', {
-            contextReward: actionToProcess.payload.contextReward,
-            sourceCardName: actionToProcess.sourceCard?.name || '(no sourceCard)',
-            sourceCoords: actionToProcess.sourceCoords,
-            originalOwnerId: actionToProcess.originalOwnerId,
-            _tempContextId: actionToProcess.payload._tempContextId,
-            _sourceCoordsBeforeMove: actionToProcess.payload._sourceCoordsBeforeMove
-          })
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else if (actionToProcess.payload?.customAction && actionToProcess.sourceCard) {
           // Handle custom actions like FINN_SCORING
@@ -2549,18 +2480,10 @@ const AppInner = function AppInner() {
           // CRITICAL: Handle token placement on context card (False Orders option 2: Stun x2)
           // This case has tokenType and count in payload for placing on the moved card
           // Send to executeAction which will call handleGlobalAutoApply
-          console.log('[actionQueue] Processing token placement on context card:', {
-            tokenType: actionToProcess.payload.tokenType,
-            count: actionToProcess.payload.count,
-            contextCardId: actionToProcess.payload.contextCardId,
-            _tempContextId: actionToProcess.payload._tempContextId,
-            sourceCoords: actionToProcess.sourceCoords,
-          })
           executeAction(actionToProcess, actionToProcess.sourceCoords || { row: -1, col: -1 })
         } else {
           // CRITICAL: Unknown GLOBAL_AUTO_APPLY action - don't let it fall through to executeAction
           // This prevents cleanupCommand and other special actions from being routed incorrectly
-          console.warn('[actionQueue] Unknown GLOBAL_AUTO_APPLY action, skipping:', actionToProcess)
           setActionQueue(prev => prev.slice(1))
           return
         }
@@ -2650,12 +2573,6 @@ const AppInner = function AppInner() {
     const inviteHostId = sessionStorage.getItem('invite_host_id')
     const autoJoinFlag = sessionStorage.getItem('invite_auto_join')
 
-    logger.info('[App] WebRTC invite effect:', {
-      inviteHostId,
-      autoJoinFlag,
-      connectAsGuestAvailable: typeof connectAsGuest === 'function',
-      webrtcIsHost
-    })
 
     // Only log if there's actually an invite to process
     if (inviteHostId && autoJoinFlag && typeof connectAsGuest === 'function') {
@@ -2663,16 +2580,9 @@ const AppInner = function AppInner() {
       sessionStorage.removeItem('invite_host_id')
       sessionStorage.removeItem('invite_auto_join')
 
-      logger.info('[App] Attempting to connect as guest to host:', inviteHostId)
 
       // Connect to host (async, but we don't need to wait for it here)
       connectAsGuest(inviteHostId)
-        .then((success) => {
-          logger.info('[App] connectAsGuest result:', success, 'localPlayerId:', localPlayerId)
-        })
-        .catch((err) => {
-          logger.error('[App] connectAsGuest error:', err)
-        })
     }
   }, [connectAsGuest]) // Run when connectAsGuest is available
 
@@ -2701,7 +2611,6 @@ const AppInner = function AppInner() {
         if (isWebRTCMode) {
           // For WebRTC mode, we need hostId, not gameId
           // The invite link should have #hostId=... instead of #game=...
-          logger.warn('[App] Received gameId invite in WebRTC mode - this requires hostId parameter')
           // Don't attempt to join - would cause incorrect connection
           return
         }
@@ -2956,7 +2865,6 @@ const AppInner = function AppInner() {
   // Shared handler for closing deck/discard view with shuffle support
   // cardSelected: true when a card was actually selected (to continue AUTO_STEPS), false otherwise
   const handleDeckViewClose = useCallback((cardSelected = false) => {
-    console.log('[App.tsx] handleDeckViewClose called:', { cardSelected, hasViewingDiscard: !!viewingDiscard })
     if (!viewingDiscard) {
       return
     }
@@ -2969,14 +2877,7 @@ const AppInner = function AppInner() {
     // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
     // Only continue if a card was actually selected
     const { _autoStepsContext } = viewingDiscard as any
-    console.log('[App.tsx] Checking AUTO_STEPS continuation:', { hasAutoStepsContext: !!_autoStepsContext, cardSelected })
     if (_autoStepsContext && setActionQueue && cardSelected) {
-      console.log('[App.tsx] Continuing AUTO_STEPS after deck view closes:', {
-        currentStepIndex: _autoStepsContext.currentStepIndex,
-        totalSteps: _autoStepsContext.steps.length,
-        commandCardId: _autoStepsContext.commandCardId,
-      })
-
       // Find the command card for sourceCard
       const commandCard = gameState.players
         .map(p => p.announcedCard)
@@ -3037,12 +2938,10 @@ const AppInner = function AppInner() {
     }
 
     const { action, isDeck: pickIsDeck } = pickConfig
-    console.log('[App.tsx] handleDiscardCardClick:', { cardIndex, action, pickIsDeck })
 
     if (action === 'recover') {
       // Add to hand
       if (pickIsDeck) {
-        console.log('[App.tsx] Moving card from deck to hand:', { cardIndex, playerId: viewingDiscardPlayer.id })
         moveItem({
           card: viewingDiscardPlayer.deck[cardIndex],
           source: 'deck',
@@ -3057,7 +2956,6 @@ const AppInner = function AppInner() {
       }
       // Use shared close handler (handles shuffle if required)
       // Pass true to indicate a card was selected (for AUTO_STEPS continuation)
-      console.log('[App.tsx] Card moved, calling handleDeckViewClose(true)')
       handleDeckViewClose(true)
     } else if (action === 'resurrect') {
       // For Immunis: Select card, then close modal to allow cell selection
@@ -3513,16 +3411,10 @@ const AppInner = function AppInner() {
         onPrevPhase={prevPhase}
         activePlayerId={gameState.activePlayerId}
         playerColorMap={playerColorMap}
-        isAutoAbilitiesEnabled={isAutoAbilitiesEnabled}
-        onToggleAutoAbilities={setIsAutoAbilitiesEnabled}
-        isAutoDrawEnabled={isAutoDrawEnabled}
-        onToggleAutoDraw={(enabled) => {
-          if (localPlayerId) {
-            toggleAutoDraw(localPlayerId, enabled)
-          }
-        }}
         hideDummyCards={hideDummyCards}
         onToggleHideDummyCards={setHideDummyCards}
+        strictRulesEnabled={gameState.strictRulesEnabled ?? true}
+        onStrictRulesToggle={setStrictRulesEnabled}
         currentRound={gameState.currentRound}
         turnNumber={gameState.turnNumber}
         isScoringStep={gameState.isScoringStep}

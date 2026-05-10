@@ -239,6 +239,8 @@ export const ru: TranslationResource = {
     gridSize: 'Размер поля',
     autoAbilities: 'Авто-абилки',
     gameMode: 'Режим игры',
+    strictRules: 'Строгие правила',
+    strictRulesTooltip: 'Строгие правила: Включить эффект опоздания (карты в руке становятся недоступными после игры на поле)',
     '2v2': '2v2',
     '3v1': '3v1',
     reconnect: 'Переподключиться',

@@ -15,7 +15,15 @@ import TrysteroHost, { TrysteroHostConfig } from './TrysteroHost'
 import TrysteroGuest, { TrysteroGuestConfig } from './TrysteroGuest'
 import type { SimpleHostConfig, SimpleGuestConfig, PersonalizedState } from './SimpleP2PTypes'
 import type { GameState } from '../types'
-import { logger } from '../utils/logger'
+import {
+  logManagerStrategy,
+  logManagerPeerJSAttempt,
+  logManagerPeerJSFailed,
+  logManagerAllServersFailed,
+  logManagerConnected,
+  logManagerLocalOnly,
+  logManagerConnectingToSignalling
+} from './P2PLogger'
 
 /**
  * Connection strategy types
@@ -83,6 +91,8 @@ export class HostConnectionManager {
   async initialize(customPeerId?: string): Promise<{ peerId: string; strategy: ConnectionStrategy }> {
     this.status = 'connecting-peerjs'
 
+    logManagerStrategy('peerjs')
+
     try {
       // Step 1: Try PeerJS with all servers
       const peerjsResult = await this.tryPeerJS(customPeerId)
@@ -90,32 +100,33 @@ export class HostConnectionManager {
         this.activeHost = this.peerjsHost
         this.currentStrategy = 'peerjs'
         this.status = 'connected'
-        logger.info('[ConnectionManager] Connected via PeerJS')
+        logManagerConnected('peerjs', peerjsResult)
         return { peerId: peerjsResult, strategy: 'peerjs' }
       }
     } catch (e) {
-      logger.warn('[ConnectionManager] PeerJS failed:', e)
     }
 
     // Step 2: Try Trystero if enabled
     if (this.config.enableTrysteroFallback) {
       this.status = 'connecting-trystero'
+      logManagerStrategy('trystero')
       try {
         const trysteroResult = await this.tryTrystero()
         if (trysteroResult) {
           this.activeHost = this.trysteroHost
           this.currentStrategy = 'trystero'
           this.status = 'connected'
-          logger.info('[ConnectionManager] Connected via Trystero')
+          logManagerConnected('trystero', trysteroResult)
           return { peerId: trysteroResult, strategy: 'trystero' }
         }
       } catch (e) {
-        logger.warn('[ConnectionManager] Trystero failed:', e)
+        // Trystero failed
       }
     }
 
     // All strategies failed
     this.status = 'failed'
+    logManagerAllServersFailed()
     throw new Error('Failed to connect via PeerJS and Trystero')
   }
 
@@ -126,6 +137,8 @@ export class HostConnectionManager {
     const maxRetries = getServerCount()
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      logManagerPeerJSAttempt(attempt, maxRetries)
+
       try {
         const options = getPeerJSOptions(customPeerId, attempt)
 
@@ -139,7 +152,7 @@ export class HostConnectionManager {
         return peerId
 
       } catch (e: any) {
-        logger.warn(`[ConnectionManager] PeerJS attempt ${attempt + 1} failed:`, e.message)
+        logManagerPeerJSFailed(attempt, (attempt + 1) % maxRetries)
 
         // Try next server
         tryNextPeerJSServer()
@@ -178,7 +191,6 @@ export class HostConnectionManager {
       return roomId
 
     } catch (e: any) {
-      logger.warn('[ConnectionManager] Trystero failed:', e.message)
 
       if (this.trysteroHost) {
         try {
@@ -298,7 +310,8 @@ export class HostConnectionManager {
     this.activeHost = this.peerjsHost
     this.currentStrategy = 'peerjs'
 
-    logger.info('[ConnectionManager] Local game initialized, gameId:', gameId)
+    logManagerLocalOnly(gameId)
+
     return gameId
   }
 
@@ -314,10 +327,12 @@ export class HostConnectionManager {
 
     this.status = 'connecting-peerjs'
 
+    logManagerConnectingToSignalling()
+
     try {
       const peerId = await this.peerjsHost.connectToSignalling(customPeerId)
       this.status = 'connected'
-      logger.info('[ConnectionManager] Connected to signalling server, peerId:', peerId)
+      logManagerConnected('peerjs', peerId)
       return { peerId, strategy: 'peerjs' }
     } catch (e) {
       this.status = 'failed'
@@ -427,11 +442,9 @@ export class GuestConnectionManager {
       await this.connectViaPeerJS(hostId, playerName, playerToken)
       this.currentStrategy = 'peerjs'
       this.status = 'connected'
-      logger.info('[ConnectionManager] Connected via PeerJS')
       return { strategy: 'peerjs' }
 
     } catch (e) {
-      logger.warn('[ConnectionManager] PeerJS failed:', e)
 
       // Step 2: Try Trystero if enabled
       if (this.config.enableTrysteroFallback) {
@@ -440,12 +453,10 @@ export class GuestConnectionManager {
           await this.connectViaTrystero(hostId, playerName, playerToken)
           this.currentStrategy = 'trystero'
           this.status = 'connected'
-          logger.info('[ConnectionManager] Connected via Trystero')
           return { strategy: 'trystero' }
 
         } catch (e2) {
-          logger.warn('[ConnectionManager] Trystero failed:', e2)
-        }
+          }
       }
 
       // All strategies failed

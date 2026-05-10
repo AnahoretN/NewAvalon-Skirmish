@@ -199,6 +199,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
           const itemToDrop: DragItem = {
             ...playMode.sourceItem,
             card: { ...playMode.sourceItem.card },
+            clearLatenessOnNextPlay: playMode.clearLatenessOnNextPlay,  // Pass through for Quick Response Team
           }
           itemToDrop.card.isFaceDown = !!playMode.faceDown
           handleDrop(itemToDrop, { target: 'board', boardCoords: { row, col } })

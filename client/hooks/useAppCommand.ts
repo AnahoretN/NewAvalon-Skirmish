@@ -51,16 +51,13 @@ export const useAppCommand = ({
     setCommandContext({})
 
     const baseId = card.baseId || card.id.split('_')[1] || card.id
-    console.log('[playCommandCard] card.id:', card.id, 'card.baseId:', card.baseId, 'extracted baseId:', baseId)
 
     // 2. Check if this is a command card using the new system
     // Note: baseId is already camelCase from database, don't convert to lowercase
     if (isCommandCard(baseId)) {
-      console.log('[playCommandCard] Is command card, opening modal')
       // Command card with options - open modal
       setCommandModalCard({ ...card, ownerId: source.playerId! })
     } else {
-      console.log('[playCommandCard] Not recognized as command card, checking options')
       // Simple Command (e.g. Mobilization without options)
       // For now, treat as single-option command
       const options = getCommandOptions(baseId)
@@ -81,7 +78,6 @@ export const useAppCommand = ({
         }
       } else {
         // No options found - fallback to old behavior or show modal anyway
-        console.log('[playCommandCard] No options found, showing modal anyway')
         setCommandModalCard({ ...card, ownerId: source.playerId! })
       }
     }
@@ -95,14 +91,6 @@ export const useAppCommand = ({
     const ownerId = commandModalCard.ownerId || localPlayerId
     const baseId = commandModalCard.baseId || commandModalCard.id.split('_')[1] || commandModalCard.id
 
-    console.log('[handleCommandConfirm] INPUT:', {
-      optionIndex,
-      commandModalCardId: commandModalCard.id,
-      commandModalCardBaseId: commandModalCard.baseId,
-      extractedBaseId: baseId,
-      ownerId
-    })
-
     // Get the action for the selected option using the new system
     // Note: baseId is already camelCase from database, don't convert to lowercase
     const action = getCommandActionByOption(
@@ -114,8 +102,6 @@ export const useAppCommand = ({
       { row: -1, col: -1 }
     )
 
-    console.log('[handleCommandConfirm] action from getCommandActionByOption:', action)
-
     // NOTE: Cleanup is now handled automatically as the final step in contentAbilities.ts
     // No need to add cleanup action here anymore
 
@@ -125,19 +111,11 @@ export const useAppCommand = ({
       queue.push(action)
     }
 
-    console.log('[handleCommandConfirm] final queue:', queue)
-
     setActionQueue(queue)
     setCommandModalCard(null)
   }, [gameState, localPlayerId, setActionQueue, setCommandModalCard])
 
   const handleCounterSelectionConfirm = useCallback((countsToRemove: Record<string, number>, data: CounterSelectionData) => {
-    console.log('[handleCounterSelectionConfirm] Called:', {
-      countsToRemove,
-      cardName: data.card.name,
-      callbackAction: data.callbackAction,
-      hasAutoStepsContext: !!data.autoStepsContext,
-    })
     if (localPlayerId === null) {
       return
     }
@@ -184,28 +162,13 @@ export const useAppCommand = ({
       const { steps, currentStepIndex, abilityAction } = data.autoStepsContext
       const nextStepIndex = currentStepIndex + 1
 
-      console.log('[handleCounterSelectionConfirm] AUTO_STEPS context:', {
-        currentStepIndex,
-        nextStepIndex,
-        totalSteps: steps.length,
-        steps: steps.map((s, i) => `${i}: ${s.action}`),
-      })
-
       if (nextStepIndex < steps.length) {
         // Continue to next step (cleanup step)
         const nextStep = steps[nextStepIndex]
-        console.log('[handleCounterSelectionConfirm] Continuing to next step:', {
-          currentStepIndex,
-          nextStepIndex,
-          totalSteps: steps.length,
-          nextStepAction: nextStep.action,
-          nextStepDetails: nextStep.details,
-        })
 
         // CRITICAL: Handle CLEANUP_COMMAND step directly instead of adding to queue
         // This prevents the action from being routed through executeAction which causes errors
         if (nextStep.action === 'GLOBAL_AUTO_APPLY' && nextStep.details?.customAction === 'CLEANUP_COMMAND') {
-          console.log('[handleCounterSelectionConfirm] Processing CLEANUP_COMMAND step directly')
           // The cleanup will be handled by the normal App.tsx flow
           // App.tsx will automatically re-queue if abilityMode is still active
           const cleanupAction = {
@@ -214,7 +177,6 @@ export const useAppCommand = ({
             sourceCard: abilityAction.sourceCard,
             sourceCoords: abilityAction.sourceCoords,
           }
-          console.log('[handleCounterSelectionConfirm] Adding cleanup action:', cleanupAction)
           setActionQueue([cleanupAction])
           // CRITICAL: Close the modal before returning
           setCounterSelectionData(null)
@@ -243,11 +205,9 @@ export const useAppCommand = ({
               }
             }
           }
-          console.log('[handleCounterSelectionConfirm] Adding to action queue:', newAction)
           setActionQueue([newAction])
         }
       } else {
-        console.log('[handleCounterSelectionConfirm] No more steps to process')
         // Fallback: Add cleanup action if no cleanup step was found
         const cleanupAction = {
           type: 'GLOBAL_AUTO_APPLY',
@@ -255,11 +215,8 @@ export const useAppCommand = ({
           sourceCard: abilityAction.sourceCard,
           sourceCoords: abilityAction.sourceCoords,
         }
-        console.log('[handleCounterSelectionConfirm] Adding cleanup action (fallback):', cleanupAction)
         setActionQueue([cleanupAction])
       }
-    } else {
-      console.log('[handleCounterSelectionConfirm] No autoStepsContext found')
     }
 
     setCounterSelectionData(null)

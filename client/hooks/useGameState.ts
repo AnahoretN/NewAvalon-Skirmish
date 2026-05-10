@@ -10,7 +10,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { GameState, Card, DragItem, HighlightData, FloatingTextData, DeckSelectionData, HandCardSelectionData } from '../types'
 import { createInitialState, createDeck } from './core/gameCreators'
-import { logger } from '../utils/logger'
 import type { PersonalizedState } from '../p2p/SimpleP2PTypes'
 import { SimpleHost, SimpleGuest, createHostFromSavedSession } from '../p2p'
 import { HostConnectionManager, GuestConnectionManager, ConnectionStrategy } from '../p2p/ConnectionManager'
@@ -65,6 +64,8 @@ interface UseGameStateResult {
   setGameMode: (mode: any) => void
   setGamePrivacy: (isPrivate: boolean) => void
   setActiveGridSize: (size: any) => void
+  setDummyPlayerCount: (count: number) => void
+  setStrictRulesEnabled: (enabled: boolean) => void
   assignTeams: (teams: any) => void
 
   // Player actions
@@ -287,6 +288,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   })
 
   // Refs для useVisualEffects
+  const lastDropTimestampRef = useRef<number>(0)
+  const interactionLock = useRef(false)
   const gameStateRef = useRef(gameState)
   const localPlayerIdRef = useRef(localPlayerId)
   // CRITICAL: Track state version to prevent old states from overwriting newer ones
@@ -355,6 +358,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
               return // Skip old state
             }
           }
+
+          const player1 = personalState.players.find((p: any) => p.id === 1)
 
           const fullState = personalToGameState(personalState, 1)
           // Defer state update to avoid flushSync during render cycle
@@ -430,7 +435,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
       hostRef.current = (manager as any).activeHost
 
       setConnectionStatus('Connected')
-      logger.info('[createGame] Connected via', strategy, 'peerId:', peerId)
 
       // Save initial session data
       const sessionData = manager.exportSession()
@@ -441,7 +445,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
       return peerId
     } catch (e) {
       setConnectionStatus('Disconnected')
-      logger.error('[createGame] Failed to create game:', e)
       throw e
     }
   }, [setClickWaves])
@@ -544,11 +547,9 @@ export function useGameState(_props: any = {}): UseGameStateResult {
       hostRef.current = (manager as any).activeHost
 
       setConnectionStatus('Connected')  // Local game is "connected" to itself
-      logger.info('[createLocalGame] Local game created, gameId:', gameId)
 
       return gameId
     } catch (e) {
-      logger.error('[createLocalGame] Failed to create local game:', e)
       throw e
     }
   }, [setClickWaves, localGameSettings])
@@ -574,11 +575,9 @@ export function useGameState(_props: any = {}): UseGameStateResult {
       setConnectionStatus('Connecting')
       const { peerId } = await manager.connectToSignalling()
       setConnectionStatus('Connected')
-      logger.info('[connectToSignalling] Connected to PeerJS, peerId:', peerId)
       return peerId
     } catch (e) {
       setConnectionStatus('Connected')  // Still "connected" to local game
-      logger.error('[connectToSignalling] Failed to connect:', e)
       throw e
     }
   }, [])
@@ -588,7 +587,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     const manager = hostManagerRef.current
     if (manager && manager.isConnectedToSignalling()) {
       manager.disconnectFromSignalling()
-      logger.info('[disconnectFromSignalling] Disconnected from signalling server')
     }
   }, [])
 
@@ -609,12 +607,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   // ============================================================================
   const joinGameViaModal = useCallback(async (hostPeerId: string) => {
     try {
-      logger.info('[joinGameViaModal] Starting guest connection:', {
-        hostPeerId,
-        currentLocalPlayerId: localPlayerId,
-        isHost: isHostRef.current,
-        existingGuest: !!guestRef.current
-      })
       setConnectionStatus('Connecting')
 
       const guestConfig = {
@@ -778,12 +770,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
       isHostRef.current = false
 
       const playerId = manager.getLocalPlayerId()
-      logger.info('[joinGameViaModal] Guest connected successfully:', {
-        hostPeerId,
-        strategy,
-        assignedPlayerId: playerId,
-        localPlayerId: localPlayerId
-      })
 
       // CRITICAL: Update localPlayerId immediately after connection
       // This ensures that actions like PLAYER_READY are sent with the correct player ID
@@ -791,10 +777,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
 
       return playerId
     } catch (e) {
-      logger.error('[joinGameViaModal] Guest connection failed:', {
-        hostPeerId,
-        error: e instanceof Error ? e.message : String(e)
-      })
       setConnectionStatus('Disconnected')
       throw e
     }
@@ -1085,10 +1067,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   }, [])
 
   const setDummyPlayerCount = useCallback((count: number) => {
-    logger.info('[setDummyPlayerCount] Setting dummy player count:', count,
-      'hostRef exists:', !!hostRef.current,
-      'hostManagerRef exists:', !!hostManagerRef.current,
-      'isHost:', isHostRef.current)
 
     // Always update local settings (works before host is created)
     setLocalGameSettings(prev => ({ ...prev, dummyPlayerCount: count }))
@@ -1180,6 +1158,24 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     }
   }, [])
 
+  const setStrictRulesEnabled = useCallback((enabled: boolean) => {
+    // Always update local settings (works before host is created)
+    setLocalGameSettings(prev => ({ ...prev, strictRulesEnabled: enabled }))
+    // Also update gameState for immediate UI feedback
+    setGameState((prev: GameState) => ({ ...prev, strictRulesEnabled: enabled }))
+    // If host exists, send action to apply to game state
+    // Check both hostRef (old SimpleHost) and hostManagerRef (new HostConnectionManager)
+    if (isHostRef.current) {
+      if (hostRef.current) {
+        hostRef.current.hostAction('SET_STRICT_RULES', { enabled })
+      } else if (hostManagerRef.current) {
+        hostManagerRef.current.hostAction('SET_STRICT_RULES', { enabled })
+      }
+    } else if (guestRef.current) {
+      guestRef.current.sendAction('SET_STRICT_RULES', { enabled })
+    }
+  }, [])
+
   const assignTeams = useCallback((teams: any) => {
     sendAction('ASSIGN_TEAMS', { teams })
   }, [sendAction])
@@ -1221,11 +1217,17 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   const drawCardsBatch = useCallback((playerId: number, count: number) => {
     // Draw multiple cards for a player
     // Used by Tactical Maneuver, Inspiration, and other abilities
-    console.log('[drawCardsBatch] Called:', { playerId, count, timestamp: Date.now() })
     sendAction('DRAW_CARDS_BATCH', { count, targetPlayerId: playerId })
   }, [sendAction])
 
   const handleDrop = useCallback((item: DragItem, target: any) => {
+    // Prevent duplicate drop calls (can happen when drop event bubbles from Card to Board cell)
+    const now = Date.now()
+    if (now - lastDropTimestampRef.current < 100) {
+      return
+    }
+    lastDropTimestampRef.current = now
+
     if (target.target === 'board') {
       // Определяем действие по источнику карты
       let action = 'PLAY_CARD'
@@ -1430,7 +1432,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
         cardIndex: item.cardIndex,
         boardCoords: target.boardCoords,
         faceDown: item.card?.isFaceDown,
-        playerId: item.playerId
+        playerId: item.playerId,
+        clearLatenessOnNextPlay: item.clearLatenessOnNextPlay,  // Pass through for Quick Response Team option 1
       }
 
       if (item.source === 'counter_panel') {
@@ -1959,7 +1962,6 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     localStorage.removeItem('webrtc_host_peer_id')
     localStorage.removeItem('webrtc_host_session')
 
-    logger.info('[disconnectHostAndPeerJS] Host mode and PeerJS disconnected')
   }, [])
 
   // ============================================================================
@@ -2065,6 +2067,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     setGamePrivacy,
     setActiveGridSize,
     setDummyPlayerCount,
+    setStrictRulesEnabled,
     updatePlayerName,
     changePlayerColor,
     updatePlayerScore,

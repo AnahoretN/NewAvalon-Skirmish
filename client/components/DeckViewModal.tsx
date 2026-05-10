@@ -348,7 +348,7 @@ export const DeckViewModal: React.FC<DeckViewModalProps> = ({
               const canDragThisCard = isInteractive && !disableDrag
 
               const opacity = isBeingDragged ? 0.5 : (isMatchingFilter ? 1 : 1)
-              const grayscaleFilter = isMatchingFilter ? 'none' : 'grayscale(100%)'
+              const grayscaleFilter = isMatchingFilter ? 'none' : 'saturate(0.5)'
               const brightnessFilter = isMatchingFilter ? 'none' : 'brightness(0.4)'
 
               return (

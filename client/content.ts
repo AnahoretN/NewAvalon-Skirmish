@@ -142,7 +142,6 @@ function buildDecksData(): Record<string, Card[]> {
     for (const deckEntry of deckFile.cards) {
       const cardDef = _cardDatabase.get(deckEntry.cardId)
       if (!cardDef) {
-            console.log('[buildDecksData] WARNING: Card not found in database:', deckEntry.cardId)
             continue
       }
 

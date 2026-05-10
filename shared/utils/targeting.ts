@@ -501,13 +501,11 @@ export const calculateValidTargets = (
   // This fixes the issue where sourceCoords are cached and not updated when other cards move
   let sourceCoords = actionSourceCoords
   if (mode === 'PUSH' && action.sourceCard) {
-    console.log('[calculateValidTargets PUSH] TIMESTAMP:', Date.now())
     // Search the board for the current position of source card
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
         if (board[r][c].card?.id === action.sourceCard.id) {
           sourceCoords = { row: r, col: c }
-          console.log('[calculateValidTargets PUSH] Found current sourceCard position:', { row: r, col: c }, 'old position:', actionSourceCoords)
           break
         }
       }
@@ -648,24 +646,20 @@ export const calculateValidTargets = (
 
     // Build filter function if not present (for serialization support)
     let filterFn = payload.filter
-    console.log('[calculateValidTargets] SELECT_TARGET with filter:', { mode, actionType: payload.actionType, hasFilterFn: !!filterFn, hasFilterString: !!payload.filterString, filterString: payload.filterString, typeofFilterFn: typeof filterFn, sourceCard: action.sourceCard?.baseId })
 
     // CRITICAL: Convert filter string to function if needed
     // JSON stores filter as string, need to convert to function
     if (typeof filterFn !== 'function' && payload.filterString) {
       const ownerId = action.sourceCard?.ownerId || 0
       filterFn = buildFilterFromString(payload.filterString, ownerId, sourceCoords || action.sourceCoords || { row: 0, col: 0 })
-      console.log('[calculateValidTargets] Built filter from filterString:', { filterString: payload.filterString, ownerId, hasFilterFn: !!filterFn, typeofFilterFn: typeof filterFn })
     }
     // Also handle case where filter is a string (not a function) - convert it
     else if (typeof filterFn !== 'function' && typeof filterFn === 'string') {
       const ownerId = action.sourceCard?.ownerId || 0
       filterFn = buildFilterFromString(filterFn, ownerId, sourceCoords || action.sourceCoords || { row: 0, col: 0 })
-      console.log('[calculateValidTargets] Built filter from string:', { filterString: filterFn, ownerId, hasFilterFn: !!filterFn, typeofFilterFn: typeof filterFn })
     }
 
     if (!filterFn || typeof filterFn !== 'function') {
-      console.log('[calculateValidTargets] No valid filter function:', { hasFilterFn: !!filterFn, typeofFilterFn: typeof filterFn, mode })
       return []
     }
 
@@ -685,18 +679,6 @@ export const calculateValidTargets = (
 
         // Check basic filter
         let isValid = cell.card && filterFn(cell.card, r, c)
-
-        if (cell.card && mode === 'SELECT_UNIT_FOR_MOVE') {
-          console.log('[calculateValidTargets] Filter check:', {
-            r, c,
-            cardId: cell.card.baseId,
-            cardOwnerId: cell.card.ownerId,
-            actorId,
-            isValid,
-            filterString: typeof payload.filterString === 'function' ? '(function)' : payload.filterString,
-            statuses: cell.card.statuses?.map(s => `${s.type}[${s.addedByPlayerId}]`).join(', ') || 'none'
-          })
-        }
 
         // CRITICAL: Do NOT check excludeSelf here! The excludeSelf logic is handled
         // within the onlyAllies/onlyOpponents checks below, which need to know about
@@ -739,17 +721,6 @@ export const calculateValidTargets = (
           // Check if this cell is the source card
           const isSourceCard = sourceCoords && r === sourceCoords.row && c === sourceCoords.col
 
-          if (cell.card && mode === 'SELECT_UNIT_FOR_MOVE') {
-            console.log('[calculateValidTargets] onlyAllies check:', {
-              r, c, cardId: cell.card.baseId,
-              cardOwnerId, actorId,
-              isSelf, isTeammate, isFFAMode, isSourceCard,
-              actorTeamId: actorPlayer?.teamId,
-              targetTeamId: targetPlayer?.teamId,
-              isValidBefore: isValid
-            })
-          }
-
           if (!isSelf && !isTeammate) {
             isValid = false
           }
@@ -766,10 +737,6 @@ export const calculateValidTargets = (
               }
             }
             // In FFA mode: do NOT exclude any self cards (allow all your cards with the counter)
-          }
-
-          if (cell.card && mode === 'SELECT_UNIT_FOR_MOVE') {
-            console.log('[calculateValidTargets] onlyAllies result:', { r, c, isValidAfter: isValid, isFFAMode, isSourceCard })
           }
         }
 
@@ -797,23 +764,9 @@ export const calculateValidTargets = (
             s.type === counterType && s.addedByPlayerId === actorId
           )
 
-          if (cell.card && mode === 'SELECT_UNIT_FOR_MOVE') {
-            console.log('[calculateValidTargets] requireTokenFromSourceOwner check:', {
-              r, c, cardId: cell.card.baseId,
-              counterType, actorId,
-              statuses: cell.card.statuses,
-              hasTokenFromSourceOwner,
-              isValidBefore: isValid
-            })
-          }
-
           if (!hasTokenFromSourceOwner) {
             isValid = false
           }
-        }
-
-        if (cell.card && mode === 'SELECT_UNIT_FOR_MOVE') {
-          console.log('[calculateValidTargets] Checking cell', { r, c, cardId: cell.card.baseId, cardOwnerId: cell.card.ownerId, sourceOwnerId: actorId, isValid, onlyOpponents: payload.onlyOpponents, onlyAllies: payload.onlyAllies })
         }
 
         // Check context requirements (e.g., Adjacent to last move)
@@ -830,8 +783,6 @@ export const calculateValidTargets = (
         }
       }
     }
-
-    console.log('[calculateValidTargets] Found targets:', { mode, actionType: payload.actionType, targetCount: targets.length, targets })
   }
   // 1.1 Enhanced Interrogation Generic Targeting (Any Unit)
   else if (mode === 'SELECT_TARGET' && (payload.actionType === 'ENHANCED_INT_REVEAL' || payload.actionType === 'ENHANCED_INT_MOVE')) {
@@ -865,20 +816,6 @@ export const calculateValidTargets = (
   }
   // 3. Push (Adjacent opponent who can be pushed into empty space)
   else if (mode === 'PUSH' && sourceCoords) {
-    console.log('[calculateValidTargets PUSH] sourceCoords:', sourceCoords, 'actorId:', actorId, 'gridSize:', gridSize, 'activeSize:', activeSize, 'bounds:', { minBound, maxBound })
-    console.log('[calculateValidTargets PUSH] board around sourceCoords:')
-    // Show all cells around sourceCoords for debugging
-    for (let dr = -2; dr <= 2; dr++) {
-      for (let dc = -2; dc <= 2; dc++) {
-        const r = sourceCoords.row + dr
-        const c = sourceCoords.col + dc
-        if (r >= 0 && r < gridSize && c >= 0 && c < gridSize) {
-          const cell = board[r][c]
-          console.log(`[calculateValidTargets PUSH] board[${r}][${c}]:`, cell?.card?.baseId || 'empty', 'ownerId:', cell?.card?.ownerId)
-        }
-      }
-    }
-
     const neighbors = [
       { r: sourceCoords.row - 1, c: sourceCoords.col },
       { r: sourceCoords.row + 1, c: sourceCoords.col },
@@ -890,11 +827,9 @@ export const calculateValidTargets = (
     const isInActiveBounds = (r: number, c: number) => r >= minBound && r <= maxBound && c >= minBound && c <= maxBound
 
     neighbors.forEach(nb => {
-      console.log('[calculateValidTargets PUSH] checking neighbor:', nb, 'inBounds:', isInActiveBounds(nb.r, nb.c))
       // Check bounds (using visible grid bounds)
       if (isInActiveBounds(nb.r, nb.c)) {
         const targetCard = board[nb.r][nb.c].card
-        console.log('[calculateValidTargets PUSH] card at neighbor:', targetCard?.baseId, 'ownerId:', targetCard?.ownerId)
 
         // Check if opponent (Not Self AND Not Teammate)
         if (targetCard && targetCard.ownerId !== actorId) {
@@ -903,7 +838,6 @@ export const calculateValidTargets = (
           // CRITICAL: Use != null to check for both undefined AND null
           // If teamId is not set (undefined/null), player is in FFA mode - no teammates
           const isTeammate = actorPlayer?.teamId != null && targetPlayer?.teamId != null && actorPlayer.teamId === targetPlayer.teamId
-          console.log('[calculateValidTargets PUSH] actorPlayer:', actorPlayer?.name, 'teamId:', actorPlayer?.teamId, 'targetPlayer:', targetPlayer?.name, 'teamId:', targetPlayer?.teamId, 'isTeammate:', isTeammate)
 
           if (!isTeammate) {
             // Calculate push destination
@@ -912,20 +846,16 @@ export const calculateValidTargets = (
             const pushRow = nb.r + dRow
             const pushCol = nb.c + dCol
 
-            console.log('[calculateValidTargets PUSH] push dest:', { pushRow, pushCol }, 'inBounds:', isInActiveBounds(pushRow, pushCol), 'isEmpty:', !board[pushRow]?.[pushCol]?.card)
-
             // Check dest bounds and emptiness against VISIBLE grid
             if (isInActiveBounds(pushRow, pushCol)) {
               if (!board[pushRow][pushCol].card) {
                 targets.push({ row: nb.r, col: nb.c })
-                console.log('[calculateValidTargets PUSH] VALID TARGET FOUND!')
               }
             }
           }
         }
       }
     })
-    console.log('[calculateValidTargets PUSH] final targets count:', targets.length)
   }
   // 3b. SHIELD_SELF_THEN_PUSH (Reclaimed Gawain - same as PUSH but includes self as valid target)
   else if (mode === 'SHIELD_SELF_THEN_PUSH' && sourceCoords) {
@@ -1527,11 +1457,7 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
 
   // Special Case: SELECT_UNIT_FOR_MOVE (Finn Setup) - needs allied cards on board
   if (action.mode === 'SELECT_UNIT_FOR_MOVE' && action.payload) {
-    console.log('[checkActionHasTargets] SELECT_UNIT_FOR_MOVE check', {
-      filterString: action.payload.filterString,
-      hasFilter: !!action.payload.filter,
-      sourceOwnerId: action.sourceCard?.ownerId || playerId
-    })
+    // Check handled in calculateValidTargets
   }
 
   // Special Case: Hand-only actions that require discarding (Faber, Lucius)
@@ -1544,18 +1470,12 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
         actionType === 'SELECT_HAND_FOR_DEPLOY') {
       // Check if source card's owner has cards in hand that pass the filter
       const ownerId = action.sourceCard?.ownerId || playerId
-      console.log('[checkActionHasTargets] Hand-only discard action:', {
-        actionType,
-        ownerId,
-        sourceCardName: action.sourceCard?.name,
-      })
       if (ownerId !== null) {
         const player = currentGameState.players.find(p => p.id === ownerId)
         if (player && player.hand.length > 0) {
           // Check if any card in hand passes the filter
           const filter = action.payload.filter
           if (!filter) {
-            console.log('[checkActionHasTargets] No filter, any card is valid')
             return true // No filter means any card is valid
           }
           // Check if at least one card passes the filter
@@ -1563,17 +1483,14 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
           for (const card of player.hand) {
             if (filter(card)) {
               validCount++
-              console.log('[checkActionHasTargets] Card passes filter:', card.name)
             }
           }
-          console.log('[checkActionHasTargets] Valid cards:', validCount, 'of', player.hand.length)
           if (validCount > 0) {
             return true // Found at least one valid card
           }
           return false // No cards pass the filter
         }
       }
-      console.log('[checkActionHasTargets] No player or no cards in hand')
       return false // No cards in hand
     }
   }

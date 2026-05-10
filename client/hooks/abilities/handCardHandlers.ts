@@ -170,10 +170,6 @@ export function handleHandCardClick(
           // This fixes Data Interception where after placing Revealed tokens, we need to continue to CLEANUP_COMMAND
           const autoStepsContext = (cursorStack as any)._autoStepsContext
           if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
-            console.log('[HAND_CARD_CLICK] Continuing AUTO_STEPS after CREATE_STACK completion:', {
-              currentStepIndex: autoStepsContext.currentStepIndex,
-              totalSteps: autoStepsContext.steps.length,
-            })
             // Create CONTINUE_AUTO_STEPS action to advance to the next step
             const continueAction: AbilityAction = {
               type: 'CONTINUE_AUTO_STEPS',
@@ -227,6 +223,7 @@ export function handleHandCardClick(
 
       // Store command card info and AUTO_STEPS context for cleanup
       // Store selected card info for reference
+      // CRITICAL: Set clearLatenessOnNextPlay flag so the next played card clears hasLateness instead of setting it
       setCommandContext((prev: any) => ({
         ...prev,
         pendingCommandCard: {
@@ -235,7 +232,8 @@ export function handleHandCardClick(
           readyStatusToRemove: abilityMode.readyStatusToRemove,
           _autoStepsContext: abilityMode.payload?._autoStepsContext,
         },
-        selectedHandCard: { playerId: player.id, cardIndex, card }
+        selectedHandCard: { playerId: player.id, cardIndex, card },
+        clearLatenessOnNextPlay: true  // Clear lateness when this unit is deployed
       }))
 
       // CRITICAL: Clear ability mode SYNCHRONOUSLY before setting playMode
@@ -250,9 +248,10 @@ export function handleHandCardClick(
       clearValidTargets?.()
 
       // Start normal play mode for the selected Unit card
+      // CRITICAL: Include clearLatenessOnNextPlay flag so the host knows to clear hasLateness instead of setting it
       const sourceItem: any = { card, source: 'hand', playerId: player.id, cardIndex }
       if (setPlayMode) {
-        setPlayMode({ card, sourceItem, faceDown: false })
+        setPlayMode({ card, sourceItem, faceDown: false, clearLatenessOnNextPlay: true })
       }
       return
     }
@@ -301,8 +300,6 @@ export function handleHandCardClick(
 
     // SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN (Faber - CREATE_TOKEN with cost)
     if (payload.actionType === 'SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN') {
-      console.log('[HAND_CARD_CLICK] SELECT_HAND_FOR_DISCARD_THEN_PLACE_TOKEN matched!')
-
       // Apply filter to validate the card
       if (filterFn && !filterFn(card)) {
         return

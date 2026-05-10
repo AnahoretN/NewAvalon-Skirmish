@@ -6,7 +6,6 @@
  */
 
 import { joinRoom, selfId } from '@trystero-p2p/torrent'
-import { logger } from '@/utils/logger'
 import type { PersonalizedState, SimpleGuestConfig, P2PMessage } from './SimpleP2PTypes'
 
 // Public BitTorrent trackers for signaling
@@ -99,7 +98,6 @@ export class TrysteroGuest {
 
         // Listen for peer join (host joining)
         this.room.onPeerJoin((trysteroId: string) => {
-          logger.info('[TrysteroGuest] Peer joined:', trysteroId)
 
           // If we haven't found the host yet, send join request
           if (!this.isHostFound) {
@@ -113,7 +111,6 @@ export class TrysteroGuest {
 
         // Listen for peer leave
         this.room.onPeerLeave((trysteroId: string) => {
-          logger.info('[TrysteroGuest] Peer left:', trysteroId)
 
           if (trysteroId === this.hostTrysteroId) {
             this.isHostFound = false

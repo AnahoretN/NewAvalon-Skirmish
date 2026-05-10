@@ -38,6 +38,13 @@ export function handleSetPrivacy(state: GameState, isPrivate: boolean): GameStat
 }
 
 /**
+ * SET_STRICT_RULES - enable/disable strict rules (lateness effect)
+ */
+export function handleSetStrictRules(state: GameState, enabled: boolean): GameState {
+  return { ...state, strictRulesEnabled: enabled }
+}
+
+/**
  * ASSIGN_TEAMS - assign players to teams
  */
 export function handleAssignTeams(state: GameState, teams: any): GameState {
@@ -289,6 +296,8 @@ export function handleResetGame(state: GameState): GameState {
       announcedCard: null,
       boardHistory: [],
       lastPlayedCardId: null,
+      hasLateness: false,
+      clearLatenessOnNextPlay: false,
       // Preserve settings
       autoDrawEnabled: p.autoDrawEnabled !== false,
     }

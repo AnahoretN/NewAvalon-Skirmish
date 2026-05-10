@@ -379,12 +379,6 @@ export function handleEmptyCellClick(
         }
       }
 
-      console.log('[handleEmptyCellClick] SELECT_CELL: Continuing AUTO_STEPS (with chainedAction), stepIndex:', autoStepsContext.currentStepIndex, {
-        hasChainedAction: !!chainedAction,
-        chainedActionType: chainedAction?.type,
-        sourceOwnerId: movedCard?.ownerId ?? sourceCard?.ownerId,
-      })
-
       setActionQueue(prev => {
         const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
         const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
@@ -418,7 +412,6 @@ export function handleEmptyCellClick(
           nextAction.payload._sourceOwnerId = movedCard.ownerId
         } else {
           // Fallback: if movedCard not available, try to find from context
-          console.warn('[emptyCellHandlers] TARGET_MOVED_OWNER (-2) used but movedCard not available')
           nextAction.payload.targetOwnerId = sourceCard.ownerId
           nextAction.payload._sourceOwnerId = sourceCard.ownerId
         }

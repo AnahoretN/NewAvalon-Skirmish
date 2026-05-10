@@ -213,6 +213,8 @@ const enUI = {
   gridSize: 'Grid Size',
   autoAbilities: 'Auto Abilities',
   gameMode: 'Game Mode',
+  strictRules: 'Strict Rules',
+  strictRulesTooltip: 'Strict Rules: Enable lateness effect (cards in hand become unplayable after playing to board)',
   '2v2': '2v2',
   '3v1': '3v1',
   copy: 'Copy',

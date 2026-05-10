@@ -259,7 +259,6 @@ export const useAppCounters = ({
                     setActionQueue(prev => {
                       // Check if this action is already in the queue
                       if (prev.some(a => (a as any)._uniqueId === chained._uniqueId)) {
-                        console.log('[useAppCounters] Action already in queue, skipping:', chained._uniqueId)
                         return prev
                       }
                       return [...prev, chained]
@@ -373,7 +372,6 @@ export const useAppCounters = ({
                   setActionQueue(prev => {
                     // Check if this action is already in the queue
                     if (prev.some(a => (a as any)._uniqueId === chained._uniqueId)) {
-                      console.log('[useAppCounters] Action already in queue, skipping:', chained._uniqueId)
                       return prev
                     }
                     return [...prev, chained]
@@ -528,14 +526,6 @@ export const useAppCounters = ({
                   // Stack is now empty - clear it and execute chained action
                   if (cursorStack.chainedAction) {
                     const chained = { ...cursorStack.chainedAction }
-                    console.log('[useAppCounters] Executing chainedAction:', {
-                      type: chained.type,
-                      customAction: chained.payload?.customAction,
-                      recordContext: cursorStack.recordContext,
-                      targetCoords: { row, col },
-                      sourceCard: chained.sourceCard?.name,
-                      sourceCoords: chained.sourceCoords,
-                    })
                     if (cursorStack.recordContext) {
                       if (chained.mode === 'SELECT_CELL') {
                         chained.sourceCard = targetCard
@@ -619,13 +609,11 @@ export const useAppCounters = ({
                           }
                         }
                         actionsToQueue.push(continueAction)
-                        console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS after chainedAction, stepIndex:', completedStepIndex)
                       }
 
                       setActionQueue(prev => {
                         // Check if this action is already in the queue
                         if (prev.some(a => (a as any)._uniqueId === chained._uniqueId)) {
-                          console.log('[useAppCounters] Action already in queue, skipping:', chained._uniqueId)
                           return prev
                         }
                         const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
@@ -687,15 +675,6 @@ export const useAppCounters = ({
                     const chainedActionType = cursorStack.chainedAction?.type
                     const chainedActionPayloadCustomAction = cursorStack.chainedAction?.payload?.customAction
 
-                    console.log('[useAppCounters] Checking cursorStack for chainedAction:', {
-                      hasChainedAction,
-                      chainedActionType,
-                      chainedActionPayloadCustomAction,
-                      cursorStackKeys: Object.keys(cursorStack),
-                      originalStepIndex,
-                      completedStepIndex,
-                    })
-
                     // Create CONTINUE_AUTO_STEPS action with stepContext (where the token was placed)
                     // CRITICAL: Pass completedStepIndex as currentStepIndex for handleContinueAutoSteps
                     const continueAction: any = {
@@ -724,18 +703,7 @@ export const useAppCounters = ({
                     // This fixes Temporary Shelter where chainedAction (REMOVE_ALL_AIM_FROM_CONTEXT) must execute
                     if (cursorStack.chainedAction) {
                       continueAction.chainedAction = cursorStack.chainedAction
-                      console.log('[useAppCounters] Adding chainedAction to continueAction:', {
-                        type: continueAction.chainedAction.type,
-                        payload: continueAction.chainedAction.payload,
-                      })
                     }
-
-                    console.log('[useAppCounters] Adding CONTINUE_AUTO_STEPS', {
-                      hasChainedAction,
-                      chainedActionType,
-                      chainedActionPayloadCustomAction,
-                      stepIndex: autoStepsContext.currentStepIndex
-                    })
                     onAction(continueAction, { row, col })
                   }
                   // Clear targeting mode when cursor stack is fully consumed
@@ -744,12 +712,6 @@ export const useAppCounters = ({
                   // If there are more steps (e.g., SELECT_UNIT_FOR_MOVE after CREATE_STACK), don't clear yet
                   const hasMoreAutoSteps = cursorStack._autoStepsContext &&
                     cursorStack._autoStepsContext.currentStepIndex < (cursorStack._autoStepsContext.steps?.length || 0)
-                  console.log('[useAppCounters] Before clear check:', {
-                    hasAutoStepsContext: !!cursorStack._autoStepsContext,
-                    currentStepIndex: cursorStack._autoStepsContext?.currentStepIndex,
-                    stepsLength: cursorStack._autoStepsContext?.steps?.length,
-                    hasMoreAutoSteps,
-                  })
                   // CRITICAL: Clear abilityMode AND cursorStack SYNCHRONOUSLY to prevent
                   // useEffect in App.tsx from restoring targetingMode
                   // BUT ONLY if there are no more AUTO_STEPS to process
@@ -768,25 +730,15 @@ export const useAppCounters = ({
                       // Check the NEW cursorStack after React state update
                       setCursorStack(currentStack => {
                         if (!currentStack) {
-                          console.log('[useAppCounters] No cursorStack after AUTO_STEPS, already cleared')
                           return null
                         }
                         const isHandTargeting = currentStack.targetOwnerId === -1 ||
                           (currentStack.onlyOpponents && currentStack.onlyFaceDown)
-                        console.log('[useAppCounters] Delayed check after AUTO_STEPS:', {
-                          cursorStackType: currentStack.type,
-                          cursorStackTargetOwnerId: currentStack.targetOwnerId,
-                          cursorStackOnlyOpponents: currentStack.onlyOpponents,
-                          cursorStackOnlyFaceDown: currentStack.onlyFaceDown,
-                          isHandTargeting,
-                        })
                         if (isHandTargeting) {
                           // For hand targeting, keep cursorStack so user can place tokens
-                          console.log('[useAppCounters] Hand-targeting detected, keeping cursorStack')
                           return currentStack
                         } else {
                           // For board targeting, clear cursorStack
-                          console.log('[useAppCounters] Board-targeting, clearing cursorStack')
                           clearTargetingMode()
                           return null
                         }

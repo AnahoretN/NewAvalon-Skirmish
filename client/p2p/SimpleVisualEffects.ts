@@ -7,7 +7,6 @@
 
 import type { SimpleHost } from './SimpleHost'
 import type { HighlightData, FloatingTextData, TargetingModeData, AbilityAction } from '../types'
-import { logger } from '../utils/logger'
 
 /**
  * Check if a value can be serialized by PeerJS
@@ -82,12 +81,6 @@ function sanitizeAbilityAction(action: AbilityAction): any {
         sanitized.payload = value
         // Log important payload properties for debugging
         if (value.contextCardId || value.tokenType || value.count) {
-          logger.debug('[sanitizeAbilityAction] Preserving payload properties', {
-            contextCardId: value.contextCardId,
-            tokenType: value.tokenType,
-            count: value.count,
-            payloadKeys: Object.keys(value)
-          })
         }
       } else {
         // Payload has non-serializable values, try to salvage what we can
@@ -100,9 +93,6 @@ function sanitizeAbilityAction(action: AbilityAction): any {
         }
         if (Object.keys(salvagedPayload).length > 0) {
           sanitized.payload = salvagedPayload
-          logger.debug('[sanitizeAbilityAction] Salvaged partial payload', {
-            salvagedKeys: Object.keys(salvagedPayload)
-          })
         }
       }
       continue
@@ -162,7 +152,6 @@ function deepSanitize(obj: any): any {
         }
       } catch (e) {
         // Skip properties that cause errors during serialization
-        // logger.debug(`[SimpleVisualEffects] Skipping property ${key} during sanitization:`, e)
       }
     }
 
@@ -192,7 +181,6 @@ export class SimpleVisualEffects {
       type: 'HIGHLIGHT',
       data: highlightData
     })
-    // logger.debug(`[SimpleVisualEffects] Highlight: row=${highlightData.row}, col=${highlightData.col}`)
   }
 
   /**
@@ -205,7 +193,6 @@ export class SimpleVisualEffects {
       type: 'FLOATING_TEXT',
       data: { batch }
     })
-    // logger.debug(`[SimpleVisualEffects] Floating text: ${batch.length} texts`)
   }
 
   /**
@@ -216,7 +203,6 @@ export class SimpleVisualEffects {
       type: 'NO_TARGET',
       data: { coords, timestamp: Date.now() }
     })
-    // logger.debug(`[SimpleVisualEffects] No target: (${coords.row}, ${coords.col})`)
   }
 
   /**
@@ -258,26 +244,13 @@ export class SimpleVisualEffects {
       sanitizedMode.ownerId = mode.ownerId
     }
 
-    console.log('[SimpleVisualEffects] Sanitized mode:', {
-      hasHandTargets: !!sanitizedMode.handTargets,
-      handTargetsCount: sanitizedMode.handTargets?.length || 0,
-      handTargets: sanitizedMode.handTargets,
-    })
-
     // Final deep sanitization to catch anything missed
     const finalMode = deepSanitize(sanitizedMode)
-
-    console.log('[SimpleVisualEffects] Final mode after deepSanitize:', {
-      hasHandTargets: !!finalMode.handTargets,
-      handTargetsCount: finalMode.handTargets?.length || 0,
-      handTargets: finalMode.handTargets,
-    })
 
     this.host.broadcast({
       type: 'TARGETING_MODE',
       data: { targetingMode: finalMode }
     })
-    // logger.debug(`[SimpleVisualEffects] Targeting mode by player ${mode.playerId}`)
   }
 
   /**
@@ -288,7 +261,6 @@ export class SimpleVisualEffects {
       type: 'CLEAR_TARGETING_MODE',
       data: { timestamp: Date.now() }
     })
-    // logger.debug('[SimpleVisualEffects] Targeting mode cleared')
   }
 
   /**
@@ -299,7 +271,6 @@ export class SimpleVisualEffects {
       type: 'DECK_SELECTION',
       data: { playerId, selectedByPlayerId, timestamp: Date.now() }
     })
-    // logger.debug(`[SimpleVisualEffects] Deck selection: player ${playerId}`)
   }
 
   /**
@@ -310,7 +281,6 @@ export class SimpleVisualEffects {
       type: 'HAND_CARD_SELECTION',
       data: { playerId, cardIndex, selectedByPlayerId, timestamp: Date.now() }
     })
-    // logger.debug(`[SimpleVisualEffects] Hand card selection: player ${playerId}, card ${cardIndex}`)
   }
 
   /**
@@ -328,6 +298,5 @@ export class SimpleVisualEffects {
       type: 'CLICK_WAVE',
       data: wave
     })
-    // logger.debug(`[SimpleVisualEffects] Click wave: ${wave.location}`)
   }
 }

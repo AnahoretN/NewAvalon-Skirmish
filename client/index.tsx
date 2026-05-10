@@ -4,7 +4,6 @@ import ReactDOM from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { LanguageProvider } from './contexts/LanguageContext'
-import { logger } from './utils/logger'
 
 // Parse URL parameters for invite links
 // Support both query parameters (?game=...) and hash parameters (#game=...)
@@ -17,15 +16,6 @@ const encodedServerUrl = urlParams.get('s') || hashParams.get('s')
 const inviteHostId = urlParams.get('hostId') || hashParams.get('hostId')
 // const autoJoin = urlParams.get('autojoin') || hashParams.get('autojoin') // Reserved for future auto-join functionality
 
-// Log invite link parsing for debugging
-logger.info('[index.tsx] Invite link parsing:', {
-  url: window.location.href,
-  inviteGameId,
-  inviteHostId,
-  inviteServerUrl,
-  encodedServerUrl: encodedServerUrl ? '...' : null,
-  webrtcEnabled: localStorage.getItem('webrtc_enabled')
-})
 
 // Store invite data in sessionStorage for App to use
 if (inviteGameId) {
@@ -35,9 +25,7 @@ if (inviteGameId) {
   if (!isWebRTCMode) {
     sessionStorage.setItem('invite_game_id', inviteGameId)
     sessionStorage.setItem('invite_auto_join', 'true')
-    logger.info('[index.tsx] Stored invite_game_id for server mode:', inviteGameId)
   } else {
-    logger.warn('[index.tsx] Ignoring gameId parameter in WebRTC mode (should use hostId instead)')
   }
   // If WebRTC mode is enabled, ignore gameId parameter
   // The host should share #hostId=... link instead
@@ -52,12 +40,10 @@ if (inviteHostId) {
 
   // CRITICAL: Clear any saved host session to prevent guest from becoming host
   // When joining via invite link, the user should be a guest, not restore a previous host session
-  logger.info('[index.tsx] Clearing saved host session for guest join')
   localStorage.removeItem('webrtc_host_session')
   localStorage.removeItem('webrtc_host_peer_id')
   localStorage.removeItem('player_token')
 
-  logger.info('[index.tsx] Stored invite_host_id for WebRTC mode:', inviteHostId)
 }
 
 if (inviteServerUrl) {
