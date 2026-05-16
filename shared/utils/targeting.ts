@@ -1016,37 +1016,13 @@ export const calculateValidTargets = (
           } else if (payload.range === 'line') {
             isValidLoc = r === sourceCoords.row || c === sourceCoords.col
           } else if (payload.range === RANGE_TWO_DISTANCE) {
-            // Range RANGE_TWO_DISTANCE: ADJACENT_DISTANCE or RANGE_TWO_DISTANCE cells away.
-            const dRow = Math.abs(r - sourceCoords.row)
-            const dCol = Math.abs(c - sourceCoords.col)
-            const dist = dRow + dCol
+            // Range RANGE_TWO_DISTANCE: Can move 1 or 2 cells away.
+            // Occupied cells don't block movement - only the destination must be empty.
+            // Uses Manhattan distance: dist 1 (4 adjacent) or dist 2 (8 cells in 2x2 square)
+            const dist = Math.abs(r - sourceCoords.row) + Math.abs(c - sourceCoords.col)
 
-            if (dist === ADJACENT_DISTANCE) {
+            if (dist === ADJACENT_DISTANCE || dist === RANGE_TWO_DISTANCE) {
               isValidLoc = true
-            } else if (dist === RANGE_TWO_DISTANCE) {
-              // Logic for RANGE_TWO_DISTANCE cells: must be reachable via an empty cell (or straight line RANGE_TWO_DISTANCE).
-              // BFS Depth RANGE_TWO_DISTANCE check.
-              // Candidates for intermediate step:
-              const inters = []
-              if (dRow === RANGE_TWO_DISTANCE && dCol === 0) {
-                inters.push({ r: (r + sourceCoords.row) / 2, c: c })
-              } // Straight vertical
-              else if (dRow === 0 && dCol === RANGE_TWO_DISTANCE) {
-                inters.push({ r: r, c: (c + sourceCoords.col) / 2 })
-              } // Straight horizontal
-              else if (dRow === ADJACENT_DISTANCE && dCol === ADJACENT_DISTANCE) { // Diagonal (L-shape)
-                inters.push({ r: r, c: sourceCoords.col })
-                inters.push({ r: sourceCoords.row, c: c })
-              }
-
-              // If ANY intermediate cell is empty, move is valid.
-              // BOUNDS CHECK to prevent crash
-              isValidLoc = inters.some(i => {
-                if (i.r < 0 || i.r >= gridSize || i.c < 0 || i.c >= gridSize) {
-                  return false
-                }
-                return !board[i.r][i.c].card
-              })
             }
           } else {
             // Default to Adjacent

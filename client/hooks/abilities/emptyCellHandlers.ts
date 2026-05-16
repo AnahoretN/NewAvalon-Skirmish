@@ -280,33 +280,9 @@ export function handleEmptyCellClick(
     } else if (payload?.range === 'global') {
       isValidMove = true
     } else if (payload?.range === 2) {
+      // Can move 1 or 2 cells away - occupied intermediate cells don't block movement
       const dist = Math.abs(boardCoords.row - currentCardCoords.row) + Math.abs(boardCoords.col - currentCardCoords.col)
-      if (dist === 1) {
-        isValidMove = true
-      } else if (dist === 2) {
-        const r1 = currentCardCoords.row, c1 = currentCardCoords.col
-        const r2 = boardCoords.row, c2 = boardCoords.col
-        const inters = [
-          { r: r2, c: c1 },
-          { r: r1, c: c2 },
-          { r: (r1 + r2) / 2, c: (c1 + c2) / 2 },
-        ]
-        isValidMove = inters.some(i => {
-          if (!Number.isInteger(i.r) || !Number.isInteger(i.c)) {
-            return false
-          }
-          const offset = Math.floor((gameState.board.length - gameState.activeGridSize) / 2)
-          const minBound = offset
-          const maxBound = offset + gameState.activeGridSize - 1
-          if (i.r < minBound || i.r > maxBound || i.c < minBound || i.c > maxBound) {
-            return false
-          }
-          if (Math.abs(i.r - r1) + Math.abs(i.c - c1) !== 1) {
-            return false
-          }
-          return !gameState.board[i.r][i.c].card
-        })
-      }
+      isValidMove = (dist === 1 || dist === 2)
     } else if (payload?.filter) {
       // Use filter function
       isValidMove = payload.filter(null, boardCoords.row, boardCoords.col)
