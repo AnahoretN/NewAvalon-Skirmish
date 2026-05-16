@@ -42,7 +42,7 @@ export function deepCloneState<T>(state: T): T {
  */
 export const TIMING = {
   /** Delay before clearing ability mode after execution (ms) */
-  MODE_CLEAR_DELAY: 100,
+  MODE_CLEAR_DELAY: 50,
   /** Delay before tooltip appears (ms) */
   TOOLTIP_DELAY: 250,
   /** Delay before reconnect attempt (ms) */

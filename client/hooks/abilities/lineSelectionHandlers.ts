@@ -193,7 +193,7 @@ export function handleLineSelection(
           playerId: localPlayerId ?? undefined,
           timestamp: Date.now()
         })
-      }, 100) // Small delay to ensure score update is processed first
+      }, 50) // Small delay to ensure score update is processed first
 
       // Unlock after delay
       setTimeout(() => {

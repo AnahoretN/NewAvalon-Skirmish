@@ -2290,9 +2290,16 @@ const AppInner = function AppInner() {
   useEffect(() => {
     // CRITICAL: Also check pendingChainedActionRef - if a chained action is being processed,
     // wait for it to complete before processing the next action in the queue
+    // CRITICAL: Process all actions in the queue, not just one, to handle AUTO_STEPS correctly
     if (actionQueue.length > 0 && !abilityMode && !cursorStack && !pendingChainedActionRef.current) {
       const nextAction = actionQueue[0]
-      setActionQueue(prev => prev.slice(1))
+      // Remove the processed action from the queue
+      setActionQueue(prev => {
+        const remaining = prev.slice(1)
+        // CRITICAL: If there are more actions after this one, they will be processed
+        // in the next useEffect cycle when abilityMode becomes null again
+        return remaining
+      })
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
       const actionToProcess = { ...nextAction }

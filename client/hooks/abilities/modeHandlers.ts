@@ -36,7 +36,7 @@ const transitioningCards = new Set<string>()
 /**
  * Clear a card from transitioning set (call after state updates)
  */
-function clearTransitioning(cardId: string, delay: number = 100) {
+function clearTransitioning(cardId: string, delay: number = 50) {
   setTimeout(() => {
     transitioningCards.delete(cardId)
   }, delay)
@@ -3044,11 +3044,16 @@ function handleSelectCell(
       }
     }
 
+    console.log('[handleSelectCell] Adding CONTINUE_AUTO_STEPS to queue for', abilityMode.sourceCard?.id, 'step', autoStepsContext.currentStepIndex, 'of', autoStepsContext.steps?.length)
     setActionQueue(prev => {
       const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
       const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
-      return [...otherActions, continueAction, ...cleanupActions]
+      const newQueue = [...otherActions, continueAction, ...cleanupActions]
+      console.log('[handleSelectCell] New action queue:', newQueue.map(a => a.type))
+      return newQueue
     })
+  } else {
+    console.log('[handleSelectCell] NOT adding CONTINUE_AUTO_STEPS. actualChainedAction:', !!actualChainedAction, 'has autoStepsContext:', !!payload?._autoStepsContext, 'has setActionQueue:', !!setActionQueue)
   }
 
   // CRITICAL: Clear targeting mode when move is complete
@@ -3063,7 +3068,15 @@ function handleSelectCell(
     // No chainedAction, clear immediately
     clearTargetingMode()
   }
-  setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+
+  // CRITICAL: For AUTO_STEPS commands, clear abilityMode immediately so actionQueue can be processed
+  // This fixes Enhanced Interrogation option 2 where the cleanup wasn't triggering
+  if (payload?._autoStepsContext) {
+    console.log('[handleSelectCell] AUTO_STEPS context detected, clearing abilityMode immediately')
+    setAbilityMode(null)
+  } else {
+    setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+  }
   return true
 }
 

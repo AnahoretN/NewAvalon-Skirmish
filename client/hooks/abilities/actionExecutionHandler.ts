@@ -154,7 +154,7 @@ export function handleActionExecution(
               props.pendingChainedActionRef.current = false
             }
           }, 50)
-        }, 1000)
+        }, 100)
       }
       return
     }
@@ -236,6 +236,8 @@ function handleContinueAutoSteps(
   const { gameState, getFreshGameState, setAbilityMode, setTargetingMode, clearTargetingMode, commandContext, localPlayerId, markAbilityUsed, addBoardCardStatus, modifyBoardCardPower, handleActionExecution, calculateValidTargets } = props
 
   const autoStepsContext = action.payload?._autoStepsContext
+  console.log('[handleContinueAutoSteps] Called with sourceCard:', action.sourceCard?.id, 'currentStepIndex:', autoStepsContext?.currentStepIndex, 'steps.length:', autoStepsContext?.steps?.length)
+
   if (!autoStepsContext || !autoStepsContext.steps) {
     markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
     return
@@ -456,7 +458,7 @@ function handleGlobalAutoApply(
               props.pendingChainedActionRef.current = false
             }
           }, 50)
-        }, 1000)
+        }, 100)
       }
       // DON'T mark ability as used - preserve ready status so ability can be used when targets appear
       return
@@ -605,7 +607,7 @@ function handleGlobalAutoApply(
               props.pendingChainedActionRef.current = false
             }
           }, 50)
-        }, 500)
+        }, 100)
       }
       return
     }
