@@ -32,6 +32,7 @@
     "strictBuiltinIteratorReturn": true,
     "alwaysStrict": true,
     "useUnknownInCatchVariables": true,
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./client/*"],

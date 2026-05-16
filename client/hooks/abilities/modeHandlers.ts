@@ -2397,7 +2397,7 @@ function handleSelectUnitForMove(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  const { abilityMode, setAbilityMode, setTargetingMode, clearTargetingMode, gameState, getFreshGameState, localPlayerId, commandContext, calculateValidTargets } = props
+  const { abilityMode, setAbilityMode, setTargetingMode, clearTargetingMode, gameState, getFreshGameState, localPlayerId, commandContext, calculateValidTargets, triggerNoTarget, handleActionExecution, setActionQueue } = props
 
   if (!abilityMode || abilityMode.mode !== 'SELECT_UNIT_FOR_MOVE') {
     return false
@@ -2438,6 +2438,57 @@ function handleSelectUnitForMove(
   // CRITICAL: Clear targeting mode before setting new one to prevent stale highlights
   // This fixes the issue where targeting mode from SELECT_UNIT_FOR_MOVE persisted
   clearTargetingMode()
+
+  // CRITICAL: Check if there are valid move targets for the selected card BEFORE transitioning to SELECT_CELL
+  // This fixes Enhanced Interrogation option 2 where selecting a card that can't move should show "no target"
+  // and complete the command card instead of getting stuck in SELECT_CELL mode with no valid targets
+  if (calculateValidTargets) {
+    // Build a temporary SELECT_CELL action to check valid targets
+    const tempSelectCellAction: AbilityAction = {
+      type: 'ENTER_MODE',
+      mode: 'SELECT_CELL',
+      sourceCard: cardToUse,
+      sourceCoords: boardCoords,
+      payload: {
+        range: payload.range || 2,
+        moveFromHand: payload.moveFromHand || false,
+        selectedCard: cardToUse,
+        allowSelf: false,
+      }
+    }
+
+    const actorId = originalOwnerId ?? localPlayerId ?? 0
+    const moveTargets = calculateValidTargets(tempSelectCellAction, freshState, actorId, commandContext)
+
+    if (moveTargets.length === 0) {
+      // No valid move targets - show "no target" effect and complete the command
+      triggerNoTarget(boardCoords)
+
+      // If in AUTO_STEPS context, continue to CLEANUP_COMMAND
+      const autoStepsContext = abilityMode.payload?._autoStepsContext
+      if (autoStepsContext && setActionQueue) {
+        const continueAction: AbilityAction = {
+          type: 'CONTINUE_AUTO_STEPS',
+          sourceCard: abilityMode.sourceCard,
+          sourceCoords: abilityMode.sourceCoords,
+          isDeployAbility: abilityMode.isDeployAbility,
+          readyStatusToRemove: abilityMode.readyStatusToRemove,
+          payload: {
+            _autoStepsContext: { ...autoStepsContext },
+            stepContext: {
+              targetCoords: boardCoords,
+              targetCardId: card.id
+            }
+          }
+        }
+        setActionQueue(prev => [...prev, continueAction])
+      }
+
+      // Clear ability mode
+      setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+      return true
+    }
+  }
 
   // Transition to SELECT_CELL mode
   // CRITICAL: Preserve chainedAction and originalOwnerId for reward (draw/score) after move
