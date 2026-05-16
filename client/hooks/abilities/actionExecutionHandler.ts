@@ -385,13 +385,39 @@ function handleGlobalAutoApply(
     return
   }
 
-  // REMOVE_ALL_AIM_FROM_CONTEXT
+  // REMOVE_ALL_AIM_FROM_CONTEXT (Temporary Shelter)
   if (action.payload?.customAction === 'REMOVE_ALL_AIM_FROM_CONTEXT') {
+    // For P2P mode, send action to host with context information
+    if (sendAction) {
+      const targetCoords = action.sourceCoords && action.sourceCoords.row >= 0
+        ? action.sourceCoords
+        : effectiveCommandContext.lastMovedCardCoords
+
+      if (targetCoords && targetCoords.row >= 0) {
+        // Get the card at target coords to pass its ID
+        const freshState = getFreshGameState()
+        const targetCard = freshState.board[targetCoords.row][targetCoords.col]?.card
+
+        sendAction('GLOBAL_AUTO_APPLY', {
+          payload: {
+            ...action.payload,
+            contextCardId: targetCard?.id,
+            lastMovedCardCoords: targetCoords,
+          },
+          sourceCard: action.sourceCard,
+        })
+        markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+        return
+      }
+    }
+
+    // Fallback for WebSocket mode (direct execution)
     if (action.sourceCoords && action.sourceCoords.row >= 0) {
       removeStatusByType(action.sourceCoords, 'Aim')
     } else if (effectiveCommandContext.lastMovedCardCoords) {
       removeStatusByType(effectiveCommandContext.lastMovedCardCoords, 'Aim')
     }
+    markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
     return
   }
 

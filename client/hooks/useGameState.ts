@@ -1773,7 +1773,10 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     sendAction('REMOVE_ANNOUNCED_STATUS', { playerId, status })
   }, [sendAction])
   const modifyAnnouncedCardPower = useCallback(() => {}, [])
-  const addHandCardStatus = useCallback(() => {}, [])
+  const addHandCardStatus = useCallback((playerId: number, cardIndex: number, status: any, addedByPlayerId?: number) => {
+    if (addedByPlayerId === undefined) { return }
+    sendAction('ADD_STATUS_TO_HAND_CARD', { playerId, cardIndex, statusType: status, ownerId: addedByPlayerId })
+  }, [sendAction])
   const removeHandCardStatus = useCallback(() => {}, [])
   const flipBoardCard = useCallback((coords: any) => {
     if (!coords) { return }

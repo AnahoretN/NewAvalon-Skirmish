@@ -2996,8 +2996,9 @@ function handleMarkAbilityUsed(state: GameState, data: any): GameState {
 
 /**
  * GLOBAL_AUTO_APPLY - Handle global apply actions with context rewards
- * Used by Tactical Maneuver and other command cards
+ * Used by Tactical Maneuver, Temporary Shelter, and other command cards
  * Supports contextReward: DRAW_MOVED_POWER, SCORE_MOVED_POWER
+ * Supports customAction: REMOVE_ALL_AIM_FROM_CONTEXT (Temporary Shelter)
  */
 function handleGlobalAutoApply(state: GameState, playerId: number, data: any): GameState {
   const { payload, sourceCard } = data || {}
@@ -3006,6 +3007,64 @@ function handleGlobalAutoApply(state: GameState, playerId: number, data: any): G
   // Handle context rewards (Tactical Maneuver, etc.)
   if (payload.contextReward && sourceCard) {
     return handleContextReward(state, playerId, data)
+  }
+
+  // Handle custom actions (Temporary Shelter: REMOVE_ALL_AIM_FROM_CONTEXT)
+  if (payload.customAction === 'REMOVE_ALL_AIM_FROM_CONTEXT') {
+    let targetCoords: { row: number; col: number } | null = null
+
+    // Method 1: Use contextCardId if provided
+    if (payload.contextCardId) {
+      for (let r = 0; r < state.board.length; r++) {
+        for (let c = 0; c < state.board[r].length; c++) {
+          const card = state.board[r][c].card
+          if (card && card.id === payload.contextCardId) {
+            targetCoords = { row: r, col: c }
+            break
+          }
+        }
+        if (targetCoords) {
+          break
+        }
+      }
+    }
+
+    // Method 2: Use _tempContextId if provided (fallback)
+    if (!targetCoords && payload._tempContextId) {
+      for (let r = 0; r < state.board.length; r++) {
+        for (let c = 0; c < state.board[r].length; c++) {
+          const card = state.board[r][c].card
+          if (card && card.id === payload._tempContextId) {
+            targetCoords = { row: r, col: c }
+            break
+          }
+        }
+        if (targetCoords) {
+          break
+        }
+      }
+    }
+
+    // Method 3: Use lastMovedCardCoords if provided (direct coordinates)
+    if (!targetCoords && payload.lastMovedCardCoords) {
+      const { row, col } = payload.lastMovedCardCoords
+      if (row >= 0 && row < state.board.length && col >= 0 && col < state.board[row].length) {
+        const card = state.board[row][col].card
+        if (card) {
+          targetCoords = { row, col }
+        }
+      }
+    }
+
+    if (!targetCoords) {
+      return state
+    }
+
+    // Remove ALL Aim counters from the target card (regardless of owner)
+    return handleRemoveAllCountersByType(state, {
+      coords: targetCoords,
+      type: 'Aim',
+    })
   }
 
   // Handle token placement on moved card (False Orders option 2: Stun x2)
@@ -3333,12 +3392,13 @@ function handleRemoveAllCountersByType(state: GameState, data: any): GameState {
 }
 
 /**
- * REMOVE_COUNTER_BY_TYPE - remove counter/status of specific type added by specific owner from card
- * Used by Censor Commit to remove Exploit counters from specific player
+ * REMOVE_COUNTER_BY_TYPE - remove counter/status of specific type from card
+ * - If ownerId provided: remove ALL counters of that type from that owner (Censor Commit)
+ * - If ownerId NOT provided: remove ONE counter of that type from any owner (context menu)
  */
 function handleRemoveCounterByType(state: GameState, data: any): GameState {
   const { coords, type, ownerId } = data || {}
-  if (!coords || !type || ownerId === undefined) {return state}
+  if (!coords || !type) {return state}
 
   const { row, col } = coords
   if (row === undefined || col === undefined) {return state}
@@ -3349,11 +3409,23 @@ function handleRemoveCounterByType(state: GameState, data: any): GameState {
   const targetCard = cell.card
   const hadSupport = targetCard.statuses?.some(s => s.type === 'Support') ?? false
 
+  let newStatuses: any[] = []
+  if (ownerId !== undefined) {
+    // Remove ALL counters of this type from this owner (Censor Commit behavior)
+    newStatuses = cell.card.statuses?.filter(s => !(s.type === type && (s as any).addedByPlayerId === ownerId)) || []
+  } else {
+    // Remove ONE counter of this type from any owner (context menu behavior)
+    const statuses = cell.card.statuses ? [...cell.card.statuses] : []
+    const foundIndex = statuses.findIndex(s => s.type === type)
+    if (foundIndex !== -1) {
+      statuses.splice(foundIndex, 1)
+    }
+    newStatuses = statuses
+  }
+
   const newBoard = state.board.map((r, rIdx) =>
     r.map((c, cIdx) => {
       if (rIdx === row && cIdx === col && cell.card) {
-        // Filter out statuses that match both type AND ownerId
-        const newStatuses = cell.card.statuses?.filter(s => !(s.type === type && (s as any).addedByPlayerId === ownerId)) || []
         const newCard = { ...cell.card, statuses: newStatuses }
         return { ...cell, card: newCard }
       }
