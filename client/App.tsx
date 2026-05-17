@@ -407,6 +407,7 @@ const AppInner = function AppInner() {
     playCommandCard,
     handleCommandConfirm,
     handleCounterSelectionConfirm,
+    handleCounterSelectionCancel,
   } = useAppCommand({
     gameState,
     localPlayerId,
@@ -2715,31 +2716,42 @@ const AppInner = function AppInner() {
           // Find if card has readyDeploy
           const hasReadyDeploy = card.statuses.some(s => s.type === 'readyDeploy')
           if (hasReadyDeploy) {
-            // Remove readyDeploy
-            card.statuses = card.statuses.filter(s => s.type !== 'readyDeploy')
-            // Add phase-specific status if conditions are met
-            // Note: We DON'T check canActivate here because the card just lost readyDeploy
-            // and hasn't gained the phase-specific status yet, so canActivate would return false
-            const isActivePlayer = newState.activePlayerId === card.ownerId
-            const isStunned = card.statuses.some(s => s.type === 'Stun')
+            // CRITICAL: Check if any steps of multi-step ability were already executed
+            // If so, mark ability as used instead of reverting to phase-specific status
+            // This fixes Princeps/ABR Gawain: Shield is applied (step 0), but Aim (step 1) is cancelled
+            const autoStepsContext = abilityMode.payload?._autoStepsContext
+            const hasExecutedSteps = autoStepsContext && autoStepsContext.currentStepIndex > 0
 
-            if (isActivePlayer && !isStunned) {
-              // Check which phase-specific status to add using getCardAbilityTypes
-              const abilityTypes = getCardAbilityTypes(card as any)
-              let phaseStatusToAdd: string | null = null
+            if (hasExecutedSteps) {
+              // Some steps were already executed - mark ability as used
+              markAbilityUsed({ row, col }, true, false, 'readyDeploy')
+            } else {
+              // Remove readyDeploy
+              card.statuses = card.statuses.filter(s => s.type !== 'readyDeploy')
+              // Add phase-specific status if conditions are met
+              // Note: We DON'T check canActivate here because the card just lost readyDeploy
+              // and hasn't gained the phase-specific status yet, so canActivate would return false
+              const isActivePlayer = newState.activePlayerId === card.ownerId
+              const isStunned = card.statuses.some(s => s.type === 'Stun')
 
-              if (newState.currentPhase === 1 && abilityTypes.includes('setup')) {
-                phaseStatusToAdd = 'readySetup'
-              } else if (newState.currentPhase === 3 && abilityTypes.includes('commit')) {
-                phaseStatusToAdd = 'readyCommit'
+              if (isActivePlayer && !isStunned) {
+                // Check which phase-specific status to add using getCardAbilityTypes
+                const abilityTypes = getCardAbilityTypes(card as any)
+                let phaseStatusToAdd: string | null = null
+
+                if (newState.currentPhase === 1 && abilityTypes.includes('setup')) {
+                  phaseStatusToAdd = 'readySetup'
+                } else if (newState.currentPhase === 3 && abilityTypes.includes('commit')) {
+                  phaseStatusToAdd = 'readyCommit'
+                }
+
+                if (phaseStatusToAdd && !card.statuses.some(s => s.type === phaseStatusToAdd)) {
+                  card.statuses.push({ type: phaseStatusToAdd, addedByPlayerId: card.ownerId })
+                }
               }
-
-              if (phaseStatusToAdd && !card.statuses.some(s => s.type === phaseStatusToAdd)) {
-                card.statuses.push({ type: phaseStatusToAdd, addedByPlayerId: card.ownerId })
-              }
+              // Update state
+              updateState(newState)
             }
-            // Update state
-            updateState(newState)
           }
         }
       }
@@ -2764,7 +2776,7 @@ const AppInner = function AppInner() {
     setValidHandTargets([])
     // Clear valid board targets
     setValidTargets([])
-  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState, setAbilityMode, setCursorStack, setPlayMode, setValidHandTargets, setValidTargets, cancelAllModesTimestampRef])
+  }, [abilityMode, cursorStack, playMode, clearTargetingMode, gameState, updateState, setAbilityMode, setCursorStack, setPlayMode, setValidHandTargets, setValidTargets, cancelAllModesTimestampRef, markAbilityUsed])
 
   const handleDoubleClickHandCard = (player: Player, card: Card, cardIndex: number) => {
     if (abilityMode || cursorStack) {
@@ -3487,7 +3499,8 @@ const AppInner = function AppInner() {
           data={counterSelectionData}
           onConfirm={(count) => handleCounterSelectionConfirm(count, counterSelectionData)}
           onCancel={() => {
-            setCounterSelectionData(null); setAbilityMode(null)
+            handleCounterSelectionCancel(counterSelectionData)
+            setAbilityMode(null)
           }}
         />
       )}

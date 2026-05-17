@@ -324,7 +324,7 @@ export function handleStartNextRound(state: GameState): GameState {
     finalPhase = 1
   }
 
-  return {
+  const newState = {
     ...state,
     currentRound: newRound,
     players: newPlayers,
@@ -332,18 +332,28 @@ export function handleStartNextRound(state: GameState): GameState {
     gameWinner: null,
     currentPhase: finalPhase
   }
+
+  // CRITICAL FIX: Clear processed triggers when starting new round
+  delete (newState as any).processedTriggersThisTurn
+
+  return newState
 }
 
 /**
  * START_NEW_MATCH - start new match
  */
 export function handleStartNewMatch(state: GameState): GameState {
-  return {
+  const newState = {
     ...state,
     currentRound: 1,
     currentPhase: 1,  // Setup - can play cards immediately
     turnNumber: 1
   }
+
+  // CRITICAL FIX: Clear processed triggers when starting new match
+  delete (newState as any).processedTriggersThisTurn
+
+  return newState
 }
 
 /**

@@ -712,11 +712,37 @@ export function advanceToNextStepWithCoords(
     // Check if the last step is CLEANUP_COMMAND
     const lastStep = steps[steps.length - 1]
     if (lastStep && lastStep.action === 'GLOBAL_AUTO_APPLY' && lastStep.details?.customAction === 'CLEANUP_COMMAND') {
+      // CRITICAL: For command cards, ensure we use the original command card as sourceCard
+      // This fixes Enhanced Interrogation option 2 where moving an opponent's card
+      // causes sourceCard to become the opponent's card instead of the command card
+      let cleanupSourceCard = abilityMode.sourceCard
+      let cleanupSourceCoords = abilityMode.sourceCoords
+
+      // If _autoStepsContext has commandCardId, find the actual command card
+      if (autoStepsContext?.commandCardId) {
+        // Try to find the command card in announced cards
+        for (const p of gameState.players) {
+          if (p.announcedCard && p.announcedCard.id === autoStepsContext.commandCardId) {
+            cleanupSourceCard = p.announcedCard
+            // Command cards are in showcase, use default coords
+            cleanupSourceCoords = { row: -1, col: -1 }
+            break
+          }
+        }
+      }
+
+      console.log('[advanceToNextStepWithCoords] Creating CLEANUP_COMMAND action:', {
+        sourceCard: cleanupSourceCard?.id,
+        sourceCoords: cleanupSourceCoords,
+        commandCardId: autoStepsContext?.commandCardId,
+        commandCardOwnerId: autoStepsContext?.commandCardOwnerId
+      })
+
       const cleanupAction: AbilityAction = {
         type: 'GLOBAL_AUTO_APPLY',
         mode: null,
-        sourceCard: abilityMode.sourceCard,
-        sourceCoords: abilityMode.sourceCoords,
+        sourceCard: cleanupSourceCard,
+        sourceCoords: cleanupSourceCoords,
         isDeployAbility: abilityMode.isDeployAbility,
         readyStatusToRemove: abilityMode.readyStatusToRemove,
         payload: {
@@ -2858,6 +2884,9 @@ function handleSelectCell(
     return false
   }
 
+  // CRITICAL: Debug log to see if handleSelectCell is being called
+  console.log('[handleSelectCell] Called with sourceCard:', abilityMode.sourceCard?.id, 'boardCoords:', boardCoords, 'hasAutoStepsContext:', !!abilityMode.payload?._autoStepsContext)
+
   const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload, originalOwnerId, chainedAction: directChainedAction } = abilityMode
 
   // CRITICAL: For command cards like False Orders, chainedAction is in payload.chainedAction
@@ -2997,7 +3026,8 @@ function handleSelectCell(
 
     // CRITICAL: Execute chainedAction with proper handling based on type
     // For CREATE_STACK (Revealed), execute through handleActionExecution to create cursorStack
-    // For GLOBAL_AUTO_APPLY (Stun), add to actionQueue
+    // For GLOBAL_AUTO_APPLY (Stun, etc.), execute directly to ensure it runs before CONTINUE_AUTO_STEPS
+    // This fixes False Orders Option 2 where Stun tokens weren't being placed
     if (normalizedAction.type === 'CREATE_STACK' && normalizedAction.tokenType === 'Revealed') {
       // For Revealed tokens, execute through handleActionExecution to create cursorStack
       if (props.handleActionExecution) {
@@ -3033,6 +3063,45 @@ function handleSelectCell(
             return [...otherActions, continueAction, ...cleanupActions]
           })
         }, 100)
+      }
+    } else if (normalizedAction.type === 'GLOBAL_AUTO_APPLY') {
+      // CRITICAL FIX: For GLOBAL_AUTO_APPLY (Stun, etc.), execute directly through handleActionExecution
+      // This ensures the action runs immediately instead of being added to actionQueue
+      // This fixes False Orders Option 2 where Stun tokens weren't being placed because
+      // actionQueue processing was delayed and CONTINUE_AUTO_STEPS ran first
+      if (props.handleActionExecution) {
+        // Small delay to allow move animation to complete
+        setTimeout(() => {
+          props.handleActionExecution(enrichedChainedAction, boardCoords)
+        }, 50)
+      }
+
+      // Also add CONTINUE_AUTO_STEPS after GLOBAL_AUTO_APPLY completes
+      if (payload?._autoStepsContext && setActionQueue) {
+        const autoStepsContext = { ...payload._autoStepsContext }
+        const continueAction: any = {
+          type: 'CONTINUE_AUTO_STEPS',
+          sourceCard: abilityMode.sourceCard,
+          sourceCoords: boardCoords,
+          isDeployAbility: abilityMode.isDeployAbility,
+          readyStatusToRemove: abilityMode.readyStatusToRemove,
+          payload: {
+            _autoStepsContext: autoStepsContext,
+            stepContext: {
+              targetCoords: boardCoords,
+              targetCardId: movedCardId,
+              // CRITICAL: Pass sourceOwnerId for resolving targetOwnerId in chained actions
+              ...(movedCard?.ownerId !== undefined ? { sourceOwnerId: movedCard.ownerId } : {})
+            }
+          }
+        }
+        setTimeout(() => {
+          setActionQueue(prev => {
+            const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
+            const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
+            return [...otherActions, continueAction, ...cleanupActions]
+          })
+        }, 100) // Slightly longer delay to ensure GLOBAL_AUTO_APPLY completes first
       }
     } else {
       // For other actions (GLOBAL_AUTO_APPLY, etc.), add to actionQueue
@@ -3080,6 +3149,7 @@ function handleSelectCell(
   // After the move completes, we need to continue AUTO_STEPS to trigger CLEANUP_COMMAND
   if (!actualChainedAction && payload?._autoStepsContext && setActionQueue) {
     const autoStepsContext = { ...payload._autoStepsContext }
+    console.log('[handleSelectCell] Move completed for', abilityMode.sourceCard?.id, 'currentStepIndex:', autoStepsContext.currentStepIndex, 'steps.length:', autoStepsContext.steps?.length)
     const continueAction: any = {
       type: 'CONTINUE_AUTO_STEPS',
       sourceCard: abilityMode.sourceCard,
@@ -3120,14 +3190,14 @@ function handleSelectCell(
     clearTargetingMode()
   }
 
-  // CRITICAL: For AUTO_STEPS commands, clear abilityMode immediately so actionQueue can be processed
-  // This fixes Enhanced Interrogation option 2 where the cleanup wasn't triggering
-  if (payload?._autoStepsContext) {
-    console.log('[handleSelectCell] AUTO_STEPS context detected, clearing abilityMode immediately')
-    setAbilityMode(null)
-  } else {
+  // CRITICAL: Do NOT clear abilityMode when there's a chainedAction
+  // The mode will be cleared after the chained action executes (in actionExecutionHandler)
+  // This fixes False Orders Option 2 where the mode was cleared before the chained action could execute
+  if (!actualChainedAction) {
     setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
   }
+  // For chainedAction case, mode is cleared in handleGlobalAutoApply when the action completes
+  console.log('[handleSelectCell] Finished. actualChainedAction:', !!actualChainedAction, 'abilityMode will be cleared:', !actualChainedAction)
   return true
 }
 

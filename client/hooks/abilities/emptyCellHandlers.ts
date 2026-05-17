@@ -333,6 +333,22 @@ export function handleEmptyCellClick(
     // should be executed as part of the next step (GLOBAL_AUTO_APPLY), not directly
     if (payload?._autoStepsContext && setActionQueue) {
       const autoStepsContext = { ...payload._autoStepsContext }
+
+      // CRITICAL: Update chainedAction with moved card info for GLOBAL_AUTO_APPLY
+      // This fixes False Orders Option 2 where Stun x2 needs to be placed on the moved card
+      let updatedChainedAction = chainedAction
+      if (chainedAction && movedCard) {
+        updatedChainedAction = {
+          ...chainedAction,
+          // CRITICAL: Add lastMovedCardCoords so GLOBAL_AUTO_APPLY knows where to place tokens
+          payload: {
+            ...chainedAction.payload,
+            lastMovedCardCoords: boardCoords,
+            contextCardId: movedCard.id,
+          }
+        }
+      }
+
       const continueAction: any = {
         type: 'CONTINUE_AUTO_STEPS',
         sourceCard: abilityMode.sourceCard,
@@ -351,7 +367,7 @@ export function handleEmptyCellClick(
           },
           // CRITICAL: Pass chainedAction so advanceToNextStepWithCoords can execute it
           // This fixes False Orders Option 2 where Stun x2 needs to be placed after move
-          ...(chainedAction ? { chainedAction } : {})
+          ...(updatedChainedAction ? { chainedAction: updatedChainedAction } : {})
         }
       }
 

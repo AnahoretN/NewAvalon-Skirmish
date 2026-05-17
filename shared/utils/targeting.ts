@@ -530,7 +530,10 @@ export const calculateValidTargets = (
   // Special case: RECON_DRONE_COMMIT (2-step ability - step 1: select adjacent opponent)
   // Handle early to use proper filter
   if (mode === 'RECON_DRONE_COMMIT' && sourceCoords) {
-    const ownerId = action.sourceCard?.ownerId || actorId
+    // CRITICAL: Get actual ownerId from board to ensure we have current ownership
+    // This fixes the bug where action.sourceCard may have stale ownerId if the card was moved
+    const actualSourceOwnerId = board[sourceCoords.row]?.[sourceCoords.col]?.card?.ownerId
+    const ownerId = actualSourceOwnerId || action.sourceCard?.ownerId || actorId
     const neighbors = [
       { r: sourceCoords.row - 1, c: sourceCoords.col },
       { r: sourceCoords.row + 1, c: sourceCoords.col },
@@ -563,7 +566,10 @@ export const calculateValidTargets = (
   // Special case: TRANSFER_ALL_STATUSES (Reckless Provocateur Commit)
   // Can select any allied card (except self) that has transferable counters
   if (mode === 'TRANSFER_ALL_STATUSES' && sourceCoords) {
-    const ownerId = action.sourceCard?.ownerId || actorId
+    // CRITICAL: Get actual ownerId from board to ensure we have current ownership
+    // This fixes the bug where action.sourceCard may have stale ownerId if the card was moved
+    const actualSourceOwnerId = board[sourceCoords.row]?.[sourceCoords.col]?.card?.ownerId
+    const ownerId = actualSourceOwnerId || action.sourceCard?.ownerId || actorId
     const transferableTypes = ['Aim', 'Shield', 'Exploit', 'Stun', 'Revealed', 'Rule']
 
     // Iterate ONLY over active grid bounds
@@ -1358,7 +1364,10 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
       { r: row, c: col - 1 },
       { r: row, c: col + 1 },
     ]
-    const ownerId = action.sourceCard?.ownerId || playerId
+    // CRITICAL: Get actual ownerId from board to ensure we have current ownership
+    // This fixes the bug where action.sourceCard may have stale ownerId if the card was moved
+    const actualSourceOwnerId = currentGameState.board[row]?.[col]?.card?.ownerId
+    const ownerId = actualSourceOwnerId || action.sourceCard?.ownerId || playerId
 
     for (const nb of neighbors) {
       if (nb.r >= 0 && nb.r < currentGameState.board.length &&
@@ -1384,7 +1393,10 @@ export const checkActionHasTargets = (action: AbilityAction, currentGameState: G
   // Special Case: TRANSFER_ALL_STATUSES (Reckless Provocateur Commit)
   // Check if there's at least one allied card with transferable counters
   if (action.mode === 'TRANSFER_ALL_STATUSES' && action.sourceCoords) {
-    const ownerId = action.sourceCard?.ownerId || playerId
+    // CRITICAL: Get actual ownerId from board to ensure we have current ownership
+    // This fixes the bug where action.sourceCard may have stale ownerId if the card was moved
+    const actualSourceOwnerId = currentGameState.board[action.sourceCoords.row]?.[action.sourceCoords.col]?.card?.ownerId
+    const ownerId = actualSourceOwnerId || action.sourceCard?.ownerId || playerId
     const transferableTypes = ['Aim', 'Shield', 'Exploit', 'Stun', 'Revealed', 'Rule']
     const activeSize = currentGameState.activeGridSize
     const gridSize = currentGameState.board.length
@@ -1640,7 +1652,13 @@ export function calculateHandTargets(
   }
 
   const handTargets: {playerId: number, cardIndex: number}[] = []
-  const tokenOwnerId = action.sourceCard?.ownerId ?? actorId
+  // CRITICAL: Get actual tokenOwnerId from board if sourceCoords is available
+  // This fixes the bug where action.sourceCard may have stale ownerId if the card was moved
+  const sourceCoordsForCheck = action.sourceCoords
+  const actualTokenOwnerId = sourceCoordsForCheck
+    ? currentGameState.board[sourceCoordsForCheck.row]?.[sourceCoordsForCheck.col]?.card?.ownerId
+    : null
+  const tokenOwnerId = actualTokenOwnerId ?? action.sourceCard?.ownerId ?? actorId
   // CRITICAL: Read targetOwnerId from action, payload, or details (chained actions use payload/details format)
   const targetOwnerId = action.targetOwnerId ?? action.payload?.targetOwnerId ?? (action as any).details?.targetOwnerId
   // CRITICAL: Read onlyOpponents from action or payload

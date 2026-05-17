@@ -236,7 +236,7 @@ function handleContinueAutoSteps(
   const { gameState, getFreshGameState, setAbilityMode, setTargetingMode, clearTargetingMode, commandContext, localPlayerId, markAbilityUsed, addBoardCardStatus, modifyBoardCardPower, handleActionExecution, calculateValidTargets } = props
 
   const autoStepsContext = action.payload?._autoStepsContext
-  console.log('[handleContinueAutoSteps] Called with sourceCard:', action.sourceCard?.id, 'currentStepIndex:', autoStepsContext?.currentStepIndex, 'steps.length:', autoStepsContext?.steps?.length)
+  console.log('[handleContinueAutoSteps] Called with sourceCard:', action.sourceCard?.id, 'currentStepIndex:', autoStepsContext?.currentStepIndex, 'steps.length:', autoStepsContext?.steps?.length, 'nextStep will be:', (autoStepsContext?.currentStepIndex ?? 0) + 1)
 
   if (!autoStepsContext || !autoStepsContext.steps) {
     markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
@@ -257,8 +257,15 @@ function handleContinueAutoSteps(
   // Check if there are more steps
   if (completedStepIndex >= steps.length) {
     // All steps complete!
-    markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
-    setAbilityMode(null)
+    // CRITICAL: Execute chainedAction if present (False Orders Option 2: Stun x2 after move)
+    if (chainedActionFromStep) {
+      console.log('[handleContinueAutoSteps] All steps complete, executing chainedAction:', chainedActionFromStep.type)
+      // Execute the chained action directly
+      handleActionExecution(chainedActionFromStep, sourceCoords, props)
+    } else {
+      markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+      setAbilityMode(null)
+    }
     return
   }
 
@@ -320,10 +327,12 @@ function handleGlobalAutoApply(
   // P2P: Token placement on moved card (False Orders option 2: Stun x2)
   // Send to host for processing since client can't directly modify shared state
   // CRITICAL: Handle both contextCardId and _tempContextId (for finding moved card)
+  // CRITICAL: Do NOT call markAbilityUsed in AUTO_STEPS context - let CONTINUE_AUTO_STEPS handle it
   if (action.payload?.tokenType && (action.payload?.count || action.payload?.count === 0)) {
     const hasContextCardId = !!action.payload?.contextCardId
     const hasTempContextId = !!action.payload?._tempContextId
     const hasContextCoords = !!action.payload?.lastMovedCardCoords
+    const hasAutoStepsContext = !!(action.payload as any)?._autoStepsContext?.steps
 
     if (sendAction && (hasContextCardId || hasTempContextId || hasContextCoords)) {
       // Send action to host with full payload
@@ -331,8 +340,76 @@ function handleGlobalAutoApply(
         payload: action.payload,
         sourceCard: action.sourceCard,
       })
-      markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+      // CRITICAL: Only mark as used if NOT in AUTO_STEPS context
+      // In AUTO_STEPS, actionQueue's CONTINUE_AUTO_STEPS will handle cleanup
+      if (!hasAutoStepsContext) {
+        markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+      } else {
+        // CRITICAL: For AUTO_STEPS context, clear abilityMode after sending to host
+        // This allows CONTINUE_AUTO_STEPS to proceed and prevents the mode from persisting
+        console.log('[handleGlobalAutoApply] Sent to host, clearing abilityMode for AUTO_STEPS context')
+        const { setAbilityMode } = props as any
+        if (setAbilityMode) {
+          setTimeout(() => setAbilityMode(null), 50)
+        }
+      }
+      // For AUTO_STEPS, just return - actionQueue will process CONTINUE_AUTO_STEPS next
       return
+    }
+
+    // Fallback for WebSocket mode or when no context: direct token placement
+    // Find target card and place tokens directly
+    if (hasContextCardId || hasTempContextId || hasContextCoords) {
+      const freshState = getFreshGameState()
+      let targetCoords: { row: number; col: number } | null = null
+
+      // Method 1: Use contextCardId
+      if (action.payload?.contextCardId) {
+        for (let r = 0; r < freshState.board.length; r++) {
+          for (let c = 0; c < freshState.board[r].length; c++) {
+            const card = freshState.board[r][c].card
+            if (card && card.id === action.payload.contextCardId) {
+              targetCoords = { row: r, col: c }
+              break
+            }
+          }
+          if (targetCoords) break
+        }
+      }
+      // Method 2: Use lastMovedCardCoords
+      else if (action.payload?.lastMovedCardCoords) {
+        targetCoords = action.payload.lastMovedCardCoords
+      }
+      // Method 3: Use commandContext
+      else if (effectiveCommandContext.lastMovedCardCoords) {
+        targetCoords = effectiveCommandContext.lastMovedCardCoords
+      }
+
+      if (targetCoords) {
+        // Handle ownerId === "source" to use sourceCard owner
+        let tokenOwnerId = action.payload?.ownerId === "source"
+          ? (action.sourceCard?.ownerId || localPlayerId || 0)
+          : (action.payload?.ownerId || localPlayerId || 0)
+
+        // Place the tokens
+        for (let i = 0; i < (action.payload?.count || 0); i++) {
+          addBoardCardStatus(targetCoords, action.payload?.tokenType || '', tokenOwnerId, 1)
+        }
+
+        // CRITICAL: Only mark as used if NOT in AUTO_STEPS context
+        if (!hasAutoStepsContext) {
+          markAbilityUsed(action.sourceCoords || sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
+        } else {
+          // CRITICAL: For AUTO_STEPS context, clear abilityMode after token placement
+          // This allows CONTINUE_AUTO_STEPS to proceed and prevents the mode from persisting
+          console.log('[handleGlobalAutoApply] Tokens placed, clearing abilityMode for AUTO_STEPS context')
+          const { setAbilityMode } = props as any
+          if (setAbilityMode) {
+            setTimeout(() => setAbilityMode(null), 50)
+          }
+        }
+        return
+      }
     }
   }
 
@@ -658,6 +735,15 @@ function handleGlobalAutoApply(
       finalCardId = commandCardId
     }
 
+    console.log('[handleGlobalAutoApply] CLEANUP_COMMAND:', {
+      actionSourceCard: action.sourceCard?.id,
+      actionSourceCardOwnerId: action.sourceCard?.ownerId,
+      commandCardId: autoStepsContext?.commandCardId,
+      commandCardOwnerId: autoStepsContext?.commandCardOwnerId,
+      finalOwnerId: ownerId,
+      finalCardId
+    })
+
     if (props.sendAction && finalCardId) {
       // Use CLEANUP_COMMAND action for P2P mode (requires cardId)
       props.sendAction('CLEANUP_COMMAND', { playerId: ownerId, cardId: finalCardId })
@@ -901,6 +987,7 @@ function handleCreateStack(
                   currentStepIndex: nextStepIndex,
                   sourceCard: action.sourceCard,
                   commandCardId: autoStepsContext.commandCardId || action.sourceCard?.id,
+                  commandCardOwnerId: autoStepsContext.commandCardOwnerId ?? action.sourceCard?.ownerId
                 }
               },
               sourceCard: action.sourceCard,
@@ -1962,7 +2049,8 @@ function handleEnterMode(
               originalType: action.payload?.originalType,
               supportRequired: action.payload?.supportRequired,
               readyStatusToRemove: action.readyStatusToRemove,
-              commandCardId: action.payload?.commandCardId || action.sourceCard?.id
+              commandCardId: action.payload?.commandCardId || action.sourceCard?.id,
+              commandCardOwnerId: action.payload?.commandCardOwnerId ?? action.sourceCard?.ownerId
             }
           }
         }
@@ -1993,7 +2081,8 @@ function handleEnterMode(
               originalType: action.payload?.originalType,
               supportRequired: action.payload?.supportRequired,
               readyStatusToRemove: action.readyStatusToRemove,
-              commandCardId: action.payload?.commandCardId || action.sourceCard?.id
+              commandCardId: action.payload?.commandCardId || action.sourceCard?.id,
+              commandCardOwnerId: action.payload?.commandCardOwnerId ?? action.sourceCard?.ownerId
             }
           }
         }
@@ -2555,7 +2644,8 @@ function handleEnterMode(
               supportRequired: action.payload?.supportRequired,
               readyStatusToRemove: action.readyStatusToRemove,
               // CRITICAL: Pass commandCardId for CLEANUP_COMMAND to find the correct card
-              commandCardId: action.payload?.commandCardId || action.sourceCard?.id
+              commandCardId: action.payload?.commandCardId || action.sourceCard?.id,
+              commandCardOwnerId: action.payload?.commandCardOwnerId ?? action.sourceCard?.ownerId
             }
           }
         }

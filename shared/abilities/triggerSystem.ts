@@ -50,6 +50,7 @@ export interface CardPlacedEvent {
   coords: { row: number; col: number }
   playerId: number
   source: 'hand' | 'deck' | 'discard' | 'announced' | 'board'
+  isCommandCardDiscard?: boolean // True when discarding a revealed command card (special case for Vigilant Spotter)
 }
 
 /**
@@ -72,12 +73,33 @@ export type CardLookupFn = (baseId: string) => { ABILITIES?: any[] } | null
 
 /**
  * Check if a card has the Revealed status
+ * @param card - The card to check
+ * @param requiredOwnerId - Optional: only count Revealed status if addedByPlayerId matches
  */
-function hasRevealedStatus(card: CardAny): boolean {
+function hasRevealedStatus(card: CardAny, requiredOwnerId?: number): boolean {
   if (!card.statuses || card.statuses.length === 0) {
+    console.log('[hasRevealedStatus] No statuses on card')
     return false
   }
-  return card.statuses.some((s: any) => s.type === 'Revealed')
+
+  const result = card.statuses.some((s: any) => {
+    if (s.type !== 'Revealed') {
+      return false
+    }
+    // If requiredOwnerId is specified, only count if status was added by that player
+    if (requiredOwnerId !== undefined && s.addedByPlayerId !== requiredOwnerId) {
+      console.log('[hasRevealedStatus] Found Revealed status but addedByPlayerId', s.addedByPlayerId, '!= requiredOwnerId', requiredOwnerId)
+      return false
+    }
+    console.log('[hasRevealedStatus] Found matching Revealed status addedByPlayerId:', s.addedByPlayerId, 'requiredOwnerId:', requiredOwnerId)
+    return true
+  })
+
+  if (!result) {
+    console.log('[hasRevealedStatus] No matching Revealed status found. All statuses:', card.statuses.map((s: any) => ({ type: s.type, addedBy: s.addedByPlayerId })))
+  }
+
+  return result
 }
 
 /**
@@ -151,16 +173,18 @@ export function checkTriggersOnCardPlaced(
   event: CardPlacedEvent,
   cardLookup: CardLookupFn
 ): TriggerResult[] {
-  console.log('[checkTriggersOnCardPlaced] Checking triggers for card:', event.card.baseId, 'playerId:', event.playerId, 'statuses:', event.card.statuses)
+  console.log('[checkTriggersOnCardPlaced] Checking triggers for card:', event.card.baseId, 'playerId:', event.playerId, 'source:', event.source, 'statuses:', event.card.statuses)
   const results: TriggerResult[] = []
   const activeTriggers = getActiveTriggers(gameState, cardLookup)
+
+  console.log('[checkTriggersOnCardPlaced] Found', activeTriggers.length, 'active triggers on board')
 
   activeTriggers.forEach((trigger) => {
     console.log('[checkTriggersOnCardPlaced] Checking trigger:', trigger.cardBaseId, 'ownerId:', trigger.ownerId, 'eventType:', trigger.trigger.eventType, 'supportRequired:', trigger.supportRequired)
 
     // Skip triggers owned by the same player who placed the card
     if (trigger.ownerId === event.playerId) {
-      console.log('[checkTriggersOnCardPlaced] Skipping - same player')
+      console.log('[checkTriggersOnCardPlaced] Skipping - same player (trigger owner == card player)')
       return
     }
 
@@ -169,17 +193,20 @@ export function checkTriggersOnCardPlaced(
       const hasSupport = checkSupportAvailable(gameState, trigger.ownerId, trigger.coords)
       console.log('[checkTriggersOnCardPlaced] Has support:', hasSupport)
       if (!hasSupport) {
+        console.log('[checkTriggersOnCardPlaced] Skipping - no support')
         return
       }
     }
 
     // Check if trigger matches the event
-    if (!doesTriggerMatchEvent(trigger.trigger, event)) {
-      console.log('[checkTriggersOnCardPlaced] Trigger does not match event')
+    const matches = doesTriggerMatchEvent(trigger.trigger, event, trigger.ownerId)
+    console.log('[checkTriggersOnCardPlaced] Trigger matches event:', matches)
+    if (!matches) {
+      console.log('[checkTriggersOnCardPlaced] Skipping - trigger does not match event')
       return
     }
 
-    console.log('[checkTriggersOnCardPlaced] TRIGGER MATCHED! Executing...')
+    console.log('[checkTriggersOnCardPlaced] TRIGGER MATCHED! Executing...', trigger.cardBaseId, 'will give', trigger.trigger.effect?.points, 'points to player', trigger.ownerId)
     // Execute the trigger effect
     results.push(executeTriggerEffect(trigger))
   })
@@ -204,6 +231,8 @@ function checkSupportAvailable(
     { dr: 0, dc: 1 },  // right
   ]
 
+  console.log('[checkSupportAvailable] Checking support for ownerId:', ownerId, 'at coords:', coords)
+
   for (const offset of adjacentOffsets) {
     const newRow = row + offset.dr
     const newCol = col + offset.dc
@@ -215,21 +244,48 @@ function checkSupportAvailable(
     }
 
     const cell = gameState.board[newRow][newCol]
+    if (cell.card) {
+      console.log('[checkSupportAvailable] Found adjacent card at', { newRow, newCol }, 'ownerId:', cell.card.ownerId, 'matches:', cell.card.ownerId === ownerId)
+    }
     if (cell.card && cell.card.ownerId === ownerId) {
+      console.log('[checkSupportAvailable] Support found!')
       return true
     }
   }
 
+  console.log('[checkSupportAvailable] No support found')
   return false
 }
 
 /**
  * Check if a trigger matches the given event
+ * @param trigger - The trigger definition
+ * @param event - The card placement event
+ * @param triggerOwnerId - The owner of the trigger card (for checking status ownership)
  */
-function doesTriggerMatchEvent(trigger: TriggerDefinition, event: CardPlacedEvent): boolean {
+function doesTriggerMatchEvent(trigger: TriggerDefinition, event: CardPlacedEvent, triggerOwnerId?: number): boolean {
   switch (trigger.eventType) {
     case 'OPPONENT_PLAYS_REVEALED_CARD':
-      return hasRevealedStatus(event.card)
+      // "plays a revealed card" means:
+      // 1. Playing from hand to battlefield (source='hand')
+      // 2. Discarding a revealed command card after execution (isCommandCardDiscard=true)
+      // NOT when moving from board to board or other actions
+      if (event.source !== 'hand' && !event.isCommandCardDiscard) {
+        console.log('[doesTriggerMatchEvent] OPPONENT_PLAYS_REVEALED_CARD: source is', event.source, ', not hand - skipping')
+        return false
+      }
+      // CRITICAL FIX: Check if the card was already on the board
+      // If the card has enteredThisTurn flag and is being moved again, don't trigger
+      // This prevents Vigilant Spotter from triggering on board movements after initial placement
+      if (event.source === 'hand' && event.card.enteredThisTurn === true && event.coords.row >= 0) {
+        // Card is already marked as enteredThisTurn but source is 'hand'
+        // This might indicate a re-processing of the same card or incorrect state
+        console.log('[doesTriggerMatchEvent] OPPONENT_PLAYS_REVEALED_CARD: Card has enteredThisTurn=true with source=hand - possible duplicate processing, skipping')
+        return false
+      }
+      // Check if card has Revealed status added by the trigger owner's player
+      // This ensures Vigilant Spotter only triggers for Revealed statuses added by its owner
+      return hasRevealedStatus(event.card, triggerOwnerId)
 
     case 'OPPONENT_PLAYS_CARD_WITH_STATUS':
       if (trigger.statusFilter) {

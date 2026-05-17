@@ -222,9 +222,37 @@ export const useAppCommand = ({
     setCounterSelectionData(null)
   }, [localPlayerId, updatePlayerScore, setActionQueue, setCounterSelectionData, gameState, sendAction])
 
+  const handleCounterSelectionCancel = useCallback((data: CounterSelectionData) => {
+    // CRITICAL: Continue to AUTO_STEPS cleanup step even when user cancels
+    // This ensures command cards like Inspiration are discarded to discard pile
+    if (data.autoStepsContext) {
+      const { steps, currentStepIndex, abilityAction } = data.autoStepsContext
+      const nextStepIndex = currentStepIndex + 1
+
+      if (nextStepIndex < steps.length) {
+        const nextStep = steps[nextStepIndex]
+
+        // CRITICAL: Handle CLEANUP_COMMAND step directly instead of adding to queue
+        if (nextStep.action === 'GLOBAL_AUTO_APPLY' && nextStep.details?.customAction === 'CLEANUP_COMMAND') {
+          const ownerId = data.card.ownerId || localPlayerId || 0
+          const cleanupAction = {
+            type: 'GLOBAL_AUTO_APPLY',
+            payload: { cleanupCommand: true, ownerId },
+            sourceCard: abilityAction.sourceCard,
+            sourceCoords: abilityAction.sourceCoords,
+          }
+          setActionQueue([cleanupAction])
+        }
+      }
+    }
+
+    setCounterSelectionData(null)
+  }, [localPlayerId, setActionQueue, setCounterSelectionData])
+
   return {
     playCommandCard,
     handleCommandConfirm,
     handleCounterSelectionConfirm,
+    handleCounterSelectionCancel,
   }
 }

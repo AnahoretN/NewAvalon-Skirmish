@@ -271,6 +271,7 @@ export const useAppCounters = ({
                   // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                   const autoStepsContext = { ...cursorStack._autoStepsContext }
                   const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
+                  console.log('[useAppCounters] CREATE_STACK completed for', cursorStack.sourceCard?.id, 'currentStepIndex:', autoStepsContext.currentStepIndex, '→ completedStepIndex:', completedStepIndex, 'steps.length:', autoStepsContext.steps?.length)
                   const continueAction: any = {
                     type: 'CONTINUE_AUTO_STEPS',
                     sourceCard: cursorStack.sourceCard,
@@ -570,10 +571,47 @@ export const useAppCounters = ({
                     })
                     clearTargetingMode()
 
-                    // CRITICAL FIX: Add chainedAction to actionQueue AFTER clearing abilityMode and cursorStack
-                    // This ensures the actionQueue useEffect can process the chained action immediately
-                    // Also ensures cleanupCommand stays at the end
-                    if (setActionQueue) {
+                    // CRITICAL FIX: Check if chainedAction is an interactive mode (ENTER_MODE)
+                    // If so, execute it directly via onAction instead of adding to actionQueue
+                    // This ensures abilityMode is set synchronously and prevents CONTINUE_AUTO_STEPS
+                    // from skipping the interactive step (False Orders SELECT_CELL bug)
+                    const isInteractiveMode = chained.type === 'ENTER_MODE' ||
+                      (chained.mode && (
+                        chained.mode === 'SELECT_CELL' ||
+                        chained.mode === 'SELECT_TARGET' ||
+                        chained.mode === 'SELECT_UNIT_FOR_MOVE' ||
+                        chained.mode === 'SELECT_LINE_START' ||
+                        chained.mode === 'SELECT_LINE_END' ||
+                        chained.mode === 'PLACE_TOKEN'
+                      ))
+
+                    if (isInteractiveMode && cursorStack._autoStepsContext) {
+                      // For interactive modes in AUTO_STEPS context:
+                      // 1. Execute the chained action directly via onAction
+                      // 2. DO NOT add CONTINUE_AUTO_STEPS to actionQueue yet
+                      // 3. CONTINUE_AUTO_STEPS will be added when user completes the interactive step
+                      // This fixes False Orders where SELECT_CELL mode was being skipped
+
+                      // Update commandContext before executing chained action
+                      if (cursorStack.recordContext && setCommandContext) {
+                        setCommandContext(prev => ({
+                          ...prev,
+                          lastMovedCardCoords: { row, col },
+                          lastMovedCardId: targetCard.id,
+                          sourceOwnerId: targetCard.ownerId,
+                        }))
+                      }
+
+                      // CRITICAL: Use flushSync to ensure abilityMode is set synchronously
+                      // This prevents useEffect from running before abilityMode is updated
+                      // which would cause CONTINUE_AUTO_STEPS to skip the interactive step
+                      flushSync(() => {
+                        onAction(chained, { row, col })
+                      })
+                    } else if (setActionQueue) {
+                      // CRITICAL FIX: Add chainedAction to actionQueue AFTER clearing abilityMode and cursorStack
+                      // This ensures the actionQueue useEffect can process the chained action immediately
+                      // Also ensures cleanupCommand stays at the end
                       // Add unique ID to prevent duplicate processing
                       if (!chained._uniqueId) {
                         chained._uniqueId = `${chained.type}_${Date.now()}_${Math.random()}`
@@ -622,14 +660,38 @@ export const useAppCounters = ({
                       })
                     } else {
                       // Fallback: execute directly if setActionQueue not available
+                      // CRITICAL: Check if chainedAction is an interactive mode (ENTER_MODE)
+                      // If so, DO NOT call CONTINUE_AUTO_STEPS immediately
+                      // This fixes False Orders where SELECT_CELL mode was being skipped
+                      const isInteractiveMode = chained.type === 'ENTER_MODE' ||
+                        (chained.mode && (
+                          chained.mode === 'SELECT_CELL' ||
+                          chained.mode === 'SELECT_TARGET' ||
+                          chained.mode === 'SELECT_UNIT_FOR_MOVE' ||
+                          chained.mode === 'SELECT_LINE_START' ||
+                          chained.mode === 'SELECT_LINE_END' ||
+                          chained.mode === 'PLACE_TOKEN'
+                        ))
+
                       // CRITICAL: Add sourceOwnerId to chainedAction for False Orders Option 1
                       // This ensures Revealed tokens target the correct player's hand
                       if (cursorStack.recordContext && targetCard.ownerId !== undefined) {
                         chained._sourceOwnerId = targetCard.ownerId
                       }
-                      onAction(chained, { row, col })
-                      // Also continue AUTO_STEPS if applicable
-                      if (cursorStack._autoStepsContext) {
+
+                      // CRITICAL: Use flushSync for interactive modes to ensure abilityMode is set synchronously
+                      // This prevents useEffect from running before abilityMode is updated
+                      if (isInteractiveMode) {
+                        flushSync(() => {
+                          onAction(chained, { row, col })
+                        })
+                      } else {
+                        onAction(chained, { row, col })
+                      }
+
+                      // Only continue AUTO_STEPS if NOT an interactive mode
+                      // For interactive modes, CONTINUE_AUTO_STEPS will be called when user completes the interaction
+                      if (!isInteractiveMode && cursorStack._autoStepsContext) {
                         // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
                         // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }

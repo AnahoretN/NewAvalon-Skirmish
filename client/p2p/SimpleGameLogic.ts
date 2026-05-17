@@ -47,6 +47,31 @@ function isToken(card: Card): boolean {
 }
 
 /**
+ * Check if card is a command card by looking at contentDatabase
+ * This is more reliable than checking runtime card properties
+ */
+function isCommandCardByDefinition(card: Card): boolean {
+  if (!card.baseId) {
+    // Fallback to runtime properties if baseId is not available
+    return card.deck === 'Command' ||
+           card.types?.includes('Command') === true ||
+           card.faction === 'Command'
+  }
+
+  // Check contentDatabase for definitive answer
+  const cardDef = (contentDatabase.cardDatabase as any)[card.baseId]
+  if (!cardDef) {
+    // Fallback to runtime properties if not found in database
+    return card.deck === 'Command' ||
+           card.types?.includes('Command') === true ||
+           card.faction === 'Command'
+  }
+
+  return cardDef.types?.includes('Command') === true ||
+         cardDef.faction === 'Command'
+}
+
+/**
  * Clear all card statuses except Revealed
  * Called when moving card from battlefield
  * Also resets power modifiers to base value
@@ -167,15 +192,18 @@ function processResurrectedTokens(state: GameState): GameState {
  * @param removedCard - The card being removed from battlefield
  * @param ownerId - The owner of the removed card
  * @param state - Current game state
+ * @param hadLastPlayedOverride - Optional override for hadLastPlayed check (use when statuses were already cleared)
  * @returns Updated game state with LastPlayed restored to previous card
  */
 function restoreLastPlayedToPreviousCard(
   state: GameState,
   removedCard: Card,
-  ownerId: number
+  ownerId: number,
+  hadLastPlayedOverride?: boolean
 ): GameState {
   // Check if the removed card had LastPlayed status
-  const hadLastPlayed = removedCard.statuses?.some(
+  // Use override if provided (for cases where statuses were already cleared)
+  const hadLastPlayed = hadLastPlayedOverride ?? removedCard.statuses?.some(
     s => s.type === 'LastPlayed' && s.addedByPlayerId === ownerId
   )
 
@@ -275,6 +303,7 @@ function restoreLastPlayedToPreviousCard(
  * @param coords - Where the card was placed
  * @param playerId - The player who placed the card
  * @param source - Where the card came from ('hand', 'deck', 'discard', 'announced', 'board')
+ * @param isCommandCardDiscard - True when discarding a revealed command card (special case for Vigilant Spotter)
  * @returns Updated game state with trigger effects applied, plus any floating texts to display
  */
 function checkAndApplyTriggers(
@@ -282,8 +311,20 @@ function checkAndApplyTriggers(
   placedCard: Card,
   coords: { row: number; col: number },
   playerId: number,
-  source: 'hand' | 'deck' | 'discard' | 'announced' | 'board'
+  source: 'hand' | 'deck' | 'discard' | 'announced' | 'board',
+  isCommandCardDiscard = false
 ): { state: GameState; floatingTexts: FloatingTextData[] } {
+  // CRITICAL FIX: Prevent duplicate triggers by checking if this card already triggered
+  // Use a unique key for this trigger event based on card ID, coords, and source
+  const triggerEventKey = `${placedCard.id}_${coords.row}_${coords.col}_${source}_${playerId}`
+
+  // Check if this exact trigger event has already been processed this turn
+  const processedTriggers = (state as any).processedTriggersThisTurn as Map<string, number> | undefined
+  if (processedTriggers && processedTriggers.has(triggerEventKey)) {
+    console.log('[checkAndApplyTriggers] Duplicate trigger event detected, skipping:', triggerEventKey)
+    return { state, floatingTexts: [] }
+  }
+
   // Create the card lookup function - use contentDatabase directly
   const cardLookup: CardLookupFn = (baseId: string) => {
     // Try contentDatabase first (most reliable)
@@ -301,7 +342,8 @@ function checkAndApplyTriggers(
     card: placedCard,
     coords,
     playerId,
-    source
+    source,
+    isCommandCardDiscard
   }
 
   // Check for matching triggers
@@ -339,6 +381,11 @@ function checkAndApplyTriggers(
   if (floatingTextsToAdd.length > 0) {
     newState.floatingTexts = [...(newState.floatingTexts || []), ...floatingTextsToAdd]
   }
+
+  // Mark this trigger event as processed to prevent duplicates
+  const newProcessedTriggers = new Map(processedTriggers || [])
+  newProcessedTriggers.set(triggerEventKey, Date.now())
+  ;(newState as any).processedTriggersThisTurn = newProcessedTriggers
 
   return { state: newState, floatingTexts: floatingTextsToAdd }
 }
@@ -881,6 +928,10 @@ function handlePassTurn(state: GameState, playerId: number, reason: string): Gam
     floatingTexts: []  // Clear floating texts when passing turn
   }
 
+  // CRITICAL FIX: Clear processed triggers when passing turn
+  // This allows the same card to trigger again in subsequent turns if conditions are met
+  delete (newState as any).processedTriggersThisTurn
+
   // Check full cycle (returned to starting player)
   if (nextPlayerId === state.startingPlayerId) {
     newState.turnNumber = (state.turnNumber || 0) + 1
@@ -1115,7 +1166,7 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
   // Command cards are excluded from triggering lateness
   // EXCEPTION: clearLatenessOnNextPlay flag (Quick Response Team option 1) clears lateness instead of setting it
   // EXCEPTION: strictRulesEnabled = false disables lateness effect entirely
-  const isCommandCard = cardToPlay.deck === 'Command' || cardToPlay.types?.includes('Command') || cardToPlay.faction === 'Command'
+  const isCommandCard = isCommandCardByDefinition(cardToPlay)
   const strictRulesEnabled = state.strictRulesEnabled ?? true // Default to true if undefined
   const shouldTriggerLateness = isFromHand && !isCommandCard && strictRulesEnabled
   // When clearLatenessOnNextPlay is true, clear hasLateness instead of setting it
@@ -1157,8 +1208,10 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
   // Check triggers for cards with Revealed status played from hand
   // This handles Vigilant Spotter: "When your opponent plays a revealed card, gain 2 points"
   // NOTE: Skip command cards - they trigger in MOVE_ANNOUNCED_TO_DISCARD instead
-  // isCommandCard is already declared above (line 1099)
+  // isCommandCard is already declared above (line 1146)
+  console.log('[handlePlayCard] Trigger check:', { cardName: cardToPlay.name, isFromHand, isCommandCard, hasRevealed: cardToPlay.statuses?.some((s: any) => s.type === 'Revealed') })
   if (isFromHand && !isCommandCard && cardToPlay.statuses?.some((s: any) => s.type === 'Revealed')) {
+    console.log('[handlePlayCard] Calling checkAndApplyTriggers for NON-COMMAND card with Revealed status')
     const triggerResult = checkAndApplyTriggers(newState, cardToPlay, boardCoords, actualPlayerId, 'hand')
     newState = triggerResult.state
     // Note: floatingTexts are not broadcast here since we don't have access to visualEffects
@@ -1402,6 +1455,8 @@ function handleReturnCardToHand(state: GameState, playerId: number, data: any): 
   let sourceCoords: { row: number; col: number } | null = null
 
   // Находим карту на доске
+  // IMPORTANT: Check if card has LastPlayed status BEFORE clearing it
+  let hadLastPlayedBeforeClear = false
   const newBoard = state.board.map((row, r) =>
     row.map((cell, c) => {
       if (cell.card?.id === cardId) {
@@ -1409,6 +1464,10 @@ function handleReturnCardToHand(state: GameState, playerId: number, data: any): 
         if (foundCard) {
           cardToReturn = foundCard
           sourceCoords = { row: r, col: c }
+          // Check for LastPlayed status BEFORE clearing (needed for lateness effect)
+          hadLastPlayedBeforeClear = foundCard.statuses?.some(
+            s => s.type === 'LastPlayed' && s.addedByPlayerId === foundCard.ownerId
+          ) ?? false
           // Clear all statuses except Revealed and reset power when card leaves battlefield
           clearAllStatusesExceptRevealed(foundCard)
         }
@@ -1444,7 +1503,7 @@ function handleReturnCardToHand(state: GameState, playerId: number, data: any): 
 
   // Restore LastPlayed to previous card if this card had it
   let updatedState = { ...state, board: newBoard, players: newPlayers as Player[] }
-  updatedState = restoreLastPlayedToPreviousCard(updatedState, finalCard, ownerId)
+  updatedState = restoreLastPlayedToPreviousCard(updatedState, finalCard, ownerId, hadLastPlayedBeforeClear)
 
   return updatedState
 }
@@ -2035,32 +2094,26 @@ function handleMoveAnnouncedToDiscard(state: GameState, playerId: number, data: 
     return { ...state, players: newPlayers }
   }
 
-  // Check if this is a Command card with Revealed status BEFORE clearing statuses
-  // This is where Vigilant Spotter trigger should fire for Command cards
-  const isCommandCard = cardToMove.deck === 'Command' || cardToMove.types?.includes('Command') || cardToMove.faction === 'Command'
-  const hasRevealedStatus = cardToMove.statuses?.some((s: any) => s.type === 'Revealed')
+  // NOTE: Trigger check removed from handleMoveAnnouncedToDiscard to prevent duplication
+  // Triggers for command cards with Revealed status are now ONLY checked in handleCleanupCommandAction
+  // This fixes the issue where some commands (Logistics Chain, Temporary Shelter) would trigger twice:
+  // once at the start of play and once at cleanup
+  //
+  // The trigger system now ensures Vigilant Spotter only triggers ONCE per command card:
+  // - In the final CLEANUP_COMMAND step when the revealed command card is discarded
+  // - NOT in handleMoveAnnouncedToDiscard (which is legacy/deprecated)
+  //
+  // If handleMoveAnnouncedToDiscard is still being called (old code path), it should NOT check triggers
+  // because handleCleanupCommandAction will be called separately and check triggers there.
 
+  const isCommandCard = isCommandCardByDefinition(cardToMove)
+
+  // Check if command has Revealed status from ANY player
+  const hasAnyRevealedStatus = cardToMove.statuses?.some((s: any) => s.type === 'Revealed')
+
+  console.log('[handleMoveAnnouncedToDiscard] Command card:', cardToMove.name, 'hasRevealedStatus:', hasAnyRevealedStatus, 'statuses:', cardToMove.statuses, '- SKIPPING trigger check (handled by handleCleanupCommandAction)')
 
   let newState = state
-  if (isCommandCard && hasRevealedStatus) {
-    // Find Vigilant Spotter coordinates for floating text display
-    let triggerCoords = { row: -1, col: -1 }
-    for (let r = 0; r < state.board.length; r++) {
-      for (let c = 0; c < state.board[r].length; c++) {
-        const card = state.board[r]?.[c]?.card
-        if (card && card.baseId?.toLowerCase().includes('vigilantspotter')) {
-          triggerCoords = { row: r, col: c }
-          break
-        }
-      }
-      if (triggerCoords.row >= 0) {
-        break
-      }
-    }
-
-    const triggerResult = checkAndApplyTriggers(newState, cardToMove, triggerCoords, actualPlayerId, 'announced')
-    newState = triggerResult.state
-  }
 
   // Clear ALL statuses including Revealed when card goes to discard
   clearAllStatuses(cardToMove)
@@ -2159,14 +2212,8 @@ function handlePlayAnnouncedToBoard(state: GameState, playerId: number, data: an
   // This ensures cards get correct ready statuses for the new phase
   recalculateAllReadyStatuses(newState)
 
-  // Check triggers for announced cards with Revealed status
-  // This handles Vigilant Spotter: "When your opponent plays a revealed card, gain 2 points"
-  // NOTE: Skip command cards here - they trigger in MOVE_ANNOUNCED_TO_DISCARD instead
-  const isCommandCard = cardToPlay.deck === 'Command' || cardToPlay.types?.includes('Command') || cardToPlay.faction === 'Command'
-  if (!wasFaceDown && !isCommandCard && cardToPlay.statuses?.some((s: any) => s.type === 'Revealed')) {
-    const triggerResult = checkAndApplyTriggers(newState, cardToPlay, { row, col }, actualPlayerId, 'announced')
-    newState = triggerResult.state
-  }
+  // NOTE: Trigger check removed - cards announced then played are handled by handlePlayCard with source='hand'
+  // Command cards with Revealed status trigger in MOVE_ANNOUNCED_TO_DISCARD with isCommandCardDiscard=true
 
   return newState
 }
@@ -2203,7 +2250,7 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
   }
 
   // Check if this is a Command card from deck - use PLAY_COMMAND_FROM_DECK instead
-  const isCommandCard = cardToAnnounce.deck === 'Command' || cardToAnnounce.types?.includes('Command') || cardToAnnounce.faction === 'Command'
+  const isCommandCard = isCommandCardByDefinition(cardToAnnounce)
 
   if (source === 'deck' && isCommandCard) {
     return handlePlayCommandFromDeck(state, playerId, {
@@ -2291,11 +2338,12 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
   // Check and apply triggers when a card is announced (played)
   // This is where Vigilant Spotter trigger should fire - when opponent plays a revealed card
   // NOTE: Skip trigger check for Command cards - trigger should fire after command mode is selected, not on announce
-  // Reuse isCommandCard variable from above (line 2097)
-  if (!isCommandCard) {
-    const triggerResult = checkAndApplyTriggers(newState, announcedCard, { row: -1, col: -1 }, actualPlayerId, source || 'hand')
-    newState = triggerResult.state
-  }
+  // NOTE: Skip trigger check for non-command cards here - they are handled by handlePlayCard which checks for Revealed status
+  // Reuse isCommandCard variable from above (line 2226)
+  // if (!isCommandCard) {
+  //   const triggerResult = checkAndApplyTriggers(newState, announcedCard, { row: -1, col: -1 }, actualPlayerId, source || 'hand')
+  //   newState = triggerResult.state
+  // }
 
   return newState
 }
@@ -3334,8 +3382,33 @@ function handleCleanupCommandAction(state: GameState, playerId: number, data: an
     return state
   }
 
+  // Check if this is a Command card with Revealed status BEFORE clearing statuses
+  // This is where Vigilant Spotter trigger should fire for Command cards
+  const isCommandCard = isCommandCardByDefinition(announcedCard)
+
+  // Check if command has Revealed status from ANY player
+  // The trigger system will filter by owner, so we just need to know if ANY Revealed status exists
+  const hasAnyRevealedStatus = announcedCard.statuses?.some((s: any) => s.type === 'Revealed')
+
+  console.log('[handleCleanupCommandAction] Command card:', announcedCard.name, 'hasRevealedStatus:', hasAnyRevealedStatus, 'statuses:', announcedCard.statuses)
+
+  let newState = state
+  if (isCommandCard && hasAnyRevealedStatus) {
+    // Command cards are in showcase (announced), not on board
+    // Use special coords to indicate this is a revealed command card being discarded
+    const announcedCoords = { row: -1, col: -1 }
+
+    console.log('[handleCleanupCommandAction] Calling checkAndApplyTriggers for command card with Revealed status')
+    const triggerResult = checkAndApplyTriggers(newState, announcedCard, announcedCoords, playerId, 'announced', true)
+    newState = triggerResult.state
+    console.log('[handleCleanupCommandAction] Trigger result - floating texts:', triggerResult.floatingTexts?.length)
+  }
+
+  // Clear ALL statuses including Revealed when card goes to discard
+  clearAllStatuses(announcedCard)
+
   // Move the announced card to discard
-  const newPlayers = state.players.map(p => {
+  const newPlayers = newState.players.map(p => {
     if (p.id === playerId) {
       const discard = [...(p.discard || []), announcedCard]
       return {
@@ -3348,7 +3421,7 @@ function handleCleanupCommandAction(state: GameState, playerId: number, data: an
     return p
   })
 
-  return { ...state, players: newPlayers }
+  return { ...newState, players: newPlayers }
 }
 
 /**
@@ -3948,7 +4021,7 @@ function handlePlayTokenCard(state: GameState, playerId: number, data: any): Gam
   const cell = state.board[row][col]
 
   // CRITICAL: Check if this is a Command card
-  const isCommandCard = card.deck === 'Command' || card.types?.includes('Command') || card.faction === 'Command'
+  const isCommandCard = isCommandCardByDefinition(card)
 
   if (isCommandCard) {
     // Command cards go through announced → discard flow, NOT directly to board
