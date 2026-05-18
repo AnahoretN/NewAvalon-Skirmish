@@ -6,6 +6,10 @@ import { PLAYER_COLORS, FLOATING_TEXT_COLORS, PLAYER_COLOR_RGB } from '@/constan
 import { hasReadyAbilityInCurrentPhase } from '@/utils/autoAbilities'
 import { TIMING } from '@/utils/common'
 
+// CRITICAL: Global variable to store drag data synchronously
+// This fixes the race condition where React state (draggedItem) isn't updated yet when onDrop fires
+let globalDragData: DragItem | null = null
+
 interface GameBoardProps {
   board: Board;
   isGameStarted: boolean;
@@ -165,8 +169,29 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
       const onDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()
 
-        if (draggedItem) {
-          handleDrop(draggedItem, { target: 'board', boardCoords: { row, col } })
+        // CRITICAL: Try multiple sources for drag data, in order of reliability:
+        // 1. Global variable (most reliable - set synchronously in onDragStart)
+        // 2. React state (draggedItem prop - may be stale due to async updates)
+        // 3. dataTransfer (fallback - may not work in all browsers)
+        let dragData = globalDragData || draggedItem
+        if (!dragData) {
+          try {
+            const nativeDataTransfer = e.nativeEvent?.dataTransfer || (e as any).dataTransfer
+            const dataTransferData = nativeDataTransfer?.getData('application/json') || nativeDataTransfer?.getData('text/plain')
+            if (dataTransferData) {
+              dragData = JSON.parse(dataTransferData)
+            }
+          } catch (err) {
+            console.warn('Failed to parse drag data:', err)
+          }
+        }
+
+        if (dragData) {
+          handleDrop(dragData, { target: 'board', boardCoords: { row, col } })
+          // Clear global drag data after successful drop
+          globalDragData = null
+        } else {
+          console.warn('onDrop called but no drag data available', { draggedItem, globalDragData, row, col })
         }
         setHoveredCell(null)
       }, [draggedItem, handleDrop, row, col, setHoveredCell])
@@ -223,10 +248,14 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
       const onDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()
         e.stopPropagation() // Prevent bubbling to parent cells
-        const isCounter = draggedItem?.source === 'counter_panel'
-        const isBoardCardMove = draggedItem?.source === 'board'
+
+        // CRITICAL: Check globalDragData first, then draggedItem prop
+        const dragData = globalDragData || draggedItem
+        const isCounter = dragData?.source === 'counter_panel'
+        const isBoardCardMove = dragData?.source === 'board'
+        const isHandCard = dragData?.source === 'hand'
         const cellIsEmpty = !cell.card
-        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove)
+        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove) || isHandCard
 
         if (canDrop) {
           // Set immediately for instant visual feedback - using state to trigger re-render
@@ -287,13 +316,21 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
           return
         }
         if (cell.card) {
-          setDraggedItem({
+          const dragItem = {
             card: cell.card,
-            source: 'board',
+            source: 'board' as const,
             boardCoords: { row, col },
             isManual: true,
             bypassOwnershipCheck: true,
-          })
+          }
+          setDraggedItem(dragItem)
+          // CRITICAL: Store in global variable for immediate access in onDrop
+          globalDragData = dragItem
+          // Also store in dataTransfer as fallback
+          const dragDataJson = JSON.stringify(dragItem)
+          e.dataTransfer.setData('application/json', dragDataJson)
+          e.dataTransfer.setData('text/plain', dragDataJson)
+          e.dataTransfer.effectAllowed = 'move'
           // Set custom drag image to only include the card element, not the tooltip
           // Find the card element within the dragged container
           const cardElement = e.currentTarget.querySelector('[data-card-element]')
@@ -307,10 +344,14 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
       const handleCardDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
         e.preventDefault()
         e.stopPropagation()
-        const isCounter = draggedItem?.source === 'counter_panel'
-        const isBoardCardMove = draggedItem?.source === 'board'
+
+        // CRITICAL: Check globalDragData first, then draggedItem prop
+        const dragData = globalDragData || draggedItem
+        const isCounter = dragData?.source === 'counter_panel'
+        const isBoardCardMove = dragData?.source === 'board'
+        const isHandCard = dragData?.source === 'hand'
         const cellIsEmpty = !cell.card
-        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove)
+        const canDrop = cellIsEmpty || (cell.card && isCounter) || (cell.card && isBoardCardMove) || isHandCard
 
         if (canDrop) {
           setHoveredCell({ row, col })
@@ -336,8 +377,26 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
         e.preventDefault()
         e.stopPropagation()
 
-        if (draggedItem) {
-          handleDrop(draggedItem, { target: 'board', boardCoords: { row, col } })
+        // CRITICAL: Try multiple sources for drag data
+        let dragData = globalDragData || draggedItem
+        if (!dragData) {
+          try {
+            const nativeDataTransfer = e.nativeEvent?.dataTransfer || (e as any).dataTransfer
+            const dataTransferData = nativeDataTransfer?.getData('application/json') || nativeDataTransfer?.getData('text/plain')
+            if (dataTransferData) {
+              dragData = JSON.parse(dataTransferData)
+            }
+          } catch (err) {
+            console.warn('Failed to parse drag data in handleCardDrop:', err)
+          }
+        }
+
+        if (dragData) {
+          handleDrop(dragData, { target: 'board', boardCoords: { row, col } })
+          // Clear global drag data after successful drop
+          globalDragData = null
+        } else {
+          console.warn('handleCardDrop called but no drag data available', { draggedItem, globalDragData, row, col })
         }
         setHoveredCell(null)
       }, [draggedItem, handleDrop, row, col, setHoveredCell])
@@ -388,7 +447,9 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
       const baseClasses = `w-full h-full min-w-0 min-h-0 rounded-vu-5 border border-gray-600 border-opacity-30 transition-colors duration-200 flex items-center justify-center relative ${hasActiveEffect ? '' : 'overflow-hidden'}`
 
       // Check if dragged item is from hand/deck/discard/board (cards that can be played/moved)
-      const isDraggingCard = draggedItem && ['hand', 'deck', 'discard', 'board'].includes(draggedItem.source)
+      // Use globalDragData first for immediate feedback, then fall back to draggedItem prop
+      const currentDragItem = globalDragData || draggedItem
+      const isDraggingCard = currentDragItem && ['hand', 'deck', 'discard', 'board'].includes(currentDragItem.source)
 
       // Interactive for click handling, but visual highlight comes from shared highlights
       const isInteractive = isValidTarget || (isInPlayMode && !isOccupied) || (isStackMode && isValidTarget)
@@ -471,7 +532,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
           {/* Drag highlight - only when cursor is over the cell */}
           {showDragHighlight && (() => {
             // Use the dragged card's owner color, not local player color
-            const draggedCardOwnerId = draggedItem?.card?.ownerId ?? draggedItem?.playerId ?? localPlayerId!
+            const draggedCardOwnerId = currentDragItem?.card?.ownerId ?? currentDragItem?.playerId ?? localPlayerId!
             const draggedCardOwner = players?.find(p => p.id === draggedCardOwnerId)
             const playerColor = draggedCardOwner ? playerColorMap.get(draggedCardOwnerId) : playerColorMap.get(localPlayerId!)
             const rgb = playerColor && PLAYER_COLOR_RGB[playerColor]
@@ -612,7 +673,10 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
               onDragEnd={() => {
                 // Don't reset here - let the drop handler do it
                 // Fallback: clear after delay if no drop happened
-                setTimeout(() => setDraggedItem(null), TIMING.DRAG_END_FALLBACK)
+                setTimeout(() => {
+                  setDraggedItem(null)
+                  globalDragData = null  // Clear global drag data
+                }, TIMING.DRAG_END_FALLBACK)
                 // Clear hover state
                 setHoveredCell(null)
               }}

@@ -439,7 +439,7 @@ export const ru: TranslationResource = {
     },
     vigilantSpotter: {
       name: 'Бдительный Наблюдатель',
-      abilityText: 'Pass (требуется Поддержка): Когда ваш оппонент разыгрывает раскрытую (Revealed) карту, получите 2 очка.\nCommit: Поместите 1 жетон Раскрытия (Revealed) на карту оппонента.',
+      abilityText: 'Commit: Поместите 1 жетон Раскрытия (Revealed) на карту оппонента.',
       flavorText: '- "Терпение — это оружие. Месть — это искусство."',
     },
     inventiveMaker: {

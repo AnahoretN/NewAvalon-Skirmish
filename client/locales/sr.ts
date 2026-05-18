@@ -439,7 +439,7 @@ export const sr: TranslationResource = {
     },
     vigilantSpotter: {
       name: 'Bedni Nadzornik',
-      abilityText: 'Pass (zahteva Podršku): Kada tvoj protivnik igra otkrivenu (Revealed) kartu, dobij 2 boda.\nCommit: Postavi 1 žeton Otkrivanja (Revealed) na kartu protivnika.',
+      abilityText: 'Commit: Postavi 1 žeton Otkrivanja (Revealed) na kartu protivnika.',
       flavorText: '- "Strpljenje je oružje. Osveta je umetnost."',
     },
     inventiveMaker: {

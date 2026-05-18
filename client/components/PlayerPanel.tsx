@@ -69,6 +69,16 @@ import { useLanguage } from '@/contexts/LanguageContext'
 import { parseTextDeckFormat } from '@/utils/textDeckFormat'
 import { calculateGlowColor, rgba, getPlayerColorRgbOrDefault, TIMING } from '@/utils/common'
 
+// Import the global drag data from GameBoard
+// We need to declare it here too since we can't import from GameBoard
+declare global {
+  var globalDragData: DragItem | null
+}
+// Initialize if not exists
+if (typeof globalThis.globalDragData === 'undefined') {
+  globalThis.globalDragData = null
+}
+
 // Вычисляем VU размер для шрифтов динамически
 const getVuSize = (vu: number) => {
   const vuPixels = window.innerHeight / 1000
@@ -809,12 +819,20 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                       draggable={canDrag}
                       onDragStart={(e) => {
                         if (canDrag) {
-                          setDraggedItem({
+                          const dragItem = {
                             card: player.announcedCard!,
-                            source: 'announced',
+                            source: 'announced' as const,
                             playerId: player.id,
                             isManual: true
-                          })
+                          }
+                          setDraggedItem(dragItem)
+                          // CRITICAL: Store in global variable for immediate access in onDrop
+                          globalThis.globalDragData = dragItem
+                          // Also store in dataTransfer as fallback
+                          const dragDataJson = JSON.stringify(dragItem)
+                          e.dataTransfer.setData('application/json', dragDataJson)
+                          e.dataTransfer.setData('text/plain', dragDataJson)
+                          e.dataTransfer.effectAllowed = 'move'
                           // Set custom drag image to only include the card, not tooltip
                           const cardElement = e.currentTarget.querySelector('[data-card-image]')
                           if (cardElement) {
@@ -822,7 +840,12 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                           }
                         }
                       }}
-                      onDragEnd={() => { setTimeout(() => setDraggedItem(null), TIMING.DRAG_END_FALLBACK) }}
+                      onDragEnd={() => {
+                        setTimeout(() => {
+                          setDraggedItem(null)
+                          globalThis.globalDragData = null
+                        }, TIMING.DRAG_END_FALLBACK)
+                      }}
                       onContextMenu={(e) => canPerformActions && player.announcedCard && handleContextMenuWithCancel(e, 'announcedCard', {
                         card: player.announcedCard,
                         player
@@ -1001,13 +1024,21 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                         draggable={canDrag && !isPlaceholder && !hasCardLateness}
                         onDragStart={(e) => {
                           if (canDrag && !isPlaceholder && !hasCardLateness) {
-                            setDraggedItem({
+                            const dragItem = {
                               card,
-                              source: 'hand',
+                              source: 'hand' as const,
                               playerId: player.id,
                               cardIndex: index,
                               isManual: true
-                            })
+                            }
+                            setDraggedItem(dragItem)
+                            // CRITICAL: Store in global variable for immediate access in onDrop
+                            globalThis.globalDragData = dragItem
+                            // Also store in dataTransfer as fallback
+                            const dragDataJson = JSON.stringify(dragItem)
+                            e.dataTransfer.setData('application/json', dragDataJson)
+                            e.dataTransfer.setData('text/plain', dragDataJson)
+                            e.dataTransfer.effectAllowed = 'move'
                             // Set custom drag image to only include the card, not tooltip
                             const cardElement = e.currentTarget.querySelector('[data-card-image]')
                             if (cardElement) {
@@ -1015,7 +1046,12 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                             }
                           }
                         }}
-                        onDragEnd={() => { setTimeout(() => setDraggedItem(null), TIMING.DRAG_END_FALLBACK) }}
+                        onDragEnd={() => {
+                          setTimeout(() => {
+                            setDraggedItem(null)
+                            globalThis.globalDragData = null
+                          }, TIMING.DRAG_END_FALLBACK)
+                        }}
                         onContextMenu={(e) => canPerformActions && !isPlaceholder && handleContextMenuWithCancel(e, 'handCard', {
                           card,
                           player,
@@ -1323,12 +1359,20 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                       draggable={canDrag}
                       onDragStart={(e) => {
                         if (canDrag) {
-                          setDraggedItem({
+                          const dragItem = {
                             card: player.announcedCard!,
-                            source: 'announced',
+                            source: 'announced' as const,
                             playerId: player.id,
                             isManual: true
-                          })
+                          }
+                          setDraggedItem(dragItem)
+                          // CRITICAL: Store in global variable for immediate access in onDrop
+                          globalThis.globalDragData = dragItem
+                          // Also store in dataTransfer as fallback
+                          const dragDataJson = JSON.stringify(dragItem)
+                          e.dataTransfer.setData('application/json', dragDataJson)
+                          e.dataTransfer.setData('text/plain', dragDataJson)
+                          e.dataTransfer.effectAllowed = 'move'
                           // Set custom drag image to only include the card, not tooltip
                           const cardElement = e.currentTarget.querySelector('[data-card-image]')
                           if (cardElement) {
@@ -1336,7 +1380,12 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                           }
                         }
                       }}
-                      onDragEnd={() => { setTimeout(() => setDraggedItem(null), TIMING.DRAG_END_FALLBACK) }}
+                      onDragEnd={() => {
+                        setTimeout(() => {
+                          setDraggedItem(null)
+                          globalThis.globalDragData = null
+                        }, TIMING.DRAG_END_FALLBACK)
+                      }}
                       onContextMenu={(e) => player.announcedCard && handleContextMenuWithCancel(e, 'announcedCard', {
                         card: player.announcedCard,
                         player
@@ -1498,7 +1547,15 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                     draggable={canDrag && !isPlaceholder && !hasCardLateness}
                     onDragStart={(e) => {
                       if (canDrag && !isPlaceholder && !hasCardLateness) {
-                        setDraggedItem({ card, source: 'hand', playerId: player.id, cardIndex: index, isManual: true })
+                        const dragItem = { card, source: 'hand' as const, playerId: player.id, cardIndex: index, isManual: true }
+                        setDraggedItem(dragItem)
+                        // CRITICAL: Store in global variable for immediate access in onDrop
+                        globalThis.globalDragData = dragItem
+                        // Also store in dataTransfer as fallback
+                        const dragDataJson = JSON.stringify(dragItem)
+                        e.dataTransfer.setData('application/json', dragDataJson)
+                        e.dataTransfer.setData('text/plain', dragDataJson)
+                        e.dataTransfer.effectAllowed = 'move'
                         // Set custom drag image to only include the card, not tooltip
                         const cardElement = e.currentTarget.querySelector('[data-card-image]')
                         if (cardElement) {
@@ -1506,7 +1563,12 @@ const PlayerPanel: React.FC<PlayerPanelProps> = memo(({
                         }
                       }
                     }}
-                    onDragEnd={() => { setTimeout(() => setDraggedItem(null), TIMING.DRAG_END_FALLBACK) }}
+                    onDragEnd={() => {
+                      setTimeout(() => {
+                        setDraggedItem(null)
+                        globalThis.globalDragData = null
+                      }, TIMING.DRAG_END_FALLBACK)
+                    }}
                     onContextMenu={(e) => {
                       if (!isPlaceholder) {
                         e.preventDefault()

@@ -1911,7 +1911,7 @@ const AppInner = function AppInner() {
 
   // Clear targetingMode when abilityMode transitions from active to null (Deploy ability completion)
   // This ensures targeting highlights are cleared on all clients when Deploy finishes
-  // CRITICAL: Don't auto-clear if cursorStack is active (e.g., Vigilant Spotter placing Revealed token)
+  // CRITICAL: Don't auto-clear if cursorStack is active (e.g., placing tokens with cursorStack)
   // CRITICAL: Don't auto-clear if targetingMode has handTargets (DISCARD_FROM_HAND abilities)
   const prevAbilityModeRef = useRef<AbilityAction | null>(null)
   useEffect(() => {
@@ -1951,6 +1951,7 @@ const AppInner = function AppInner() {
 
   useEffect(() => {
     if (latestFloatingTexts && latestFloatingTexts.length > 0) {
+      console.log('[App.tsx latestFloatingTexts] Received', latestFloatingTexts.length, 'floating texts from triggerFloatingText:', latestFloatingTexts)
       // Convert P2P format to FloatingTextData format
       const newTexts = latestFloatingTexts.map(ft => {
         const base = {
@@ -1972,10 +1973,15 @@ const AppInner = function AppInner() {
 
       // CRITICAL FIX: Clear previous floating texts before adding new ones
       // This prevents floating texts from multiple scorings from being visible simultaneously
+      console.log('[App.tsx latestFloatingTexts] Setting activeFloatingTexts to', newTexts.length, 'texts (replacing previous)')
       setActiveFloatingTexts(newTexts as any)
 
       const timer = setTimeout(() => {
-        setActiveFloatingTexts((prev: any) => prev.filter((item: any) => !newTexts.find((nt: any) => nt.id === item.id)))
+        setActiveFloatingTexts((prev: any) => {
+          const filtered = prev.filter((item: any) => !newTexts.find((nt: any) => nt.id === item.id))
+          console.log('[App.tsx latestFloatingTexts] Cleanup: removing texts after 2s, remaining:', filtered.length)
+          return filtered
+        })
       }, 2000)
 
       return () => clearTimeout(timer)
@@ -1987,27 +1993,50 @@ const AppInner = function AppInner() {
   // This handles floating texts from trigger abilities (like Vigilant Spotter)
   useEffect(() => {
     if (gameState.floatingTexts && gameState.floatingTexts.length > 0) {
-      // Generate unique IDs for the new floating texts
-      const newTextsWithIds = gameState.floatingTexts.map(ft => ({
-        ...ft,
-        id: ft.id || `ft-${ft.timestamp}-${Math.random().toString(36).substr(2, 9)}`
-      }))
-
-      // Add new floating texts from gameState
-      setActiveFloatingTexts((prev: any) => {
-        const existing = prev as FloatingTextData[]
-        return [...existing, ...newTextsWithIds]
+      console.log('[App.tsx gameState.floatingTexts] Received', gameState.floatingTexts.length, 'floating texts from host:')
+      gameState.floatingTexts.forEach((ft, i) => {
+        console.log(`  [${i}] text: "${ft.text}", row: ${ft.row}, col: ${ft.col}, timestamp: ${ft.timestamp}`)
       })
 
-      // Clear floating texts from gameState after processing
-      gameState.floatingTexts = []
+      // CRITICAL: Filter out duplicates by timestamp to prevent infinite accumulation
+      setActiveFloatingTexts((prev: any) => {
+        const existing = prev as FloatingTextData[]
+        const existingTimestamps = new Set(existing.map(ft => ft.timestamp))
 
-      // Remove floating texts after animation completes (2 seconds)
-      const timer = setTimeout(() => {
-        setActiveFloatingTexts((prev: any) => (prev as any[]).filter((item: any) => !newTextsWithIds.find((nt: any) => nt.id === item.id)))
-      }, 2000)
+        const newTextsWithIds = gameState.floatingTexts
+          .filter(ft => !existingTimestamps.has(ft.timestamp)) // Skip duplicates
+          .map(ft => ({
+            ...ft,
+            id: ft.id || `ft-${ft.timestamp}-${Math.random().toString(36).substr(2, 9)}`
+          }))
 
-      return () => clearTimeout(timer)
+        if (newTextsWithIds.length === 0) {
+          console.log('[App.tsx gameState.floatingTexts] All texts were duplicates, skipping')
+          return existing
+        }
+
+        const result = [...existing, ...newTextsWithIds]
+        console.log('[App.tsx gameState.floatingTexts] Adding', newTextsWithIds.length, 'new texts to activeFloatingTexts: was', existing.length, 'now', result.length)
+
+        // CRITICAL FIX: Send CLEAR_FLOATING_TEXTS AFTER a delay to ensure the texts are actually displayed
+        // This prevents race condition where host clears floatingTexts before client processes them
+        setTimeout(() => {
+          console.log('[App.tsx gameState.floatingTexts] Sending CLEAR_FLOATING_TEXTS to host after delay')
+          sendAction('CLEAR_FLOATING_TEXTS', {})
+        }, 500) // 500ms delay - enough for texts to be rendered
+
+        // Remove floating texts after animation completes (2 seconds)
+        setTimeout(() => {
+          console.log('[App.tsx gameState.floatingTexts] Cleanup timer fired! Removing texts:', newTextsWithIds.map(ft => `"${ft.text}"`))
+          setActiveFloatingTexts((prev2: any) => {
+            const filtered = (prev2 as any[]).filter((item: any) => !newTextsWithIds.find((nt: any) => nt.id === item.id))
+            console.log('[App.tsx gameState.floatingTexts] Cleanup: remaining:', filtered.length)
+            return filtered
+          })
+        }, 2000)
+
+        return result
+      })
     }
     return undefined
   }, [gameState.floatingTexts])
@@ -2443,13 +2472,12 @@ const AppInner = function AppInner() {
             const cardToDiscard = playerState?.announcedCard || actionToProcess.sourceCard
 
             if (cardToDiscard && cardToDiscard.id !== 'dummy') {
-              moveItem({
-                card: cardToDiscard,
-                source: 'announced',
+              // CRITICAL: Use CLEANUP_COMMAND action instead of moveItem
+              // This ensures Vigilant Spotter trigger is checked for command cards with Revealed status
+              // moveItem would send MOVE_ANNOUNCED_TO_DISCARD which skips trigger check
+              sendAction('CLEANUP_COMMAND', {
                 playerId: targetPlayerId,
-              }, {
-                target: 'discard',
-                playerId: targetPlayerId,
+                cardId: cardToDiscard.id
               })
             }
             // CRITICAL: Return after cleanupCommand to prevent double-processing

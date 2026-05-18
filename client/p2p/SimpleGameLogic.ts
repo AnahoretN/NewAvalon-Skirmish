@@ -16,13 +16,10 @@ import type { ActionType } from './SimpleP2PTypes'
 import { shuffleDeck } from '../../shared/utils/array'
 import { recalculateBoardStatuses } from '../../shared/utils/boardUtils'
 import { recalculateAllReadyStatuses, getCardAbilityInfo, recheckReadyStatuses } from '../utils/autoAbilities'
-import { READY_STATUS, checkTriggersOnCardPlaced, type CardPlacedEvent } from '@shared/abilities/index.js'
+import { READY_STATUS } from '@shared/abilities/index.js'
 import { createDeck } from '../hooks/core/gameCreators'
 import { logger } from '../utils/logger'
 import { getCardDefinition } from '@/content'
-import type { CardLookupFn } from '@shared/abilities/triggerSystem.js'
-// Import content database directly for trigger lookup
-import contentDatabase from '@shared/content/contentDatabase.json'
 
 // Import handlers from separate modules
 import * as ScoringHandlers from './handlers/scoringHandlers'
@@ -58,8 +55,8 @@ function isCommandCardByDefinition(card: Card): boolean {
            card.faction === 'Command'
   }
 
-  // Check contentDatabase for definitive answer
-  const cardDef = (contentDatabase.cardDatabase as any)[card.baseId]
+  // Check contentDatabase for definitive answer using getCardDefinition
+  const cardDef = getCardDefinition(card.baseId)
   if (!cardDef) {
     // Fallback to runtime properties if not found in database
     return card.deck === 'Command' ||
@@ -188,6 +185,147 @@ function processResurrectedTokens(state: GameState): GameState {
 }
 
 /**
+ * Check for Vigilant Spotter passive trigger
+ * When a revealed card is played, each Vigilant Spotter with Support status
+ * belonging to the same player as the Revealed token owner gains 2 points
+ *
+ * @param state - Current game state
+ * @param playedCard - The card that was played (has Revealed status)
+ * @param caller - Source of the call for debugging (e.g., 'handlePlayCard', 'cleanupCommand')
+ * @returns Updated game state with score changes and floating texts
+ */
+function checkVigilantSpotterTrigger(
+  state: GameState,
+  playedCard: Card,
+  caller: string = 'unknown'
+): GameState {
+  console.log(`[checkVigilantSpotterTrigger] ========== START ==========`)
+  console.log(`[checkVigilantSpotterTrigger] CALLED FROM: ${caller}`)
+  console.log('[checkVigilantSpotterTrigger] Checking card:', playedCard.name, 'statuses:', playedCard.statuses)
+  console.log('[checkVigilantSpotterTrigger] Current floatingTexts count:', state.floatingTexts?.length ?? 0)
+
+  // Log stack trace for debugging duplicate calls
+  const stack = new Error().stack
+  if (stack) {
+    const lines = stack.split('\n').slice(2, 6) // Skip first 2 lines (Error and this function)
+    console.log('[checkVigilantSpotterTrigger] Call stack:')
+    lines.forEach((line, i) => console.log(`  [${i}] ${line.trim()}`))
+  }
+
+  // Check if played card has Revealed status
+  if (!playedCard.statuses) {
+    console.log('[checkVigilantSpotterTrigger] No statuses on card, returning')
+    return state
+  }
+
+  // Find all Revealed statuses and their owners
+  const revealedOwners: number[] = []
+  playedCard.statuses.forEach((status: any) => {
+    if (status.type === 'Revealed') {
+      const ownerId = status.addedByPlayerId ?? playedCard.ownerId ?? 0
+      if (ownerId > 0 && !revealedOwners.includes(ownerId)) {
+        revealedOwners.push(ownerId)
+      }
+    }
+  })
+
+  console.log('[checkVigilantSpotterTrigger] Revealed owners:', revealedOwners)
+
+  if (revealedOwners.length === 0) {
+    return state // No Revealed status, no trigger
+  }
+
+  // Check each player who owns a Revealed status
+  let newState = state
+  const newFloatingTexts: FloatingTextData[] = [...(state.floatingTexts || [])]
+
+  for (const revealOwnerId of revealedOwners) {
+    console.log('[checkVigilantSpotterTrigger] Checking for Vigilant Spotters owned by player:', revealOwnerId)
+    // Find all Vigilant Spotters on the battlefield owned by this player
+    state.board.forEach((row, r) => {
+      row.forEach((cell, c) => {
+        const boardCard = cell.card
+        if (!boardCard) return
+
+        // Check if this is a Vigilant Spotter
+        if (boardCard.baseId !== 'vigilantSpotter') return
+
+        console.log('[checkVigilantSpotterTrigger] Found Vigilant Spotter at', r, c, 'owned by player:', boardCard.ownerId, 'looking for:', revealOwnerId)
+
+        // Check if the Spotter is owned by the same player who owns the Revealed status
+        if (boardCard.ownerId !== revealOwnerId) {
+          console.log('[checkVigilantSpotterTrigger] Skipping - owner mismatch')
+          return
+        }
+
+        // Check if Spotter has Support status
+        const hasSupport = boardCard.statuses?.some((s: any) => s.type === 'Support')
+        console.log('[checkVigilantSpotterTrigger] Spotter has Support:', hasSupport)
+        if (!hasSupport) return
+
+        // Trigger the ability: award 2 points
+        const spotterPlayerId = boardCard.ownerId ?? 0
+        if (spotterPlayerId <= 0) return
+
+        // Get current score before change
+        const playerBefore = newState.players.find(p => p.id === spotterPlayerId)
+        if (!playerBefore) return
+        const scoreBefore = playerBefore.score
+
+        console.log('[checkVigilantSpotterTrigger] Player', spotterPlayerId, 'score before:', scoreBefore)
+
+        // Update player score
+        newState = {
+          ...newState,
+          players: newState.players.map(p =>
+            p.id === spotterPlayerId
+              ? { ...p, score: Math.max(0, p.score + 2) }
+              : p
+          )
+        }
+
+        // Get score after change
+        const playerAfter = newState.players.find(p => p.id === spotterPlayerId)
+        const scoreAfter = playerAfter?.score ?? scoreBefore
+
+        console.log('[checkVigilantSpotterTrigger] Player', spotterPlayerId, 'score after:', scoreAfter, 'increased:', scoreAfter > scoreBefore)
+
+        // Only add floating text if score actually increased
+        if (scoreAfter > scoreBefore) {
+          // Add floating text over the Spotter card with player ID for color
+          const newFloatingText = {
+            row: r,  // Spotter's row
+            col: c,  // Spotter's column
+            text: '+2',
+            playerId: spotterPlayerId,  // Player who gains points (determines color)
+            timestamp: Date.now()
+          }
+          newFloatingTexts.push(newFloatingText)
+
+          console.log(`[Vigilant Spotter] TRIGGERED! Player ${spotterPlayerId} gains 2 points.`)
+          console.log(`[Vigilant Spotter] Revealed card: ${playedCard.name}`)
+          console.log(`[Vigilant Spotter] Floating text added at [${r}, ${c}]`, newFloatingText)
+          console.log(`[Vigilant Spotter] Floating texts count BEFORE: ${state.floatingTexts?.length ?? 0}, AFTER: ${newFloatingTexts.length}`)
+        } else {
+          console.log(`[Vigilant Spotter] Score did not increase, skipping floating text`)
+        }
+      })
+    })
+  }
+
+  if (newFloatingTexts.length > (state.floatingTexts?.length || 0)) {
+    console.log(`[checkVigilantSpotterTrigger] Adding ${newFloatingTexts.length - (state.floatingTexts?.length || 0)} new floating texts to state`)
+    newState = { ...newState, floatingTexts: newFloatingTexts }
+  } else {
+    console.log(`[checkVigilantSpotterTrigger] No new floating texts added`)
+  }
+
+  console.log(`[checkVigilantSpotterTrigger] RETURNING from ${caller}. Final floatingTexts count: ${newState.floatingTexts?.length ?? 0}`)
+  console.log(`[checkVigilantSpotterTrigger] ========== END ==========`)
+  return newState
+}
+
+/**
  * Restore LastPlayed status to previous card when a card with LastPlayed leaves battlefield
  * @param removedCard - The card being removed from battlefield
  * @param ownerId - The owner of the removed card
@@ -285,109 +423,14 @@ function restoreLastPlayedToPreviousCard(
   )
 
   // Update player's boardHistory and lastPlayedCardId
+  // Also clear hasLateness since LastPlayed is back on board
   const newPlayers = state.players.map(p =>
     p.id === ownerId
-      ? { ...p, boardHistory: trimmedHistory, lastPlayedCardId: foundCardId }
+      ? { ...p, boardHistory: trimmedHistory, lastPlayedCardId: foundCardId, hasLateness: false }
       : p
   )
 
   return { ...state, board: newBoard, players: newPlayers }
-}
-
-/**
- * Check and apply triggers when a card is placed on the battlefield
- * Used for abilities like Vigilant Spotter: "When your opponent plays a revealed card, gain 2 points."
- *
- * @param state - Current game state
- * @param placedCard - The card that was placed
- * @param coords - Where the card was placed
- * @param playerId - The player who placed the card
- * @param source - Where the card came from ('hand', 'deck', 'discard', 'announced', 'board')
- * @param isCommandCardDiscard - True when discarding a revealed command card (special case for Vigilant Spotter)
- * @returns Updated game state with trigger effects applied, plus any floating texts to display
- */
-function checkAndApplyTriggers(
-  state: GameState,
-  placedCard: Card,
-  coords: { row: number; col: number },
-  playerId: number,
-  source: 'hand' | 'deck' | 'discard' | 'announced' | 'board',
-  isCommandCardDiscard = false
-): { state: GameState; floatingTexts: FloatingTextData[] } {
-  // CRITICAL FIX: Prevent duplicate triggers by checking if this card already triggered
-  // Use a unique key for this trigger event based on card ID, coords, and source
-  const triggerEventKey = `${placedCard.id}_${coords.row}_${coords.col}_${source}_${playerId}`
-
-  // Check if this exact trigger event has already been processed this turn
-  const processedTriggers = (state as any).processedTriggersThisTurn as Map<string, number> | undefined
-  if (processedTriggers && processedTriggers.has(triggerEventKey)) {
-    console.log('[checkAndApplyTriggers] Duplicate trigger event detected, skipping:', triggerEventKey)
-    return { state, floatingTexts: [] }
-  }
-
-  // Create the card lookup function - use contentDatabase directly
-  const cardLookup: CardLookupFn = (baseId: string) => {
-    // Try contentDatabase first (most reliable)
-    if ((contentDatabase.cardDatabase as any)[baseId]) {
-      const def = (contentDatabase.cardDatabase as any)[baseId]
-      return def
-    }
-    // Fallback to getCardDefinition
-    const def = getCardDefinition(baseId) as { ABILITIES?: any[] } | null
-    return def
-  }
-
-  // Create the card placed event
-  const event: CardPlacedEvent = {
-    card: placedCard,
-    coords,
-    playerId,
-    source,
-    isCommandCardDiscard
-  }
-
-  // Check for matching triggers
-  const triggerResults = checkTriggersOnCardPlaced(state, event, cardLookup)
-
-  if (triggerResults.length === 0) {
-    return { state, floatingTexts: [] }
-  }
-
-  // Apply trigger effects (modify scores, etc.)
-  const newState = { ...state }
-  const floatingTextsToAdd: FloatingTextData[] = []
-
-  triggerResults.forEach(result => {
-    if (result.points && result.points > 0) {
-      const playerToUpdate = newState.players.find(p => p.id === result.triggerOwnerId)
-      if (playerToUpdate) {
-        playerToUpdate.score = (playerToUpdate.score || 0) + result.points
-
-        // Add floating text at trigger card location
-        if (result.triggerCardCoords && result.triggerCardCoords.row >= 0) {
-          floatingTextsToAdd.push({
-            row: result.triggerCardCoords.row,
-            col: result.triggerCardCoords.col,
-            text: `+${result.points}`,
-            playerId: result.triggerOwnerId,
-            timestamp: Date.now()
-          })
-        }
-      }
-    }
-  })
-
-  // Add floating texts to state
-  if (floatingTextsToAdd.length > 0) {
-    newState.floatingTexts = [...(newState.floatingTexts || []), ...floatingTextsToAdd]
-  }
-
-  // Mark this trigger event as processed to prevent duplicates
-  const newProcessedTriggers = new Map(processedTriggers || [])
-  newProcessedTriggers.set(triggerEventKey, Date.now())
-  ;(newState as any).processedTriggersThisTurn = newProcessedTriggers
-
-  return { state: newState, floatingTexts: floatingTextsToAdd }
 }
 
 /**
@@ -400,6 +443,13 @@ export function applyAction(
   action: ActionType,
   data?: any
 ): GameState {
+  // DEBUG: Log all actions to track when Vigilant Spotter might be affected
+  const isCleanupCommand = action === 'CLEANUP_COMMAND'
+  const isPlayCard = action === 'PLAY_CARD'
+  if (isCleanupCommand || isPlayCard) {
+    console.log(`[applyAction] ACTION: ${action} by player ${playerId}`, isCleanupCommand ? `cardId: ${data?.cardId}` : `faceDown: ${data?.faceDown}`)
+  }
+
   // Validation - can this player perform this action
   if (!canPlayerAct(state, playerId, action, data)) {
     return state
@@ -928,10 +978,6 @@ function handlePassTurn(state: GameState, playerId: number, reason: string): Gam
     floatingTexts: []  // Clear floating texts when passing turn
   }
 
-  // CRITICAL FIX: Clear processed triggers when passing turn
-  // This allows the same card to trigger again in subsequent turns if conditions are met
-  delete (newState as any).processedTriggersThisTurn
-
   // Check full cycle (returned to starting player)
   if (nextPlayerId === state.startingPlayerId) {
     newState.turnNumber = (state.turnNumber || 0) + 1
@@ -1205,17 +1251,28 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
   // This ensures cards get correct ready statuses for the new phase
   recalculateAllReadyStatuses(newState)
 
-  // Check triggers for cards with Revealed status played from hand
-  // This handles Vigilant Spotter: "When your opponent plays a revealed card, gain 2 points"
-  // NOTE: Skip command cards - they trigger in MOVE_ANNOUNCED_TO_DISCARD instead
-  // isCommandCard is already declared above (line 1146)
-  console.log('[handlePlayCard] Trigger check:', { cardName: cardToPlay.name, isFromHand, isCommandCard, hasRevealed: cardToPlay.statuses?.some((s: any) => s.type === 'Revealed') })
-  if (isFromHand && !isCommandCard && cardToPlay.statuses?.some((s: any) => s.type === 'Revealed')) {
-    console.log('[handlePlayCard] Calling checkAndApplyTriggers for NON-COMMAND card with Revealed status')
-    const triggerResult = checkAndApplyTriggers(newState, cardToPlay, boardCoords, actualPlayerId, 'hand')
-    newState = triggerResult.state
-    // Note: floatingTexts are not broadcast here since we don't have access to visualEffects
-    // They will be handled by the host's visual effects system
+  // VIGILANT SPOTTER TRIGGER: Check if the played card has Revealed status
+  // If so, check for Vigilant Spotters with Support on the battlefield
+  // The trigger should only fire for non-command cards played to the battlefield from hand
+  const cardData = data?.card
+  console.log('[handlePlayCard] Vigilant Spotter check - isFromHand:', isFromHand, 'isCommandCard:', isCommandCard, 'faceDown:', faceDown, 'card:', cardData?.name || cardData?.baseId)
+  if (isFromHand && !isCommandCard && !faceDown) {
+    // Get the card from the new board to check for Revealed status
+    const boardCard = newState.board[boardCoords.row][boardCoords.col]?.card
+    if (boardCard) {
+      const hasRevealed = boardCard.statuses?.some((s: any) => s.type === 'Revealed')
+      console.log('[handlePlayCard] Board card:', boardCard.name, 'at [', boardCoords.row, ',', boardCoords.col, '] hasRevealed:', hasRevealed, 'statuses:', boardCard.statuses)
+      if (hasRevealed) {
+        newState = checkVigilantSpotterTrigger(newState, boardCard, 'handlePlayCard')
+      } else {
+        console.log('[handlePlayCard] Skipping Vigilant Spotter trigger - no Revealed status on board card')
+      }
+    } else {
+      console.log('[handlePlayCard] WARNING - No board card found at [', boardCoords.row, ',', boardCoords.col, ']')
+    }
+  } else {
+    const skipReason = !isFromHand ? 'not from hand' : isCommandCard ? 'is command card' : 'face down'
+    console.log('[handlePlayCard] Skipping Vigilant Spotter trigger -', skipReason)
   }
 
   return newState
@@ -2335,16 +2392,6 @@ function handleAnnounceCard(state: GameState, playerId: number, data: any): Game
     newState = { ...newState, currentPhase: wasSetupPhase ? 2 : state.currentPhase }
   }
 
-  // Check and apply triggers when a card is announced (played)
-  // This is where Vigilant Spotter trigger should fire - when opponent plays a revealed card
-  // NOTE: Skip trigger check for Command cards - trigger should fire after command mode is selected, not on announce
-  // NOTE: Skip trigger check for non-command cards here - they are handled by handlePlayCard which checks for Revealed status
-  // Reuse isCommandCard variable from above (line 2226)
-  // if (!isCommandCard) {
-  //   const triggerResult = checkAndApplyTriggers(newState, announcedCard, { row: -1, col: -1 }, actualPlayerId, source || 'hand')
-  //   newState = triggerResult.state
-  // }
-
   return newState
 }
 
@@ -3383,29 +3430,28 @@ function handleCleanupCommandAction(state: GameState, playerId: number, data: an
   }
 
   // Check if this is a Command card with Revealed status BEFORE clearing statuses
-  // This is where Vigilant Spotter trigger should fire for Command cards
-  const isCommandCard = isCommandCardByDefinition(announcedCard)
-
   // Check if command has Revealed status from ANY player
   // The trigger system will filter by owner, so we just need to know if ANY Revealed status exists
   const hasAnyRevealedStatus = announcedCard.statuses?.some((s: any) => s.type === 'Revealed')
 
   console.log('[handleCleanupCommandAction] Command card:', announcedCard.name, 'hasRevealedStatus:', hasAnyRevealedStatus, 'statuses:', announcedCard.statuses)
 
+  // VIGILANT SPOTTER TRIGGER: Check if the command card has Revealed status
+  // Trigger BEFORE clearing statuses so the Revealed information is available
   let newState = state
-  if (isCommandCard && hasAnyRevealedStatus) {
-    // Command cards are in showcase (announced), not on board
-    // Use special coords to indicate this is a revealed command card being discarded
-    const announcedCoords = { row: -1, col: -1 }
-
-    console.log('[handleCleanupCommandAction] Calling checkAndApplyTriggers for command card with Revealed status')
-    const triggerResult = checkAndApplyTriggers(newState, announcedCard, announcedCoords, playerId, 'announced', true)
-    newState = triggerResult.state
-    console.log('[handleCleanupCommandAction] Trigger result - floating texts:', triggerResult.floatingTexts?.length)
+  if (hasAnyRevealedStatus) {
+    console.log('[handleCleanupCommandAction] Triggering Vigilant Spotter check for command card:', announcedCard.name)
+    // CRITICAL: Pass newState (not state) to preserve any floatingTexts from trigger
+    newState = checkVigilantSpotterTrigger(newState, announcedCard, 'handleCleanupCommandAction')
+  } else {
+    console.log('[handleCleanupCommandAction] No Revealed status, skipping Vigilant Spotter trigger')
   }
 
-  // Clear ALL statuses including Revealed when card goes to discard
+  // CRITICAL: Clear statuses on the ORIGINAL announcedCard before moving to discard
+  // This ensures the card in discard has no statuses (including Revealed)
+  // We must clear BEFORE moving to prevent status persistence issues
   clearAllStatuses(announcedCard)
+  console.log('[handleCleanupCommandAction] After clearing, announcedCard.statuses:', announcedCard.statuses)
 
   // Move the announced card to discard
   const newPlayers = newState.players.map(p => {
@@ -3421,7 +3467,10 @@ function handleCleanupCommandAction(state: GameState, playerId: number, data: an
     return p
   })
 
-  return { ...newState, players: newPlayers }
+  const finalState = { ...newState, players: newPlayers }
+  console.log('[handleCleanupCommandAction] Final state floatingTexts count:', finalState.floatingTexts?.length ?? 0)
+
+  return finalState
 }
 
 /**

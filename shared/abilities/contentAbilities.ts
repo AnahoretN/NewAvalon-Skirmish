@@ -16,26 +16,6 @@ type GameState = any
 type AbilityAction = any
 
 /**
- * Supported event types for TRIGGER_ON_EVENT abilities
- */
-export type TriggerEventType =
-  | 'OPPONENT_PLAYS_REVEALED_CARD'
-  | 'OPPONENT_PLAYS_CARD_WITH_STATUS'
-  | 'CARD_ENTERS_BATTLEFIELD'
-  | 'CARD_DESTROYED'
-
-/**
- * Effect types for trigger responses
- */
-export interface TriggerEffect {
-  type: 'MODIFY_SCORE' | 'DRAW_CARD' | 'CREATE_TOKEN' | 'MODIFY_POWER'
-  points?: number
-  target?: 'self' | 'opponent' | 'all'
-  tokenType?: string
-  powerModifier?: number
-}
-
-/**
  * Raw ability structure from contentDatabase.json
  */
 export interface ContentAbility {
@@ -842,7 +822,6 @@ export function buildActionFromContentAbility(
 
     case 'BUFF_ALLY_POWER':
     case 'MODIFY_THREAT_TARGETING':
-    case 'TRIGGER_ON_EVENT':
       // These are passive abilities - they don't create an action
       return null
 

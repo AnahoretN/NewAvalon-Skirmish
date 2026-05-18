@@ -185,6 +185,14 @@ export function useVisualEffects(props: UseVisualEffectsProps) {
     const timestamp = Date.now()
     const batch = items.map((item, i) => ({ ...item, timestamp: timestamp + i })) as FloatingTextData[]
 
+    // DEBUG: Log all floating text triggers with call stack
+    console.log('[triggerFloatingText] Called with', items.length, 'item(s):', items.map(i => `${i.text ?? ''} at [${i.row},${i.col}]`).join(', '))
+    const stack = new Error().stack
+    if (stack) {
+      const lines = stack.split('\n').slice(2, 5) // Skip first 2 lines (Error and this function)
+      console.log('[triggerFloatingText] Call stack:')
+      lines.forEach((line, i) => console.log(`  [${i}] ${line.trim()}`))
+    }
 
     // Defer state update to avoid flushSync during render cycle
     setTimeout(() => {
