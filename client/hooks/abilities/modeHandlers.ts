@@ -2035,115 +2035,45 @@ function handleShieldSelfThenPush(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
+  console.log('[handleShieldSelfThenPush] Called', {
+    cardName: card.name,
+    cardId: card.id,
+    boardCoords,
+    cardOwner: card.ownerId
+  })
   const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem, updateState } = props
 
   if (interactionLock.current) {
+    console.log('[handleShieldSelfThenPush] Interaction lock active, returning false')
     return false
   }
 
   const { sourceCoords, isDeployAbility, readyStatusToRemove, sourceCard, payload } = abilityMode!
 
+  console.log('[handleShieldSelfThenPush] Ability mode info', {
+    mode: abilityMode.mode,
+    sourceCoords,
+    sourceCardName: sourceCard?.name,
+    sourceCardId: sourceCard?.id,
+    payload,
+    shieldApplied: payload?.shieldApplied
+  })
+
   if (!sourceCoords || sourceCoords.row < 0 || !sourceCard) {
+    console.log('[handleShieldSelfThenPush] Invalid sourceCoords or sourceCard, returning false')
     return false
   }
 
   const ownerId = sourceCard.ownerId!
   const shieldAlreadyApplied = payload?.shieldApplied === true
+  console.log('[handleShieldSelfThenPush] Owner and shield status', {
+    ownerId,
+    shieldAlreadyApplied
+  })
 
-  // Helper function to add Shield synchronously using flushSync
-  const addShieldSync = () => {
-    if (!updateState) return
-    // CRITICAL: Use flushSync to ensure state is updated synchronously
-    // This prevents the double-click bug where Shield isn't applied before the push
-    flushSync(() => {
-      updateState((prev: GameState) => {
-        if (!prev.board[sourceCoords.row]?.[sourceCoords.col]) {
-          return prev
-        }
-        const updatedBoard = prev.board.map((row, rIdx) =>
-          row.map((cell, cIdx) => {
-            if (rIdx === sourceCoords.row && cIdx === sourceCoords.col && cell.card) {
-              const newStatus = {
-                type: 'Shield',
-                addedByPlayerId: ownerId,
-                id: `Shield_${ownerId}_${Date.now()}_${Math.random()}`
-              }
-              return {
-                ...cell,
-                card: {
-                  ...cell.card,
-                  statuses: [...(cell.card.statuses || []), newStatus]
-                }
-              }
-            }
-            return cell
-          })
-        )
-        return { ...prev, board: updatedBoard }
-      })
-    })
-  }
-
-  // Check if clicking on self
-  if (boardCoords.row === sourceCoords.row && boardCoords.col === sourceCoords.col) {
-    if (shieldAlreadyApplied) {
-      // Shield already applied - self-click cancels the mode (skip push)
-      markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
-      setAbilityMode(null)
-      return true
-    } else {
-      // Add Shield and transition to PUSH mode
-      addShieldSync()
-
-      const pushAction: AbilityAction = {
-        type: 'ENTER_MODE',
-        mode: 'PUSH',
-        sourceCard,
-        sourceCoords,
-        isDeployAbility,
-        readyStatusToRemove,
-        payload: {}
-      }
-
-      setAbilityMode(pushAction)
-
-      // Recalculate valid targets for PUSH
-      const dRow = sourceCoords.row
-      const dCol = sourceCoords.col
-      const preCalculatedTargets: {row: number, col: number}[] = []
-
-      // Check all adjacent cells
-      const adjacentOffsets = [[-1, 0], [1, 0], [0, -1], [0, 1]]
-      const gridSize = gameState.board.length
-      const offset = Math.floor((gridSize - gameState.activeGridSize) / 2)
-      const minBound = offset
-      const maxBound = offset + gameState.activeGridSize - 1
-
-      for (const [dr, dc] of adjacentOffsets) {
-        const r = dRow + dr
-        const c = dCol + dc
-        if (r >= minBound && r <= maxBound && c >= minBound && c <= maxBound) {
-          const targetCell = gameState.board[r][c]
-          const targetCard = targetCell?.card
-          if (targetCard) {
-            const targetPlayer = gameState.players.find(p => p.id === targetCard.ownerId)
-            const actorPlayer = gameState.players.find(p => p.id === ownerId)
-            // CRITICAL: Check for both undefined AND null
-            const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) &&
-                              (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) &&
-                              targetPlayer.teamId === actorPlayer.teamId
-
-            if (targetCard.ownerId !== ownerId && !isTeammate) {
-              preCalculatedTargets.push({row: r, col: c})
-            }
-          }
-        }
-      }
-
-      setTargetingMode(pushAction, ownerId, sourceCoords, preCalculatedTargets)
-      return true
-    }
-  }
+  // CRITICAL: Shield is already added in actionExecutionHandler.ts
+  // Gawain is NOT a valid target for this ability - only adjacent opponents are valid
+  // This function should only handle push logic for adjacent opponent cards
 
   // Handle push logic for adjacent opponent cards
   const isAdj = Math.abs(boardCoords.row - sourceCoords.row) + Math.abs(boardCoords.col - sourceCoords.col) === 1
@@ -2153,11 +2083,7 @@ function handleShieldSelfThenPush(
   const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) && (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) && targetPlayer.teamId === actorPlayer.teamId
 
   if (isAdj && card.ownerId !== ownerId && !isTeammate) {
-    // IMPORTANT: Apply Shield first if not already applied
-    // Use synchronous update to ensure state is updated before proceeding
-    if (!shieldAlreadyApplied) {
-      addShieldSync()
-    }
+    console.log('[handleShieldSelfThenPush] Valid adjacent target found', { cardName: card.name, boardCoords })
 
     const dRow = boardCoords.row - sourceCoords.row
     const dCol = boardCoords.col - sourceCoords.col

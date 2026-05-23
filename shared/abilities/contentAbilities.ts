@@ -596,7 +596,19 @@ export function buildActionFromContentAbility(
 
     case 'RETURN_FROM_DISCARD_TO_BOARD': {
       // Immunis Deploy: Return card from discard to adjacent empty cell on battlefield
-      return {
+      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] card.name:', card.name, 'ability.details:', ability.details)
+      // Extract filter type before it gets converted to a function
+      const originalFilterString = ability.details?.filter
+      let filterType = 'Unit'
+      if (originalFilterString && typeof originalFilterString === 'string') {
+        if (originalFilterString.startsWith('hasType_')) {
+          filterType = originalFilterString.replace('hasType_', '')
+        } else if (originalFilterString.startsWith('hasFaction_')) {
+          filterType = originalFilterString.replace('hasFaction_', '')
+        }
+      }
+      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] extracted filterType:', filterType, 'from:', originalFilterString)
+      const result = {
         type: 'OPEN_MODAL',
         mode: 'RETURN_FROM_DISCARD_TO_BOARD',
         sourceCard: card,
@@ -605,12 +617,25 @@ export function buildActionFromContentAbility(
           ...details,
           filter: details.filter || null,
           withToken: details.withToken || null,
+          filterType,  // Pass the extracted filter type
         }
       } as AbilityAction
+      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] result.payload:', result.payload)
+      return result
     }
 
     case 'RETURN_FROM_DISCARD_TO_HAND': {
       // Inventive Maker Setup: Return card from discard to owner's hand
+      // Extract filter type before it gets converted to a function
+      const originalFilterString = ability.details?.filter
+      let filterType = 'Unit'
+      if (originalFilterString && typeof originalFilterString === 'string') {
+        if (originalFilterString.startsWith('hasType_')) {
+          filterType = originalFilterString.replace('hasType_', '')
+        } else if (originalFilterString.startsWith('hasFaction_')) {
+          filterType = originalFilterString.replace('hasFaction_', '')
+        }
+      }
       return {
         type: 'OPEN_MODAL',
         mode: 'RETURN_FROM_DISCARD_TO_HAND',
@@ -619,6 +644,7 @@ export function buildActionFromContentAbility(
         payload: {
           ...details,
           filter: details.filter || null,
+          filterType,  // Pass the extracted filter type
         }
       } as AbilityAction
     }

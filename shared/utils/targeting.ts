@@ -863,12 +863,17 @@ export const calculateValidTargets = (
       }
     })
   }
-  // 3b. SHIELD_SELF_THEN_PUSH (Reclaimed Gawain - same as PUSH but includes self as valid target)
+  // 3b. SHIELD_SELF_THEN_PUSH (Reclaimed Gawain - Shield added automatically, then select adjacent opponent to push)
+  // Gawain is NOT a valid target for this ability - only adjacent opponents are valid
   else if (mode === 'SHIELD_SELF_THEN_PUSH' && sourceCoords) {
-    // Include self as valid target (clicking self just adds Shield)
-    if (sourceCoords) {
-      targets.push(sourceCoords)
-    }
+    console.log('[calculateValidTargets] SHIELD_SELF_THEN_PUSH mode', {
+      mode,
+      sourceCoords,
+      actorId,
+      shieldApplied: action.payload?.shieldApplied
+    })
+    // CRITICAL: Do NOT add self as valid target - only adjacent opponents are valid targets
+    // Shield is added automatically in actionExecutionHandler.ts
 
     const neighbors = [
       { r: sourceCoords.row - 1, c: sourceCoords.col },
@@ -902,11 +907,16 @@ export const calculateValidTargets = (
             if (isInActiveBounds(pushRow, pushCol)) {
               if (!board[pushRow][pushCol].card) {
                 targets.push({ row: nb.r, col: nb.c })
+                console.log('[calculateValidTargets] Added adjacent target', { row: nb.r, col: nb.c })
               }
             }
           }
         }
       }
+    })
+    console.log('[calculateValidTargets] Final targets for SHIELD_SELF_THEN_PUSH', {
+      targetsCount: targets.length,
+      targets
     })
   }
   // 4. PUSH_MOVE (After push - choose where to move: stay in place or move to vacated cell)

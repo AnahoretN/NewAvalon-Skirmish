@@ -3238,6 +3238,79 @@ function handleGlobalAutoApply(state: GameState, playerId: number, data: any): G
     return handleCleanupCommand(state, commandOwnerId, payload.card)
   }
 
+  // Handle FINN_SCORING custom action (Finn, Most Wanted Commit ability)
+  // Gain 1 point for each card that is revealed to you in opponents' hands or on the battlefield
+  if (payload.customAction === 'FINN_SCORING' && sourceCard) {
+    const finnOwnerId = sourceCard.ownerId
+    if (finnOwnerId !== undefined) {
+      let revealedCount = 0
+
+      // Count Revealed cards in opponents' hands
+      state.players.forEach(p => {
+        if (p.id !== finnOwnerId) {
+          p.hand.forEach((c: any) => {
+            if (c.statuses?.some((s: any) => s.type === 'Revealed' && s.addedByPlayerId === finnOwnerId)) {
+              revealedCount++
+            }
+          })
+        }
+      })
+
+      // Count Revealed statuses on battlefield (multiple per card)
+      state.board.forEach((row: any[]) => {
+        row.forEach((cell: any) => {
+          const card = cell.card
+          if (card && card.ownerId !== finnOwnerId) {
+            const revealedByFinn = card.statuses?.filter((s: any) => s.type === 'Revealed' && s.addedByPlayerId === finnOwnerId).length || 0
+            revealedCount += revealedByFinn
+          }
+        })
+      })
+
+      if (revealedCount > 0) {
+        // Find Finn's coordinates on the board
+        let finnCoords: { row: number; col: number } | null = null
+        for (let r = 0; r < state.board.length; r++) {
+          for (let c = 0; c < state.board[r].length; c++) {
+            const card = state.board[r][c].card
+            if (card && card.id === sourceCard.id) {
+              finnCoords = { row: r, col: c }
+              break
+            }
+          }
+          if (finnCoords) break
+        }
+
+        // Update player score
+        let newState = {
+          ...state,
+          players: state.players.map(p =>
+            p.id === finnOwnerId
+              ? { ...p, score: Math.max(0, p.score + revealedCount) }
+              : p
+          )
+        }
+
+        // Add floating text at Finn's location
+        if (finnCoords) {
+          const newFloatingText: FloatingTextData = {
+            row: finnCoords.row,
+            col: finnCoords.col,
+            text: `+${revealedCount}`,
+            playerId: finnOwnerId,
+            timestamp: Date.now()
+          }
+          return {
+            ...newState,
+            floatingTexts: [...(newState.floatingTexts || []), newFloatingText]
+          }
+        }
+
+        return newState
+      }
+    }
+  }
+
   return state
 }
 

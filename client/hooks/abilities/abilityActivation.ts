@@ -96,6 +96,12 @@ export function activateAbility(
 
   const action = getCardAbilityAction(card as any, gameState as any, card.ownerId!, boardCoords)
   if (action) {
+    // Debug logging for Immunis
+    if (card.name === 'Immunis') {
+      console.log('[activateAbility Immunis] action:', action)
+      console.log('[activateAbility Immunis] action.mode:', action.mode)
+      console.log('[activateAbility Immunis] action.payload:', action.payload)
+    }
     // Log ability activation
     if (props.addLogEntry) {
       props.addLogEntry('ACTIVATE_ABILITY', {

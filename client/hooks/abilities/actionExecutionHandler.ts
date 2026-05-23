@@ -529,7 +529,18 @@ function handleGlobalAutoApply(
           if (props.pendingChainedActionRef) {
             props.pendingChainedActionRef.current = true
           }
-          execAction(action.chainedAction!, sourceCoords)
+          // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+          const autoStepsContext = (action.payload as any)?._autoStepsContext
+          const chainedActionToExecute = autoStepsContext
+            ? {
+                ...action.chainedAction,
+                payload: {
+                  ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                  _autoStepsContext: autoStepsContext,
+                },
+              }
+            : action.chainedAction
+          execAction(chainedActionToExecute, sourceCoords)
           setTimeout(() => {
             if (props.pendingChainedActionRef) {
               props.pendingChainedActionRef.current = false
@@ -558,7 +569,18 @@ function handleGlobalAutoApply(
         if (props.pendingChainedActionRef) {
           props.pendingChainedActionRef.current = true
         }
-        execAction(action.chainedAction!, sourceCoords)
+        // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+        const autoStepsContext = (action.payload as any)?._autoStepsContext
+        const chainedActionToExecute = autoStepsContext
+          ? {
+              ...action.chainedAction,
+              payload: {
+                ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                _autoStepsContext: autoStepsContext,
+              },
+            }
+          : action.chainedAction
+        execAction(chainedActionToExecute, sourceCoords)
         setTimeout(() => {
           if (props.pendingChainedActionRef) {
             props.pendingChainedActionRef.current = false
@@ -1080,13 +1102,36 @@ function handleCreateStack(
         // This ensures chainedAction is processed after the current action completes
         if (action.chainedAction) {
           if (props.setActionQueue) {
-            props.setActionQueue((prev: any[]) => [...prev, action.chainedAction!])
+            // CRITICAL: Preserve _autoStepsContext when adding chainedAction to queue
+            // This fixes Temporary Shelter option 2 where SELECT_CELL needs to continue to CLEANUP_COMMAND
+            const autoStepsContext = (action.payload as any)?._autoStepsContext
+            const chainedActionToQueue = autoStepsContext
+              ? {
+                  ...action.chainedAction,
+                  payload: {
+                    ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                    _autoStepsContext: autoStepsContext,
+                  },
+                }
+              : action.chainedAction
+            props.setActionQueue((prev: any[]) => [...prev, chainedActionToQueue])
           } else {
             // Fallback: execute directly if setActionQueue not available
             if (props.pendingChainedActionRef) {
               props.pendingChainedActionRef.current = true
             }
-            execAction(action.chainedAction!, sourceCoords)
+            // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+            const autoStepsContext = (action.payload as any)?._autoStepsContext
+            const chainedActionToExecute: AbilityAction = autoStepsContext
+              ? {
+                  ...action.chainedAction,
+                  payload: {
+                    ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                    _autoStepsContext: autoStepsContext,
+                  },
+                }
+              : action.chainedAction
+            execAction(chainedActionToExecute, sourceCoords)
             setTimeout(() => {
               if (props.pendingChainedActionRef) {
                 props.pendingChainedActionRef.current = false
@@ -1204,13 +1249,25 @@ function handleCreateStack(
         if (handTargets.length === 0 && boardTargets.length === 0) {
           // CRITICAL: If this action has a chainedAction, add it to actionQueue directly
           if (action.chainedAction) {
+            // CRITICAL: Preserve _autoStepsContext when adding chainedAction to queue
+            // This fixes Temporary Shelter option 2 where SELECT_CELL needs to continue to CLEANUP_COMMAND
+            const autoStepsContext = (action.payload as any)?._autoStepsContext
+            const chainedActionWithCtx = autoStepsContext
+              ? {
+                  ...action.chainedAction,
+                  payload: {
+                    ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                    _autoStepsContext: autoStepsContext,
+                  },
+                }
+              : action.chainedAction
             if (props.setActionQueue) {
-              props.setActionQueue((prev: any[]) => [...prev, action.chainedAction!])
+              props.setActionQueue((prev: any[]) => [...prev, chainedActionWithCtx])
             } else {
               if (props.pendingChainedActionRef) {
                 props.pendingChainedActionRef.current = true
               }
-              execAction(action.chainedAction!, sourceCoords)
+              execAction(chainedActionWithCtx, sourceCoords)
               setTimeout(() => {
                 if (props.pendingChainedActionRef) {
                   props.pendingChainedActionRef.current = false
@@ -1341,9 +1398,20 @@ function handleCreateStack(
 
           // Send the ability action to host so it can execute with full game state
           // This ensures DRAW_CARD and other chained actions work correctly
+          // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+          const autoStepsContext = (action.payload as any)?._autoStepsContext
+          const chainedActionToSend = autoStepsContext
+            ? {
+                ...action.chainedAction,
+                payload: {
+                  ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                  _autoStepsContext: autoStepsContext,
+                },
+              }
+            : action.chainedAction
           props.sendAction('EXECUTE_ABILITY_CHAINED', {
             sourceCoords: action.sourceCoords || sourceCoords,
-            chainedAction: action.chainedAction,
+            chainedAction: chainedActionToSend,
             tokenOwnerId,
             onlyOpponents: action.onlyOpponents ?? action.payload?.onlyOpponents ?? (action as any).details?.onlyOpponents,
           })
@@ -1368,8 +1436,20 @@ function handleCreateStack(
           if (props.pendingChainedActionRef) {
             props.pendingChainedActionRef.current = true
           }
+          // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+          // This fixes Temporary Shelter option 2 where SELECT_CELL needs to continue to CLEANUP_COMMAND
+          const autoStepsContext = (action.payload as any)?._autoStepsContext
+          const chainedActionToExecute: AbilityAction = autoStepsContext
+            ? {
+                ...action.chainedAction,
+                payload: {
+                  ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+                  _autoStepsContext: autoStepsContext,
+                },
+              }
+            : action.chainedAction
           // CRITICAL: Execute synchronously so abilityMode is set before action queue continues
-          execAction(action.chainedAction!, sourceCoords)
+          execAction(chainedActionToExecute, sourceCoords)
           // Clear the flag after React has processed state updates
           setTimeout(() => {
             if (props.pendingChainedActionRef) {
@@ -1459,8 +1539,20 @@ function handleCreateStack(
       if (props.pendingChainedActionRef) {
         props.pendingChainedActionRef.current = true
       }
+      // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+      // This fixes Temporary Shelter option 2 where SELECT_CELL needs to continue to CLEANUP_COMMAND
+      const autoStepsContext = (action.payload as any)?._autoStepsContext
+      const chainedActionToExecute: AbilityAction = autoStepsContext
+        ? {
+            ...action.chainedAction,
+            payload: {
+              ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
+              _autoStepsContext: autoStepsContext,
+            },
+          }
+        : action.chainedAction
       // CRITICAL: Execute synchronously so abilityMode is set before action queue continues
-      execAction(action.chainedAction!, sourceCoords)
+      execAction(chainedActionToExecute, sourceCoords)
       // Clear the flag after React has processed state updates
       setTimeout(() => {
         if (props.pendingChainedActionRef) {
@@ -1539,18 +1631,22 @@ function handleOpenModal(
     // Return card from discard to hand (e.g., Finn EG Setup)
     const player = gameState.players.find(p => p.id === action.sourceCard?.ownerId)
     if (player) {
-      // Extract filter type from filter string (e.g., "hasType_Device" → "Device")
-      let filterType = 'Unit'
-      const filterString = action.payload?.filter
-      if (filterString) {
-        if (typeof filterString === 'string') {
-          if (filterString.startsWith('hasType_')) {
-            filterType = filterString.replace('hasType_', '')
-          } else if (filterString.startsWith('hasFaction_')) {
-            filterType = filterString.replace('hasFaction_', '')
+      // Use filterType from payload if provided (extracted from original filter string)
+      let filterType = action.payload?.filterType || 'Unit'
+
+      // Legacy: extract filter type from filter string if filterType not provided
+      if (!action.payload?.filterType) {
+        const filterString = action.payload?.filter
+        if (filterString) {
+          if (typeof filterString === 'string') {
+            if (filterString.startsWith('hasType_')) {
+              filterType = filterString.replace('hasType_', '')
+            } else if (filterString.startsWith('hasFaction_')) {
+              filterType = filterString.replace('hasFaction_', '')
+            }
+          } else if (typeof filterString === 'function') {
+            // Filter is a function - can't extract type, use default
           }
-        } else if (typeof filterString === 'function') {
-          // Filter is a function - can't extract type, use default
         }
       }
 
@@ -1564,19 +1660,27 @@ function handleOpenModal(
     // Return card from discard to adjacent empty cell with token (e.g., Finn MW Deploy, Immunis Deploy)
     const player = gameState.players.find(p => p.id === action.sourceCard?.ownerId)
     if (player) {
-      // Extract filter type from filter string or function
-      let filterType = 'Unit'
-      const filterString = action.payload?.filter
-      if (filterString) {
-        if (typeof filterString === 'string') {
-          if (filterString.startsWith('hasType_')) {
-            filterType = filterString.replace('hasType_', '')
-          } else if (filterString.startsWith('hasFaction_')) {
-            filterType = filterString.replace('hasFaction_', '')
+      // Use filterType from payload if provided (extracted from original filter string)
+      let filterType = action.payload?.filterType || 'Unit'
+      console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterType from payload:', action.payload?.filterType, 'using:', filterType)
+
+      // Legacy: extract filter type from filter string if filterType not provided
+      if (!action.payload?.filterType) {
+        const filterString = action.payload?.filter
+        console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterString:', filterString, 'action.payload:', action.payload)
+        if (filterString) {
+          if (typeof filterString === 'string') {
+            console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterString is string:', filterString)
+            if (filterString.startsWith('hasType_')) {
+              filterType = filterString.replace('hasType_', '')
+            } else if (filterString.startsWith('hasFaction_')) {
+              filterType = filterString.replace('hasFaction_', '')
+            }
+          } else if (typeof filterString === 'function') {
+            // Filter is a function - can't extract type, use default
           }
-        } else if (typeof filterString === 'function') {
-          // Filter is a function - can't extract type, use default
         }
+        console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterType set to:', filterType)
       }
 
       // Set ability mode for the second step (placing the card)
@@ -1623,11 +1727,23 @@ function handleEnterMode(
   // SHIELD_SELF_THEN_PUSH (Reclaimed Gawain)
   // Add Shield immediately, then let user select adjacent opponent to push
   if (mode === 'SHIELD_SELF_THEN_PUSH') {
+    console.log('[SHIELD_SELF_THEN_PUSH] Action execution started', {
+      mode,
+      sourceCoords,
+      actionPayload: action.payload,
+      actionSourceCard: action.sourceCard?.name,
+      actionSourceCardId: action.sourceCard?.id
+    })
     // CRITICAL: Get ownerId from the actual card at sourceCoords, not from action.sourceCard
     // This fixes the bug where two dummy players have cards with the same name
     const freshState = getFreshGameState()
     const actualCard = freshState.board[sourceCoords.row]?.[sourceCoords.col]?.card
     const actorId = actualCard?.ownerId ?? getSafePlayerId(action, localPlayerId)
+    console.log('[SHIELD_SELF_THEN_PUSH] Card info', {
+      actualCard: actualCard?.name,
+      actualCardId: actualCard?.id,
+      actorId
+    })
     addBoardCardStatus(sourceCoords, 'Shield', actorId)
 
     const pushAction: AbilityAction = {
@@ -1635,7 +1751,28 @@ function handleEnterMode(
       sourceCard: actualCard || action.sourceCard,
       payload: { ...action.payload, shieldApplied: true }
     }
+    console.log('[SHIELD_SELF_THEN_PUSH] Created pushAction', {
+      pushActionMode: pushAction.mode,
+      pushActionSourceCoords: pushAction.sourceCoords,
+      pushActionSourceCard: pushAction.sourceCard?.name,
+      pushActionPayload: pushAction.payload
+    })
     const targets = calculateValidTargets(pushAction, gameState, actorId, commandContext)
+    console.log('[SHIELD_SELF_THEN_PUSH] Calculated targets', {
+      targetsCount: targets.length,
+      targets: targets
+    })
+
+    // CRITICAL: If no valid targets (no adjacent opponents to push), show "no target" effect
+    if (targets.length === 0) {
+      console.log('[SHIELD_SELF_THEN_PUSH] No valid targets, triggering no target effect and ending ability')
+      triggerNoTarget(sourceCoords)
+      // Mark ability as used since there are no valid targets
+      markAbilityUsed(sourceCoords, true, false, action.readyStatusToRemove)
+      // CRITICAL: Clear ability mode to end the targeting mode
+      setAbilityMode(null)
+      return
+    }
 
     setAbilityMode(pushAction)
     setTargetingMode(pushAction, actorId, sourceCoords, targets, commandContext)

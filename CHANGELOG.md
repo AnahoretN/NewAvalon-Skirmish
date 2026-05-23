@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - 2026-05-23
+
+### Fixed
+- **Temporary Cover Command**: Fixed command option not applying Shield status correctly
+  - Shield status now properly added to selected cards
+  - Visual feedback now shows correctly after command execution
+
+- **Reclaimed Gawain Ability**: Fixed SHIELD_SELF_THEN_RIOT_PUSH mode execution
+  - Shield status now correctly applied to self before entering push mode
+  - Push targeting mode now activates properly after Shield is applied
+  - Fixed ability flow completing both actions in sequence
+
+- **Immunis Resurrect Ability**: Fixed card resurrection from discard
+  - Resurrected cards now properly initialize all ready statuses
+  - Abilities can now be used correctly after returning to play
+  - Fixed card state restoration issues
+
 ## [0.3.6] - 2026-05-09
 
 ### Fixed

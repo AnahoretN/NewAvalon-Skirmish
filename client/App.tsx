@@ -2894,6 +2894,7 @@ const AppInner = function AppInner() {
 
   // Derived highlighting filter for DiscardModal (Deck Search)
   const highlightFilter = useMemo(() => {
+    console.log('[highlightFilter] filterType:', viewingDiscard?.pickConfig?.filterType)
     if (viewingDiscard?.pickConfig?.filterType === 'Unit') {
       return (card: Card) => !!card.types?.includes('Unit')
     }
@@ -2904,7 +2905,12 @@ const AppInner = function AppInner() {
       return (card: Card) => !!card.types?.includes('Device')
     }
     if (viewingDiscard?.pickConfig?.filterType === 'Optimates') {
-      return (card: Card) => !!card.types?.includes('Unit') && !!card.types?.includes('Optimates')
+      const filterFn = (card: Card) => {
+        const result = !!card.types?.includes('Unit') && !!card.types?.includes('Optimates')
+        console.log('[highlightFilter Optimates] card:', card.name, 'types:', card.types, 'result:', result)
+        return result
+      }
+      return filterFn
     }
     return undefined
   }, [viewingDiscard?.pickConfig?.filterType])
@@ -2982,6 +2988,36 @@ const AppInner = function AppInner() {
     // Normal card movement should be done via drag-and-drop
     if (!pickConfig) {
       return
+    }
+
+    // Apply filter check - only allow cards matching the filter type
+    const pile = pickConfig.isDeck ? viewingDiscardPlayer.deck : viewingDiscardPlayer.discard
+    const card = pile[cardIndex]
+    if (!card) {
+      return
+    }
+
+    // Check if card matches the filter
+    const { filterType } = pickConfig
+    console.log('[Immunis Filter] filterType:', filterType, 'card:', card.name, 'card.types:', card.types)
+    if (filterType) {
+      let matchesFilter = false
+      if (filterType === 'Unit') {
+        matchesFilter = !!card.types?.includes('Unit')
+      } else if (filterType === 'Command') {
+        matchesFilter = card.deck === DeckType.Command || !!card.types?.includes('Command')
+      } else if (filterType === 'Device') {
+        matchesFilter = !!card.types?.includes('Device')
+      } else if (filterType === 'Optimates') {
+        matchesFilter = !!card.types?.includes('Unit') && !!card.types?.includes('Optimates')
+      }
+
+      console.log('[Immunis Filter] matchesFilter:', matchesFilter, 'for card:', card.name)
+      if (!matchesFilter) {
+        // Card doesn't match filter - don't allow selection
+        console.log('[Immunis Filter] BLOCKED card:', card.name)
+        return
+      }
     }
 
     const { action, isDeck: pickIsDeck } = pickConfig

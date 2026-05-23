@@ -250,6 +250,11 @@ export const useAppCounters = ({
                 clearTargetingMode()
                 if (cursorStack.chainedAction) {
                   const chained = { ...cursorStack.chainedAction }
+                  // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+                  if (cursorStack._autoStepsContext) {
+                    chained.payload = chained.payload || (chained as any).details || {}
+                    chained.payload._autoStepsContext = cursorStack._autoStepsContext
+                  }
                   // CRITICAL: Add chainedAction to actionQueue AFTER clearing cursorStack
                   if (setActionQueue) {
                     // Add unique ID to prevent duplicate processing
@@ -364,6 +369,11 @@ export const useAppCounters = ({
               clearTargetingMode()
               if (cursorStack.chainedAction) {
                 const chained = { ...cursorStack.chainedAction }
+                // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+                if (cursorStack._autoStepsContext) {
+                  chained.payload = chained.payload || (chained as any).details || {}
+                  chained.payload._autoStepsContext = cursorStack._autoStepsContext
+                }
                 // CRITICAL: Add chainedAction to actionQueue AFTER clearing cursorStack
                 if (setActionQueue) {
                   // Add unique ID to prevent duplicate processing
@@ -557,6 +567,12 @@ export const useAppCounters = ({
                     // This ensures Revealed tokens target the correct player's hand when chainedAction is executed
                     if (cursorStack.recordContext && targetCard.ownerId !== undefined) {
                       chained._sourceOwnerId = targetCard.ownerId
+                    }
+                    // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
+                    // This fixes Temporary Shelter option 2 where SELECT_CELL needs to continue to CLEANUP_COMMAND
+                    if (cursorStack._autoStepsContext) {
+                      chained.payload = chained.payload || (chained as any).details || {}
+                      chained.payload._autoStepsContext = cursorStack._autoStepsContext
                     }
                     // For CREATE_STACK chained actions (e.g., False Orders Reveal), clear abilityMode to remove board highlights
                     if (chained.type === 'CREATE_STACK') {
