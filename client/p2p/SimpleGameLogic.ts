@@ -1209,14 +1209,17 @@ function handlePlayCard(state: GameState, playerId: number, data: any): GameStat
 
   // Lateness effect: When a non-command card is played from hand to board,
   // all other non-command cards in that player's hand get lateness effect
-  // Command cards are excluded from triggering lateness
+  // Command cards are excluded from triggering lateness AND from clearing it
   // EXCEPTION: clearLatenessOnNextPlay flag (Quick Response Team option 1) clears lateness instead of setting it
   // EXCEPTION: strictRulesEnabled = false disables lateness effect entirely
   const isCommandCard = isCommandCardByDefinition(cardToPlay)
   const strictRulesEnabled = state.strictRulesEnabled ?? true // Default to true if undefined
   const shouldTriggerLateness = isFromHand && !isCommandCard && strictRulesEnabled
   // When clearLatenessOnNextPlay is true, clear hasLateness instead of setting it
-  const newHasLateness = clearLatenessOnNextPlay ? false : shouldTriggerLateness
+  // Otherwise, if shouldTriggerLateness is true, set it. If neither (command card), preserve current value.
+  const newHasLateness = shouldTriggerLateness
+    ? (clearLatenessOnNextPlay ? false : true)
+    : player.hasLateness
 
   // Update player
   const newPlayers = state.players.map(p =>
