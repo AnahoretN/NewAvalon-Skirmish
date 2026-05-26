@@ -438,7 +438,6 @@ export class SimpleHost {
     // @ts-ignore - CLEAR_FLOATING_TEXTS is not in standard action types
     if (action === 'CLEAR_FLOATING_TEXTS') {
       if (this.state.floatingTexts && this.state.floatingTexts.length > 0) {
-        console.log('[SimpleHost.handleAction] CLEAR_FLOATING_TEXTS: clearing', this.state.floatingTexts.length, 'floatingTexts')
         this.state = { ...this.state, floatingTexts: [] }
         // CRITICAL: Clear sent timestamps so new floatingTexts can be sent
         this.sentFloatingTextTimestamps.clear()
@@ -1004,12 +1003,6 @@ export class SimpleHost {
     // Also notify host
     this.notifyStateUpdate()
 
-    // DEBUG: Log floatingTexts in this.state before broadcasting
-    if (this.state.floatingTexts && this.state.floatingTexts.length > 0) {
-      console.log(`[SimpleHost.broadcastState] Before broadcast: this.state has ${this.state.floatingTexts.length} floatingTexts`)
-      console.log(`[SimpleHost.broadcastState] Connections count: ${this.connections.size}`)
-    }
-
     this.connections.forEach((conn, _peerId) => {
       const playerId = this.peerIdToPlayerId.get(_peerId)
 
@@ -1020,32 +1013,15 @@ export class SimpleHost {
           // Personalize state for this player
           const personalized = this.personalizeForPlayer(playerId)
 
-          // DEBUG: Always log floatingTexts status
-          console.log(`[SimpleHost.broadcastState] Player ${playerId} conn.open: true, personalized.floatingTexts:`, personalized.floatingTexts)
-
-          // DEBUG: Log floatingTexts being sent
-          if (personalized.floatingTexts && personalized.floatingTexts.length > 0) {
-            console.log(`[SimpleHost.broadcastState] Sending ${personalized.floatingTexts.length} floatingTexts to player ${playerId}:`, personalized.floatingTexts)
-          }
-
-          // Log all announcedCard for debugging
-          const announcedCards = personalized.players
-            .filter((p: any) => p.announcedCard)
-            .map((p: any) => `Player${p.id}:${p.announcedCard.name}`)
-            .join(', ')
-
           try {
             conn.send({
               ...message,
               state: personalized,
               timestamp: Date.now()
             })
-            console.log(`[SimpleHost.broadcastState] Successfully sent state to player ${playerId}`)
           } catch (e) {
-            console.log(`[SimpleHost.broadcastState] Failed to send to player ${playerId}:`, e)
+            // Silently fail
           }
-        } else {
-          console.log(`[SimpleHost.broadcastState] Player ${playerId} conn.open: false, skipping`)
         }
       }
     })
@@ -1209,11 +1185,6 @@ export class SimpleHost {
    */
   private personalizeForPlayer(localPlayerId: number): PersonalizedState {
     const baseState = this.state
-
-    // DEBUG: Log floatingTexts before personalization
-    if (baseState.floatingTexts && baseState.floatingTexts.length > 0) {
-      console.log(`[SimpleHost.personalizeForPlayer] Before personalization for player ${localPlayerId}:`, baseState.floatingTexts.length, 'floatingTexts')
-    }
 
     // Check if there's a deck view request
     // @ts-ignore - temporary flag for deck view request
@@ -1429,13 +1400,6 @@ export class SimpleHost {
       delete (result as any)._deckViewRequest
     }
 
-    // DEBUG: Log floatingTexts after personalization
-    if (result.floatingTexts && result.floatingTexts.length > 0) {
-      console.log(`[SimpleHost.personalizeForPlayer] After personalization for player ${localPlayerId}:`, result.floatingTexts.length, 'floatingTexts')
-    } else if (baseState.floatingTexts && baseState.floatingTexts.length > 0) {
-      console.log(`[SimpleHost.personalizeForPlayer] WARNING: baseState had ${baseState.floatingTexts.length} floatingTexts but result has 0!`)
-    }
-
     return result as PersonalizedState
   }
 
@@ -1479,11 +1443,9 @@ export class SimpleHost {
       if (hostState.floatingTexts && hostState.floatingTexts.length > 0) {
         const newTexts = hostState.floatingTexts.filter(ft => !this.sentFloatingTextTimestamps.has(ft.timestamp))
         if (newTexts.length > 0) {
-          console.log('[SimpleHost.notifyStateUpdate] Sending', newTexts.length, 'NEW floatingTexts to host (local player 1):', newTexts)
           newTexts.forEach(ft => this.sentFloatingTextTimestamps.add(ft.timestamp))
           hostState = { ...hostState, floatingTexts: newTexts }
         } else {
-          console.log('[SimpleHost.notifyStateUpdate] All floatingTexts were already sent, skipping state update to prevent overwriting')
           // CRITICAL FIX: Skip the entire state update, not just the floatingTexts
           // This prevents the state update without floatingTexts from overwriting the previous update with floatingTexts
           shouldSendUpdate = false
@@ -1492,7 +1454,6 @@ export class SimpleHost {
         // CRITICAL FIX: Don't send state updates with empty floatingTexts array if we just sent some
         // This prevents CLEAR_FLOATING_TEXTS from overwriting the state that had floatingTexts
         if (this.sentFloatingTextTimestamps.size > 0) {
-          console.log('[SimpleHost.notifyStateUpdate] Skipping state update with empty floatingTexts (just sent some)')
           shouldSendUpdate = false
         }
         // Otherwise keep empty floatingTexts as is (initial state or after cleanup period)

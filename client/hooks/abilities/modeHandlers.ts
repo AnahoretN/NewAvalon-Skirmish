@@ -731,13 +731,6 @@ export function advanceToNextStepWithCoords(
         }
       }
 
-      console.log('[advanceToNextStepWithCoords] Creating CLEANUP_COMMAND action:', {
-        sourceCard: cleanupSourceCard?.id,
-        sourceCoords: cleanupSourceCoords,
-        commandCardId: autoStepsContext?.commandCardId,
-        commandCardOwnerId: autoStepsContext?.commandCardOwnerId
-      })
-
       const cleanupAction: AbilityAction = {
         type: 'GLOBAL_AUTO_APPLY',
         mode: null,
@@ -2035,41 +2028,20 @@ function handleShieldSelfThenPush(
   boardCoords: { row: number; col: number },
   props: ModeHandlersProps
 ): boolean {
-  console.log('[handleShieldSelfThenPush] Called', {
-    cardName: card.name,
-    cardId: card.id,
-    boardCoords,
-    cardOwner: card.ownerId
-  })
   const { abilityMode, gameState, setAbilityMode, addBoardCardStatus, markAbilityUsed, interactionLock, setTargetingMode, commandContext, moveItem, updateState } = props
 
   if (interactionLock.current) {
-    console.log('[handleShieldSelfThenPush] Interaction lock active, returning false')
     return false
   }
 
   const { sourceCoords, isDeployAbility, readyStatusToRemove, sourceCard, payload } = abilityMode!
 
-  console.log('[handleShieldSelfThenPush] Ability mode info', {
-    mode: abilityMode.mode,
-    sourceCoords,
-    sourceCardName: sourceCard?.name,
-    sourceCardId: sourceCard?.id,
-    payload,
-    shieldApplied: payload?.shieldApplied
-  })
-
   if (!sourceCoords || sourceCoords.row < 0 || !sourceCard) {
-    console.log('[handleShieldSelfThenPush] Invalid sourceCoords or sourceCard, returning false')
     return false
   }
 
   const ownerId = sourceCard.ownerId!
   const shieldAlreadyApplied = payload?.shieldApplied === true
-  console.log('[handleShieldSelfThenPush] Owner and shield status', {
-    ownerId,
-    shieldAlreadyApplied
-  })
 
   // CRITICAL: Shield is already added in actionExecutionHandler.ts
   // Gawain is NOT a valid target for this ability - only adjacent opponents are valid
@@ -2083,8 +2055,6 @@ function handleShieldSelfThenPush(
   const isTeammate = (targetPlayer?.teamId !== null && targetPlayer?.teamId !== undefined) && (actorPlayer?.teamId !== null && actorPlayer?.teamId !== undefined) && targetPlayer.teamId === actorPlayer.teamId
 
   if (isAdj && card.ownerId !== ownerId && !isTeammate) {
-    console.log('[handleShieldSelfThenPush] Valid adjacent target found', { cardName: card.name, boardCoords })
-
     const dRow = boardCoords.row - sourceCoords.row
     const dCol = boardCoords.col - sourceCoords.col
     const targetRow = boardCoords.row + dRow
@@ -2810,9 +2780,6 @@ function handleSelectCell(
     return false
   }
 
-  // CRITICAL: Debug log to see if handleSelectCell is being called
-  console.log('[handleSelectCell] Called with sourceCard:', abilityMode.sourceCard?.id, 'boardCoords:', boardCoords, 'hasAutoStepsContext:', !!abilityMode.payload?._autoStepsContext)
-
   const { sourceCoords, sourceCard, isDeployAbility, readyStatusToRemove, payload, originalOwnerId, chainedAction: directChainedAction } = abilityMode
 
   // CRITICAL: For command cards like False Orders, chainedAction is in payload.chainedAction
@@ -3075,7 +3042,6 @@ function handleSelectCell(
   // After the move completes, we need to continue AUTO_STEPS to trigger CLEANUP_COMMAND
   if (!actualChainedAction && payload?._autoStepsContext && setActionQueue) {
     const autoStepsContext = { ...payload._autoStepsContext }
-    console.log('[handleSelectCell] Move completed for', abilityMode.sourceCard?.id, 'currentStepIndex:', autoStepsContext.currentStepIndex, 'steps.length:', autoStepsContext.steps?.length)
     const continueAction: any = {
       type: 'CONTINUE_AUTO_STEPS',
       sourceCard: abilityMode.sourceCard,
@@ -3091,16 +3057,12 @@ function handleSelectCell(
       }
     }
 
-    console.log('[handleSelectCell] Adding CONTINUE_AUTO_STEPS to queue for', abilityMode.sourceCard?.id, 'step', autoStepsContext.currentStepIndex, 'of', autoStepsContext.steps?.length)
     setActionQueue(prev => {
       const cleanupActions = prev.filter(a => a.payload?.cleanupCommand)
       const otherActions = prev.filter(a => !a.payload?.cleanupCommand)
       const newQueue = [...otherActions, continueAction, ...cleanupActions]
-      console.log('[handleSelectCell] New action queue:', newQueue.map(a => a.type))
       return newQueue
     })
-  } else {
-    console.log('[handleSelectCell] NOT adding CONTINUE_AUTO_STEPS. actualChainedAction:', !!actualChainedAction, 'has autoStepsContext:', !!payload?._autoStepsContext, 'has setActionQueue:', !!setActionQueue)
   }
 
   // CRITICAL: Clear targeting mode when move is complete
@@ -3123,7 +3085,6 @@ function handleSelectCell(
     setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
   }
   // For chainedAction case, mode is cleared in handleGlobalAutoApply when the action completes
-  console.log('[handleSelectCell] Finished. actualChainedAction:', !!actualChainedAction, 'abilityMode will be cleared:', !actualChainedAction)
   return true
 }
 

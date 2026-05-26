@@ -45,7 +45,6 @@ export function createDeck(deckType: string, playerId: number, playerName: strin
   const deckFile = deckFiles.find(df => df.id === deckType);
 
   if (!deckFile) {
-    console.error(`Invalid deckType requested: ${deckType}`);
     return [];
   }
 
@@ -54,7 +53,6 @@ export function createDeck(deckType: string, playerId: number, playerName: strin
   for (const deckEntry of deckFile.cards) {
     const cardDef = getCardDefinition(deckEntry.cardId);
     if (!cardDef) {
-      console.warn(`Card definition not found for ID: ${deckEntry.cardId} in deck: ${deckFile.name}`);
       continue;
     }
 
@@ -101,7 +99,6 @@ export function createNewPlayer(id: number, isDummy = false): any {
   const initialDeck = deckFiles.find(df => df.isSelectable);
 
   if (!initialDeck) {
-    console.error('No selectable decks found in contentDatabase.json!');
     throw new Error('Cannot create players without decks');
   }
 

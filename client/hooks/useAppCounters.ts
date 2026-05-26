@@ -276,7 +276,6 @@ export const useAppCounters = ({
                   // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                   const autoStepsContext = { ...cursorStack._autoStepsContext }
                   const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
-                  console.log('[useAppCounters] CREATE_STACK completed for', cursorStack.sourceCard?.id, 'currentStepIndex:', autoStepsContext.currentStepIndex, '→ completedStepIndex:', completedStepIndex, 'steps.length:', autoStepsContext.steps?.length)
                   const continueAction: any = {
                     type: 'CONTINUE_AUTO_STEPS',
                     sourceCard: cursorStack.sourceCard,

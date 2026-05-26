@@ -20,6 +20,4 @@ export function setupRoutes(app: any) {
 
   // Content routes
   app.use('/api/content', contentRoutes);
-
-  console.log('API routes configured');
 }

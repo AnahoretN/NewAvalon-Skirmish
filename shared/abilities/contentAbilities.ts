@@ -273,12 +273,6 @@ export function buildActionFromContentAbility(
       // CRITICAL: Convert chainedAction from {action, details} to {type, payload} format
       // This fixes Tactical Maneuver where chainedAction uses old format
       if (processedStep.chainedAction && typeof processedStep.chainedAction === 'object') {
-        console.log('[buildActionFromContentAbility] Converting chainedAction for step', index, ':', {
-          stepAction: processedStep.action,
-          stepMode: processedStep.mode,
-          hasChainedAction: !!processedStep.chainedAction,
-          originalChainedAction: processedStep.chainedAction,
-        })
         // CRITICAL: Create new chainedAction without old {action, details} properties
         // This prevents confusion between old and new formats
         const convertedChainedAction: any = {
@@ -292,10 +286,6 @@ export function buildActionFromContentAbility(
           }
         })
         processedStep.chainedAction = convertedChainedAction
-        console.log('[buildActionFromContentAbility] Converted chainedAction:', {
-          convertedType: processedStep.chainedAction.type,
-          convertedPayload: processedStep.chainedAction.payload,
-        })
       }
       return processedStep
     })
@@ -596,7 +586,6 @@ export function buildActionFromContentAbility(
 
     case 'RETURN_FROM_DISCARD_TO_BOARD': {
       // Immunis Deploy: Return card from discard to adjacent empty cell on battlefield
-      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] card.name:', card.name, 'ability.details:', ability.details)
       // Extract filter type before it gets converted to a function
       const originalFilterString = ability.details?.filter
       let filterType = 'Unit'
@@ -607,7 +596,6 @@ export function buildActionFromContentAbility(
           filterType = originalFilterString.replace('hasFaction_', '')
         }
       }
-      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] extracted filterType:', filterType, 'from:', originalFilterString)
       const result = {
         type: 'OPEN_MODAL',
         mode: 'RETURN_FROM_DISCARD_TO_BOARD',
@@ -620,7 +608,6 @@ export function buildActionFromContentAbility(
           filterType,  // Pass the extracted filter type
         }
       } as AbilityAction
-      console.log('[contentAbilities RETURN_FROM_DISCARD_TO_BOARD] result.payload:', result.payload)
       return result
     }
 
@@ -686,16 +673,6 @@ export function buildActionFromContentAbility(
           requireTokenFromSourceOwner: details.requireTokenFromSourceOwner  // Signal Prophet: must have your Exploit counter
         }
       } as AbilityAction
-      console.log('[buildActionFromContentAbility] MOVE_CARD for', card?.baseId || 'unknown', {
-        ownerId,
-        filterString,
-        range,
-        hasFilter: !!filter,
-        typeofFilter: typeof filter,
-        payloadFilterString: action.payload.filterString,
-        target: details.target,
-        onlyAllies: action.payload.onlyAllies
-      })
       return action
     }
 
@@ -740,7 +717,6 @@ export function buildActionFromContentAbility(
       }
 
       // For other SCORE_POINTS variations, can add more cases here
-      console.warn(`[buildActionFromContentAbility] SCORE_POINTS with per=${per} not yet implemented`)
       return null
     }
 
@@ -852,7 +828,6 @@ export function buildActionFromContentAbility(
       return null
 
     default:
-      console.warn(`Unknown action type: ${actionType}`)
       return null
   }
 }
@@ -921,7 +896,6 @@ export function getCommandActionByOption(
   )
 
   if (!commandAbility) {
-    console.warn(`[getCommandActionByOption] Command option ${optionIndex} not found for card ${baseId}`)
     return null
   }
 

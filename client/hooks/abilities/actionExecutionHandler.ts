@@ -236,7 +236,6 @@ function handleContinueAutoSteps(
   const { gameState, getFreshGameState, setAbilityMode, setTargetingMode, clearTargetingMode, commandContext, localPlayerId, markAbilityUsed, addBoardCardStatus, modifyBoardCardPower, handleActionExecution, calculateValidTargets } = props
 
   const autoStepsContext = action.payload?._autoStepsContext
-  console.log('[handleContinueAutoSteps] Called with sourceCard:', action.sourceCard?.id, 'currentStepIndex:', autoStepsContext?.currentStepIndex, 'steps.length:', autoStepsContext?.steps?.length, 'nextStep will be:', (autoStepsContext?.currentStepIndex ?? 0) + 1)
 
   if (!autoStepsContext || !autoStepsContext.steps) {
     markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
@@ -259,7 +258,6 @@ function handleContinueAutoSteps(
     // All steps complete!
     // CRITICAL: Execute chainedAction if present (False Orders Option 2: Stun x2 after move)
     if (chainedActionFromStep) {
-      console.log('[handleContinueAutoSteps] All steps complete, executing chainedAction:', chainedActionFromStep.type)
       // Execute the chained action directly
       handleActionExecution(chainedActionFromStep, sourceCoords, props)
     } else {
@@ -347,7 +345,6 @@ function handleGlobalAutoApply(
       } else {
         // CRITICAL: For AUTO_STEPS context, clear abilityMode after sending to host
         // This allows CONTINUE_AUTO_STEPS to proceed and prevents the mode from persisting
-        console.log('[handleGlobalAutoApply] Sent to host, clearing abilityMode for AUTO_STEPS context')
         const { setAbilityMode } = props as any
         if (setAbilityMode) {
           setTimeout(() => setAbilityMode(null), 50)
@@ -402,7 +399,6 @@ function handleGlobalAutoApply(
         } else {
           // CRITICAL: For AUTO_STEPS context, clear abilityMode after token placement
           // This allows CONTINUE_AUTO_STEPS to proceed and prevents the mode from persisting
-          console.log('[handleGlobalAutoApply] Tokens placed, clearing abilityMode for AUTO_STEPS context')
           const { setAbilityMode } = props as any
           if (setAbilityMode) {
             setTimeout(() => setAbilityMode(null), 50)
@@ -756,15 +752,6 @@ function handleGlobalAutoApply(
       // sourceCard is not a command card, use commandCardId from context
       finalCardId = commandCardId
     }
-
-    console.log('[handleGlobalAutoApply] CLEANUP_COMMAND:', {
-      actionSourceCard: action.sourceCard?.id,
-      actionSourceCardOwnerId: action.sourceCard?.ownerId,
-      commandCardId: autoStepsContext?.commandCardId,
-      commandCardOwnerId: autoStepsContext?.commandCardOwnerId,
-      finalOwnerId: ownerId,
-      finalCardId
-    })
 
     if (props.sendAction && finalCardId) {
       // Use CLEANUP_COMMAND action for P2P mode (requires cardId)
@@ -1662,25 +1649,19 @@ function handleOpenModal(
     if (player) {
       // Use filterType from payload if provided (extracted from original filter string)
       let filterType = action.payload?.filterType || 'Unit'
-      console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterType from payload:', action.payload?.filterType, 'using:', filterType)
 
       // Legacy: extract filter type from filter string if filterType not provided
       if (!action.payload?.filterType) {
         const filterString = action.payload?.filter
-        console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterString:', filterString, 'action.payload:', action.payload)
         if (filterString) {
           if (typeof filterString === 'string') {
-            console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterString is string:', filterString)
             if (filterString.startsWith('hasType_')) {
               filterType = filterString.replace('hasType_', '')
             } else if (filterString.startsWith('hasFaction_')) {
               filterType = filterString.replace('hasFaction_', '')
             }
-          } else if (typeof filterString === 'function') {
-            // Filter is a function - can't extract type, use default
           }
         }
-        console.log('[RETURN_FROM_DISCARD_TO_BOARD] filterType set to:', filterType)
       }
 
       // Set ability mode for the second step (placing the card)
@@ -1727,23 +1708,11 @@ function handleEnterMode(
   // SHIELD_SELF_THEN_PUSH (Reclaimed Gawain)
   // Add Shield immediately, then let user select adjacent opponent to push
   if (mode === 'SHIELD_SELF_THEN_PUSH') {
-    console.log('[SHIELD_SELF_THEN_PUSH] Action execution started', {
-      mode,
-      sourceCoords,
-      actionPayload: action.payload,
-      actionSourceCard: action.sourceCard?.name,
-      actionSourceCardId: action.sourceCard?.id
-    })
     // CRITICAL: Get ownerId from the actual card at sourceCoords, not from action.sourceCard
     // This fixes the bug where two dummy players have cards with the same name
     const freshState = getFreshGameState()
     const actualCard = freshState.board[sourceCoords.row]?.[sourceCoords.col]?.card
     const actorId = actualCard?.ownerId ?? getSafePlayerId(action, localPlayerId)
-    console.log('[SHIELD_SELF_THEN_PUSH] Card info', {
-      actualCard: actualCard?.name,
-      actualCardId: actualCard?.id,
-      actorId
-    })
     addBoardCardStatus(sourceCoords, 'Shield', actorId)
 
     const pushAction: AbilityAction = {
@@ -1751,21 +1720,10 @@ function handleEnterMode(
       sourceCard: actualCard || action.sourceCard,
       payload: { ...action.payload, shieldApplied: true }
     }
-    console.log('[SHIELD_SELF_THEN_PUSH] Created pushAction', {
-      pushActionMode: pushAction.mode,
-      pushActionSourceCoords: pushAction.sourceCoords,
-      pushActionSourceCard: pushAction.sourceCard?.name,
-      pushActionPayload: pushAction.payload
-    })
     const targets = calculateValidTargets(pushAction, gameState, actorId, commandContext)
-    console.log('[SHIELD_SELF_THEN_PUSH] Calculated targets', {
-      targetsCount: targets.length,
-      targets: targets
-    })
 
     // CRITICAL: If no valid targets (no adjacent opponents to push), show "no target" effect
     if (targets.length === 0) {
-      console.log('[SHIELD_SELF_THEN_PUSH] No valid targets, triggering no target effect and ending ability')
       triggerNoTarget(sourceCoords)
       // Mark ability as used since there are no valid targets
       markAbilityUsed(sourceCoords, true, false, action.readyStatusToRemove)
