@@ -215,6 +215,8 @@ const enUI = {
   gameMode: 'Game Mode',
   strictRules: 'Strict Rules',
   strictRulesTooltip: 'Strict Rules: Enable lateness effect (cards in hand become unplayable after playing to board)',
+  startingHero: 'Starting Hero',
+  startingHeroTooltip: 'Starting Hero: First card of starting hand must be a Hero type card (drawn from deck)',
   '2v2': '2v2',
   '3v1': '3v1',
   copy: 'Copy',

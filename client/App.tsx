@@ -94,6 +94,7 @@ const AppInner = function AppInner() {
     setActiveGridSize,
     setDummyPlayerCount,
     setStrictRulesEnabled,
+    setStartingHeroEnabled,
     updatePlayerName,
     changePlayerColor,
     updatePlayerScore,
@@ -3498,6 +3499,8 @@ const AppInner = function AppInner() {
         onToggleHideDummyCards={setHideDummyCards}
         strictRulesEnabled={gameState.strictRulesEnabled ?? true}
         onStrictRulesToggle={setStrictRulesEnabled}
+        startingHeroEnabled={gameState.startingHeroEnabled ?? false}
+        onStartingHeroToggle={setStartingHeroEnabled}
         currentRound={gameState.currentRound}
         turnNumber={gameState.turnNumber}
         isScoringStep={gameState.isScoringStep}

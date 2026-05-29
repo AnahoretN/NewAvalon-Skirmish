@@ -66,6 +66,7 @@ interface UseGameStateResult {
   setActiveGridSize: (size: any) => void
   setDummyPlayerCount: (count: number) => void
   setStrictRulesEnabled: (enabled: boolean) => void
+  setStartingHeroEnabled: (enabled: boolean) => void
   assignTeams: (teams: any) => void
 
   // Player actions
@@ -1176,6 +1177,24 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     }
   }, [])
 
+  const setStartingHeroEnabled = useCallback((enabled: boolean) => {
+    // Always update local settings (works before host is created)
+    setLocalGameSettings(prev => ({ ...prev, startingHeroEnabled: enabled }))
+    // Also update gameState for immediate UI feedback
+    setGameState((prev: GameState) => ({ ...prev, startingHeroEnabled: enabled }))
+    // If host exists, send action to apply to game state
+    // Check both hostRef (old SimpleHost) and hostManagerRef (new HostConnectionManager)
+    if (isHostRef.current) {
+      if (hostRef.current) {
+        hostRef.current.hostAction('SET_STARTING_HERO', { enabled })
+      } else if (hostManagerRef.current) {
+        hostManagerRef.current.hostAction('SET_STARTING_HERO', { enabled })
+      }
+    } else if (guestRef.current) {
+      guestRef.current.sendAction('SET_STARTING_HERO', { enabled })
+    }
+  }, [])
+
   const assignTeams = useCallback((teams: any) => {
     sendAction('ASSIGN_TEAMS', { teams })
   }, [sendAction])
@@ -2071,6 +2090,7 @@ export function useGameState(_props: any = {}): UseGameStateResult {
     setActiveGridSize,
     setDummyPlayerCount,
     setStrictRulesEnabled,
+    setStartingHeroEnabled,
     updatePlayerName,
     changePlayerColor,
     updatePlayerScore,

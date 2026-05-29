@@ -241,6 +241,8 @@ export const sr: TranslationResource = {
     gameMode: 'Režim igre',
     strictRules: 'Stroga pravila',
     strictRulesTooltip: 'Stroga pravila: Uključi efekat kašnjenja (karte u ruci postaju neiskoristive nakon igranja na ploču)',
+    startingHero: 'Početni heroj',
+    startingHeroTooltip: 'Početni heroj: Prva karta početne ruke mora biti tipa Heroj (vuče se iz špila)',
     '2v2': '2v2',
     '3v1': '3v1',
     reconnect: 'Poveži ponovo',

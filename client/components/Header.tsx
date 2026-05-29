@@ -49,6 +49,8 @@ interface HeaderProps {
   onToggleHideDummyCards: (enabled: boolean) => void;
   strictRulesEnabled: boolean;
   onStrictRulesToggle: (enabled: boolean) => void;
+  startingHeroEnabled: boolean;
+  onStartingHeroToggle: (enabled: boolean) => void;
   currentRound?: number;
   turnNumber?: number;
   isScoringStep?: boolean;
@@ -175,6 +177,8 @@ const GameSettingsMenu = memo<{
   onToggleHideDummyCards: (enabled: boolean) => void;
   strictRulesEnabled: boolean;
   onStrictRulesToggle: (enabled: boolean) => void;
+  startingHeroEnabled: boolean;
+  onStartingHeroToggle: (enabled: boolean) => void;
   t: (key: keyof TranslationResource['ui'] | string) => string;
 }>(({
   isOpen,
@@ -193,6 +197,8 @@ const GameSettingsMenu = memo<{
   onToggleHideDummyCards,
   strictRulesEnabled,
   onStrictRulesToggle,
+  startingHeroEnabled,
+  onStartingHeroToggle,
   t,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -242,6 +248,29 @@ const GameSettingsMenu = memo<{
               width: `${getVuSize(20)}px`,
               height: `${getVuSize(20)}px`,
               transform: strictRulesEnabled ? `translateX(${getVuSize(20)}px)` : `translateX(${getVuSize(2)}px)`
+            }}
+          />
+        </button>
+      </div>
+
+      {/* Starting Hero */}
+      <div className="flex items-center justify-between" style={{ marginBottom: `${getVuSize(8)}px` }}>
+        <span className="text-gray-300" style={{ fontSize: `${getVuSize(13)}px` }}>{t('startingHero')}</span>
+        <button
+          onClick={() => onStartingHeroToggle(!startingHeroEnabled)}
+          disabled={!isHost || isGameStarted}
+          className={`relative inline-flex items-center rounded-full transition-colors ${
+            startingHeroEnabled ? 'bg-indigo-600' : 'bg-gray-600'
+          } ${!isHost || isGameStarted ? 'opacity-50 cursor-not-allowed' : ''}`}
+          style={{ width: `${getVuSize(44)}px`, height: `${getVuSize(24)}px` }}
+          title={t('startingHeroTooltip')}
+        >
+          <span
+            className={`inline-block rounded-full bg-white transition-transform`}
+            style={{
+              width: `${getVuSize(20)}px`,
+              height: `${getVuSize(20)}px`,
+              transform: startingHeroEnabled ? `translateX(${getVuSize(20)}px)` : `translateX(${getVuSize(2)}px)`
             }}
           />
         </button>
@@ -576,6 +605,8 @@ const Header = memo<HeaderProps>(({
   onToggleHideDummyCards,
   strictRulesEnabled,
   onStrictRulesToggle,
+  startingHeroEnabled,
+  onStartingHeroToggle,
   currentRound = 1,
   turnNumber = 1,
   isScoringStep = false,
@@ -832,6 +863,8 @@ const Header = memo<HeaderProps>(({
         onToggleHideDummyCards={onToggleHideDummyCards}
         strictRulesEnabled={strictRulesEnabled}
         onStrictRulesToggle={onStrictRulesToggle}
+        startingHeroEnabled={startingHeroEnabled}
+        onStartingHeroToggle={onStartingHeroToggle}
         t={t}
       />
 

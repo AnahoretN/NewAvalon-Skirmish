@@ -251,6 +251,7 @@ export interface GameState {
   autoAbilitiesEnabled: boolean; // Server-side flag for auto-abilities
   autoDrawEnabled: boolean; // Server-side flag for auto-draw
   strictRulesEnabled: boolean; // If true, lateness effect is enabled (non-command cards in hand become unplayable after playing a card to board)
+  startingHeroEnabled: boolean; // If true, first card of starting hand must be a Hero type card
 
   // Round Logic
   currentRound: number; // 1, 2, or 3

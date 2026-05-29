@@ -45,6 +45,14 @@ export function handleSetStrictRules(state: GameState, enabled: boolean): GameSt
 }
 
 /**
+ * SET_STARTING_HERO - enable/disable starting hero rule
+ * When enabled, first card of starting hand must be a Hero type card
+ */
+export function handleSetStartingHero(state: GameState, enabled: boolean): GameState {
+  return { ...state, startingHeroEnabled: enabled }
+}
+
+/**
  * ASSIGN_TEAMS - assign players to teams
  */
 export function handleAssignTeams(state: GameState, teams: any): GameState {
@@ -208,6 +216,9 @@ export function handleConfirmMulligan(state: GameState, playerId: number, newHan
 /**
  * EXCHANGE_MULLIGAN_CARD - player exchanges a card from their mulligan hand
  * Removes card at index, puts it at bottom of deck, and draws a new card
+ * Special handling for Hero cards when startingHero rule is enabled:
+ * - If mulliganing a Hero, draws the next Hero from deck
+ * - If only one Hero in deck, cannot mulligan it
  */
 export function handleExchangeMulliganCard(state: GameState, playerId: number, cardIndex?: number): GameState {
   const MAX_MULLIGAN_ATTEMPTS = 3
@@ -251,13 +262,35 @@ export function handleExchangeMulliganCard(state: GameState, playerId: number, c
   // Remove the card from hand
   const [exchangedCard] = newHand.splice(cardIndex, 1)
 
-  // Put exchanged card at bottom of deck
-  newDeck.push(exchangedCard)
+  // Check if starting hero rule is enabled and the exchanged card is a Hero
+  const isHeroCard = exchangedCard.types && exchangedCard.types.includes('Hero')
 
-  // Draw new card from top of deck
-  const newCard = newDeck.shift()
-  if (newCard) {
-    newHand.push(newCard)
+  if (state.startingHeroEnabled && isHeroCard) {
+    // Count heroes in deck (including the one being put at bottom)
+    const heroesInDeck = newDeck.filter(card => card.types && card.types.includes('Hero'))
+
+    if (heroesInDeck.length === 0) {
+      // Only one hero in deck (the one being exchanged) - cannot mulligan
+      // Return the card to hand and don't change anything
+      return state
+    }
+
+    // Put exchanged hero at bottom of deck
+    newDeck.push(exchangedCard)
+
+    // Draw the next hero from deck (the topmost one)
+    const nextHeroIndex = newDeck.findIndex(card => card.types && card.types.includes('Hero'))
+    if (nextHeroIndex !== -1) {
+      const [nextHero] = newDeck.splice(nextHeroIndex, 1)
+      newHand.push(nextHero)
+    }
+  } else {
+    // Normal exchange - put card at bottom of deck, draw from top
+    newDeck.push(exchangedCard)
+    const newCard = newDeck.shift()
+    if (newCard) {
+      newHand.push(newCard)
+    }
   }
 
   // Update player with new hand, deck, and decremented attempts
@@ -361,9 +394,36 @@ export function startGame(state: GameState): GameState {
     const hand: Card[] = []
     const deck = [...p.deck]
 
-    for (let i = 0; i < 6; i++) {
-      if (deck.length > 0) {
-        hand.push(deck.shift()!)
+    // If starting hero rule is enabled, ensure first card is a Hero type card
+    if (state.startingHeroEnabled) {
+      // Find the first Hero card in the deck
+      const heroIndex = deck.findIndex(card => card.types && card.types.includes('Hero'))
+
+      if (heroIndex !== -1) {
+        // Remove the hero card from its position and add it as the first card in hand
+        const [heroCard] = deck.splice(heroIndex, 1)
+        hand.push(heroCard)
+
+        // Fill the rest of the hand with cards from the top of the deck
+        for (let i = 1; i < 6; i++) {
+          if (deck.length > 0) {
+            hand.push(deck.shift()!)
+          }
+        }
+      } else {
+        // No hero in deck - deal normally (no hero available)
+        for (let i = 0; i < 6; i++) {
+          if (deck.length > 0) {
+            hand.push(deck.shift()!)
+          }
+        }
+      }
+    } else {
+      // Normal dealing - just draw 6 cards from top
+      for (let i = 0; i < 6; i++) {
+        if (deck.length > 0) {
+          hand.push(deck.shift()!)
+        }
       }
     }
 

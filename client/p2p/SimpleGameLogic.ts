@@ -668,6 +668,10 @@ export function applyAction(
       newState = GameSettingsHandlers.handleSetStrictRules(newState, data?.enabled)
       break
 
+    case 'SET_STARTING_HERO':
+      newState = GameSettingsHandlers.handleSetStartingHero(newState, data?.enabled)
+      break
+
     case 'REORDER_CARDS':
       newState = handleReorderCards(newState, playerId, data)
       break
@@ -715,7 +719,7 @@ function canPlayerAct(
     return ['PLAYER_READY', 'CHANGE_PLAYER_NAME', 'CHANGE_PLAYER_COLOR',
             'CHANGE_PLAYER_DECK', 'LOAD_CUSTOM_DECK', 'SET_GAME_MODE', 'SET_GRID_SIZE',
             'SET_PRIVACY', 'ASSIGN_TEAMS', 'SET_DUMMY_PLAYER_COUNT', 'SET_STRICT_RULES',
-            'ANNOUNCE_CARD', 'RESET_GAME'].includes(action)
+            'SET_STARTING_HERO', 'ANNOUNCE_CARD', 'RESET_GAME'].includes(action)
   }
 
   // RESET_GAME can always be performed (for restarting game)
