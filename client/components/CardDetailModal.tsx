@@ -121,6 +121,31 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({ card, ownerPla
                 </div>
               </div>
 
+              {/* Cost, Loyalty & Discipline */}
+              <div className="flex gap-vu-md">
+                {(displayCard.cost ?? 2) > 0 && (
+                  <div className="flex-1 bg-blue-900 bg-opacity-30 p-vu-md rounded-vu-2 border border-blue-600">
+                    <div className="text-center text-vu-16 font-bold text-white">
+                      Cost: {displayCard.cost ?? 2}
+                    </div>
+                  </div>
+                )}
+                {(displayCard.loyalty ?? 2) > 0 && (
+                  <div className="flex-1 bg-purple-900 bg-opacity-30 p-vu-md rounded-vu-2 border border-purple-600">
+                    <div className="text-center text-vu-16 font-bold text-white">
+                      Loyalty: {displayCard.loyalty ?? 2}
+                    </div>
+                  </div>
+                )}
+                {(displayCard.discipline ?? 2) > 0 && (
+                  <div className="flex-1 bg-red-900 bg-opacity-30 p-vu-md rounded-vu-2 border border-red-600">
+                    <div className="text-center text-vu-16 font-bold text-white">
+                      Discipline: {displayCard.discipline ?? 2}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Owner Info */}
               {ownerPlayer && (
                 <div className="bg-gray-900 p-vu-lg rounded-vu-2 text-vu-14">

@@ -355,6 +355,16 @@ export const sr: TranslationResource = {
     gl_cards: 'karte',
     movedToDiscard: 'premestila se u bačene',
     gl_inHand: 'u ruci',
+    // Faction selection for deck building
+    faction1: 'Frakcija',
+    faction2: 'Koalicija',
+    faction1Required: 'Frakcija',
+    faction2Optional: 'Koalicija',
+    selectFaction: 'Odaberite frakciju...',
+    noSecondFaction: 'Bez koalicije',
+    cardNotAvailable: 'Nedostupno',
+    selectFaction1First: 'Molim vas, prvo odaberite Frakciju pre dodavanja karata u špil.',
+    cardFactionNotSelected: 'Ova kartica pripada frakciji {faction} koja nije odabrana. Možete dodati samo karte iz Frakcije, Koalicije, neutralne i komandne karte.',
   },
   rules: {
     title: 'Pravila igre "New Avalon: Skirmish"',

@@ -330,6 +330,16 @@ const enUI = {
   gl_cards: 'cards',
   movedToDiscard: 'moved to discard',
   gl_inHand: 'in hand',
+  // Faction selection for deck building
+  faction1: 'Faction',
+  faction2: 'Coalition',
+  faction1Required: 'Faction',
+  faction2Optional: 'Coalition',
+  selectFaction: 'Select faction...',
+  noSecondFaction: 'No coalition',
+  cardNotAvailable: 'Not available',
+  selectFaction1First: 'Please select Faction 1 first before adding cards to your deck.',
+  cardFactionNotSelected: 'This card belongs to {faction} faction which is not selected. You can only add cards from Faction 1, Faction 2, Neutral, and Command cards.',
 }
 
 const enRules = {

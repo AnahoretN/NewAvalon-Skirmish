@@ -263,6 +263,16 @@ const ukUI = {
   guestConnected: 'Гість підключився',
   mulligan: 'Перебірка',
   confirmHand: 'Підтвердити руку',
+  // Faction selection for deck building
+  faction1: 'Фракція',
+  faction2: 'Коаліція',
+  faction1Required: 'Фракція',
+  faction2Optional: 'Коаліція',
+  selectFaction: 'Виберіть фракцію...',
+  noSecondFaction: 'Без коаліції',
+  cardNotAvailable: 'Недоступно',
+  selectFaction1First: 'Буд ласка, виберіть Фракцію перед додаванням карт у колоду.',
+  cardFactionNotSelected: 'Ця карта належить до фракції {faction}, яка не вибрана. Ви можете додавати лише карти з Фракції, Коаліції, нейтральні та командні карти.',
 }
 
 const ukRules = {

@@ -34,7 +34,7 @@ export type SpecialItemType = 'counter';
 /**
  * Defines the available player colors.
  */
-export type PlayerColor = 'blue' | 'purple' | 'red' | 'green' | 'yellow' | 'orange' | 'pink' | 'brown';
+export type PlayerColor = 'blue' | 'purple' | 'red' | 'green' | 'yellow' | 'orange' | 'pink' | 'brown' | 'cyan';
 
 /**
  * Represents a single status effect applied to a card.
@@ -84,6 +84,10 @@ export interface Card {
   allowedPanels?: string[]; // Controls visibility in UI panels (e.g. 'DECK_BUILDER', 'TOKEN_PANEL')
   enteredThisTurn?: boolean; // True if the card entered the battlefield during the current turn
   isPlaceholder?: boolean; // True if this is a placeholder card (for WebRTC optimization)
+  // Deck building constraints
+  cost?: number; // Cost value for deck building (default: 2)
+  loyalty?: number; // Loyalty value for deck building (default: 2)
+  discipline?: number; // Discipline value for deck building (default: 2)
   // For command cards: the selected option index (1-based) when player chooses an option
   selectedOption?: number;
   // ABILITIES array from contentDatabase.json (used for both units and command cards)

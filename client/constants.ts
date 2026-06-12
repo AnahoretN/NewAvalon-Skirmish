@@ -54,6 +54,7 @@ export const PLAYER_COLORS: { [key in PlayerColor]: { bg: string, border: string
   orange: { bg: 'bg-orange-500', border: 'border-orange-500', outline: 'outline-orange-500', glow: 'shadow-[0_0_15px_#f97316]' },
   pink: { bg: 'bg-pink-500', border: 'border-pink-500', outline: 'outline-pink-500', glow: 'shadow-[0_0_15px_#ec4899]' },
   brown: { bg: 'bg-[#8B4513]', border: 'border-[#8B4513]', outline: 'outline-[#8B4513]', glow: 'shadow-[0_0_15px_#8B4513]' },
+  cyan: { bg: 'bg-cyan-400', border: 'border-cyan-400', outline: 'outline-cyan-400', glow: 'shadow-[0_0_15px_#22d3ee]' }, // Light blue for Neutral faction in Deck Builder
 }
 
 /**
@@ -68,6 +69,7 @@ export const PLAYER_COLOR_RGB: Record<PlayerColor, { r: number; g: number; b: nu
   orange: { r: 249, g: 115, b: 22 },
   pink: { r: 236, g: 72, b: 153 },
   brown: { r: 139, g: 69, b: 19 },
+  cyan: { r: 34, g: 211, b: 238 },
 }
 
 /**
@@ -82,12 +84,32 @@ export const FLOATING_TEXT_COLORS: Record<string, string> = {
   orange: 'text-orange-400 drop-shadow-[0_0_4px_rgba(249,115,22,0.8)]',
   pink: 'text-pink-400 drop-shadow-[0_0_4px_rgba(236,72,153,0.8)]',
   brown: 'text-[#A0522D] drop-shadow-[0_0_4px_rgba(139,69,19,0.8)]',
+  cyan: 'text-cyan-400 drop-shadow-[0_0_4px_rgba(34,211,238,0.8)]',
+}
+
+/**
+ * Faction colors for power circles in DeckBuilderModal.
+ * Maps faction names to PlayerColor values for consistent styling.
+ */
+export const FACTION_COLORS: Record<string, PlayerColor> = {
+  SynchroTech: 'blue',    // cyan cards → blue power circles
+  Hoods: 'purple',        // purple cards → purple power circles
+  Optimates: 'red',       // red cards → red power circles
+  Fusion: 'green',        // green cards → green power circles
+  Neutral: 'cyan',        // gray cards → cyan (light blue) power circles
+  Command: 'yellow',      // yellow command cards → yellow power circles
 }
 
 /**
  * An array of all available player color names in the specific UI order requested.
+ * Note: 'cyan' is NOT included as it's for deck builder use only.
  */
 export const PLAYER_COLOR_NAMES: PlayerColor[] = ['blue', 'purple', 'red', 'green', 'yellow', 'orange', 'pink', 'brown']
+
+/**
+ * Selectable player colors for the UI color picker (excludes cyan).
+ */
+export const SELECTABLE_PLAYER_COLORS: PlayerColor[] = ['blue', 'purple', 'red', 'green', 'yellow', 'orange', 'pink', 'brown']
 
 /**
  * The sequence of phases in a player's turn.

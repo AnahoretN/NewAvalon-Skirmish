@@ -6,7 +6,7 @@
  */
 
 import type { PlayerColor } from '../types'
-import { PLAYER_COLOR_NAMES } from '../constants'
+import { SELECTABLE_PLAYER_COLORS } from '../constants'
 
 /**
  * ColorAssigner class for managing unique color assignments
@@ -39,7 +39,7 @@ export class ColorAssigner {
    * Get all available (unused) colors
    */
   getAvailableColors(): PlayerColor[] {
-    return PLAYER_COLOR_NAMES.filter(c => !this.usedColors.has(c))
+    return SELECTABLE_PLAYER_COLORS.filter(c => !this.usedColors.has(c))
   }
 
   /**
@@ -85,7 +85,7 @@ export class ColorAssigner {
  * Returns a random color from all available colors
  */
 export function getRandomHostColor(): PlayerColor {
-  const colors = PLAYER_COLOR_NAMES
+  const colors = SELECTABLE_PLAYER_COLORS
   const randomIndex = Math.floor(Math.random() * colors.length)
   return colors[randomIndex]
 }
@@ -98,12 +98,12 @@ export function assignUniqueRandomColor(existingColors: (PlayerColor | undefined
   const used = new Set(existingColors.filter((c): c is PlayerColor => c !== undefined))
 
   // Get all available colors
-  const available = PLAYER_COLOR_NAMES.filter(c => !used.has(c))
+  const available = SELECTABLE_PLAYER_COLORS.filter(c => !used.has(c))
 
   // If all colors are used, cycle back to first available
   // (shouldn't happen with MAX_PLAYERS=4 and 8 colors)
   if (available.length === 0) {
-    return PLAYER_COLOR_NAMES[0]
+    return SELECTABLE_PLAYER_COLORS[0]
   }
 
   const randomIndex = Math.floor(Math.random() * available.length)

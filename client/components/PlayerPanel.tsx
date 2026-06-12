@@ -61,7 +61,7 @@
 import React, { memo, useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import { DeckType as DeckTypeEnum } from '@/types'
 import type { Player, PlayerColor, Card as CardType, DragItem, DropTarget, CustomDeckFile, ContextMenuParams, CursorStackState, TargetingModeData } from '@/types'
-import { PLAYER_COLORS, GAME_ICONS } from '@/constants'
+import { PLAYER_COLORS, GAME_ICONS, SELECTABLE_PLAYER_COLORS } from '@/constants'
 import { deckFiles } from '@/content'
 import { Card as CardComponent } from './Card'
 import { CardTooltipContent } from './Tooltip'
@@ -182,8 +182,7 @@ const ColorPicker: React.FC<{ player: Player, canEditSettings: boolean, selected
 
       {isOpen && (
         <div className="absolute top-full left-0 mt-vu-md p-vu-md bg-gray-800 border border-gray-600 rounded-vu-2 shadow-xl z-50 grid grid-cols-4 gap-vu-md w-max animate-fade-in">
-          {Object.keys(PLAYER_COLORS).map((colorKey) => {
-            const color = colorKey as PlayerColor
+          {SELECTABLE_PLAYER_COLORS.map((color) => {
             const isTaken = selectedColors.has(color) && player.color !== color
             const isCurrent = player.color === color
 

@@ -263,6 +263,16 @@ const beUI = {
   guestConnected: 'Госць падключыўся',
   mulligan: 'Пераборка',
   confirmHand: 'Пацвердзіць руку',
+  // Faction selection for deck building
+  faction1: 'Фракцыя',
+  faction2: 'Кааліцыя',
+  faction1Required: 'Фракцыя',
+  faction2Optional: 'Кааліцыя',
+  selectFaction: 'Абярыце фракцыю...',
+  noSecondFaction: 'Без кааліцыі',
+  cardNotAvailable: 'Нядаступна',
+  selectFaction1First: 'Калі ласка, абярыце Фракцыю перад дадаваннем карт у калоду.',
+  cardFactionNotSelected: 'Гэта карта належыць да фракцыі {faction}, якая не абрана. Вы можаце дадаваць толькі карты з Фракцыі, Кааліцыі, нейтральныя і камандныя карты.',
 }
 
 const beRules = {

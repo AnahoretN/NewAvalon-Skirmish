@@ -355,6 +355,16 @@ export const ru: TranslationResource = {
     gl_showcase: 'витрина',
     token: 'жетон',
     target: 'цель',
+    // Faction selection for deck building
+    faction1: 'Фракция',
+    faction2: 'Коалиция',
+    faction1Required: 'Фракция',
+    faction2Optional: 'Коалиция',
+    selectFaction: 'Выберите фракцию...',
+    noSecondFaction: 'Без коалиции',
+    cardNotAvailable: 'Недоступно',
+    selectFaction1First: 'Пожалуйста, выберите Фракцию перед добавлением карт в колоду.',
+    cardFactionNotSelected: 'Эта карта принадлежит фракции {faction}, которая не выбрана. Вы можете добавлять только карты из Фракции, Коалиции, нейтральные и команды.',
   },
   rules: {
     title: 'Правила Игры "New Avalon: Skirmish"',

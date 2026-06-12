@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { DeckType } from '@/types'
-import type { CustomDeckFile, Player, Card } from '@/types'
+import type { CustomDeckFile, Player, Card, PlayerColor } from '@/types'
 import { getAllCards, getSelectableDecks, getCardDefinition, commandCardIds, getCardDatabaseMap } from '@/content'
 import { Card as CardComponent } from './Card'
 import { useLanguage } from '@/contexts/LanguageContext'
-import { parseTextDeckFormat, exportToTextDeckFormat, MAX_DECK_SIZE } from '@/utils/textDeckFormat'
+import { parseTextDeckFormat, exportToTextDeckFormat } from '@/utils/textDeckFormat'
+import { FACTION_COLORS } from '@/constants'
 
 interface DeckBuilderModalProps {
   isOpen: boolean;
@@ -13,8 +14,53 @@ interface DeckBuilderModalProps {
   imageRefreshVersion?: number;
 }
 
+// Faction resource limits configuration
+const FACTION_RESOURCE_LIMITS: Record<string, { cost: number; loyalty: number; discipline: number }> = {
+  'SynchroTech': { cost: 46, loyalty: 26, discipline: 33 },
+  'Hoods': { cost: 24, loyalty: 55, discipline: 26 },
+  'Optimates': { cost: 32, loyalty: 26, discipline: 47 },
+  'Fusion': { cost: 19, loyalty: 48, discipline: 38 },
+}
+
 export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onClose, setViewingCard, imageRefreshVersion }) => {
   const { getCardTranslation, t } = useLanguage()
+
+  // Faction selection state
+  const [selectedFaction1, setSelectedFaction1] = useState<string>('')
+  const [selectedFaction2, setSelectedFaction2] = useState<string>('')
+
+  // Calculate dynamic resource limits based on selected factions
+  const resourceLimits = useMemo(() => {
+    if (!selectedFaction1) {
+      return { cost: 0, loyalty: 0, discipline: 0 }
+    }
+
+    const faction1Limits = FACTION_RESOURCE_LIMITS[selectedFaction1]
+    if (!faction1Limits) {
+      return { cost: 0, loyalty: 0, discipline: 0 }
+    }
+
+    // If only Faction 1 is selected, use its limits directly
+    if (!selectedFaction2) {
+      return faction1Limits
+    }
+
+    // If both factions are selected, calculate average and subtract 2 from each
+    const faction2Limits = FACTION_RESOURCE_LIMITS[selectedFaction2]
+    if (!faction2Limits) {
+      return faction1Limits
+    }
+
+    return {
+      cost: Math.ceil((faction1Limits.cost + faction2Limits.cost) / 2) - 2,
+      loyalty: Math.ceil((faction1Limits.loyalty + faction2Limits.loyalty) / 2) - 2,
+      discipline: Math.ceil((faction1Limits.discipline + faction2Limits.discipline) / 2) - 2,
+    }
+  }, [selectedFaction1, selectedFaction2])
+
+  const MAX_COST = resourceLimits.cost
+  const MAX_LOYALTY = resourceLimits.loyalty
+  const MAX_DISCIPLINE = resourceLimits.discipline
 
   // Get cards dynamically - they will be loaded from server
   // Use cardDatabase size as dependency to trigger re-render when data is loaded
@@ -54,6 +100,12 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
   const textFileInputRef = useRef<HTMLInputElement>(null)
   const typeDropdownRef = useRef<HTMLDivElement>(null)
 
+  // Get faction color for power circles based on card faction
+  const getFactionColor = (faction?: string): PlayerColor | undefined => {
+    if (!faction) return undefined
+    return FACTION_COLORS[faction] || FACTION_COLORS['Neutral']
+  }
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (typeDropdownRef.current && !typeDropdownRef.current.contains(event.target as Node)) {
@@ -69,6 +121,46 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
     allCards.forEach(({ card }) => card.types?.forEach(t => types.add(t)))
     return Array.from(types).sort()
   }, [allCards])
+
+  // Check if card can be added based on selected factions
+  const isCardAddable = (cardId: string, cardFaction?: string) => {
+    // Block ALL cards if Faction 1 is not selected
+    if (!selectedFaction1) {
+      return false
+    }
+
+    const isCommand = commandCardIds.has(cardId)
+    const isNeutral = cardFaction === 'Neutral'
+    const isFaction1 = selectedFaction1 && cardFaction === selectedFaction1
+    const isFaction2 = selectedFaction2 && cardFaction === selectedFaction2
+
+    return isFaction1 || isFaction2 || isNeutral || isCommand
+  }
+
+  // Remove cards from deck when faction selection changes
+  useEffect(() => {
+    if (currentDeck.size === 0) return
+
+    const newDeck = new Map<string, number>()
+    let removedAny = false
+
+    currentDeck.forEach((qty, cardId) => {
+      const cardDef = getCardDefinition(cardId)
+      if (!cardDef) return
+
+      // Check if card is still addable with current faction selection
+      if (isCardAddable(cardId, cardDef.faction)) {
+        newDeck.set(cardId, qty)
+      } else {
+        removedAny = true
+      }
+    })
+
+    // If any cards were removed due to faction incompatibility, update the deck
+    if (removedAny) {
+      setCurrentDeck(newDeck)
+    }
+  }, [selectedFaction1, selectedFaction2])
 
   const filteredCards = useMemo(() => {
     const cards = allCards
@@ -99,6 +191,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
         }
       }
 
+      // Faction filter for visibility
       if (selectedFactionFilter !== 'All') {
         if (selectedFactionFilter === 'Command') {
           return commandCardIds.has(id) || card.types?.includes('Command')
@@ -121,13 +214,57 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
     return total
   }, [currentDeck])
 
+  const { totalCost, totalLoyalty, totalDiscipline } = useMemo(() => {
+    let cost = 0
+    let loyalty = 0
+    let discipline = 0
+    currentDeck.forEach((qty, cardId) => {
+      const cardDef = getCardDefinition(cardId)
+      if (cardDef) {
+        cost += (cardDef.cost ?? 2) * qty
+        loyalty += (cardDef.loyalty ?? 2) * qty
+        discipline += (cardDef.discipline ?? 2) * qty
+      }
+    })
+    return { totalCost: cost, totalLoyalty: loyalty, totalDiscipline: discipline }
+  }, [currentDeck])
+
   const handleAddCard = (cardId: string) => {
-    if (totalCards >= MAX_DECK_SIZE) {
-      alert(`Deck cannot exceed ${MAX_DECK_SIZE} cards.`)
+    const cardDef = getCardDefinition(cardId)
+    if (!cardDef) return
+
+    // Check if card can be added based on selected factions
+    if (!isCardAddable(cardId, cardDef.faction)) {
+      const factionName = selectableFactions.find(f => f.id === cardDef.faction)?.name || cardDef.faction
+      if (!selectedFaction1) {
+        alert(t('selectFaction1First'))
+      } else {
+        alert(t('cardFactionNotSelected').replace('{faction}', factionName))
+      }
       return
     }
 
-    const cardDef = getCardDefinition(cardId)
+    // Check cost limit
+    const cardCost = cardDef?.cost ?? 2
+    if (totalCost + cardCost > MAX_COST) {
+      alert(`Adding this card would exceed Cost limit (${MAX_COST}).`)
+      return
+    }
+
+    // Check loyalty limit
+    const cardLoyalty = cardDef?.loyalty ?? 2
+    if (totalLoyalty + cardLoyalty > MAX_LOYALTY) {
+      alert(`Adding this card would exceed Loyalty limit (${MAX_LOYALTY}).`)
+      return
+    }
+
+    // Check discipline limit
+    const cardDiscipline = cardDef?.discipline ?? 2
+    if (totalDiscipline + cardDiscipline > MAX_DISCIPLINE) {
+      alert(`Adding this card would exceed Discipline limit (${MAX_DISCIPLINE}).`)
+      return
+    }
+
     const isHero = cardDef?.types?.includes('Hero')
     const isRarity = cardDef?.types?.includes('Rarity')
     const isCommand = commandCardIds.has(cardId) || cardDef?.types?.includes('Command')
@@ -309,7 +446,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-gray-400 text-sm font-bold">Pow:</span>
+                <span className="text-gray-400 text-sm font-bold">Power:</span>
                 <div className="flex items-center bg-gray-700 rounded border border-gray-600 overflow-hidden">
                   <button
                     onClick={() => handlePowerChange(-1)}
@@ -318,7 +455,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                                    -
                   </button>
                   <div className="w-8 text-center text-sm font-bold text-white select-none">
-                    {powerFilter === '' ? '-' : powerFilter}
+                    {powerFilter === '' ? '*' : powerFilter}
                   </div>
                   <button
                     onClick={() => handlePowerChange(1)}
@@ -411,11 +548,14 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                     ownerId: 0,
                   }
 
+                  const factionColor = getFactionColor(card.faction)
+                  const canAdd = isCardAddable(id, card.faction)
+
                   return (
                     <div
                       key={id}
-                      className="relative group cursor-pointer"
-                      onClick={() => handleAddCard(id)}
+                      className={`relative group ${canAdd ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'}`}
+                      onClick={() => canAdd && handleAddCard(id)}
                       onContextMenu={(e) => {
                         e.preventDefault()
                         setViewingCard({ card: displayCard })
@@ -426,12 +566,14 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                           card={displayCard}
                           isFaceUp={true}
                           playerColorMap={new Map()}
+                          playerColor={factionColor}
                           extraPowerSpacing={true}
+                          showDeckBuilderBadges={true}
                           imageRefreshVersion={imageRefreshVersion}
                         />
                       </div>
                       <div className="absolute bottom-0 left-0 right-0 bg-black/80 text-white text-[10px] text-center py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none truncate px-1">
-                        {t('clickToAdd')}
+                        {canAdd ? t('clickToAdd') : t('cardNotAvailable')}
                       </div>
                     </div>
                   )
@@ -446,11 +588,60 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
           </div>
 
           <div className="w-80 md:w-96 bg-gray-800 flex flex-col border-l border-gray-700 flex-shrink-0">
-            <div className="p-4 bg-gray-800 border-b border-gray-600">
-              <h3 className="text-xl font-bold text-white">{t('currentDeck')}</h3>
-              <p className={`text-sm font-bold mt-1 ${totalCards > MAX_DECK_SIZE ? 'text-red-500' : 'text-indigo-400'}`}>
-                {totalCards} / {MAX_DECK_SIZE} Cards
-              </p>
+            <div className="pt-4 px-4 pb-3 bg-gray-800 border-b border-gray-600">
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-gray-400 mb-1">{t('faction1Required')}</label>
+                  <select
+                    value={selectedFaction1}
+                    onChange={(e) => setSelectedFaction1(e.target.value)}
+                    className="w-full bg-gray-700 text-white border border-gray-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="">{t('selectFaction')}</option>
+                    {selectableFactions.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-bold text-gray-400 mb-1">{t('faction2Optional')}</label>
+                  <select
+                    value={selectedFaction2}
+                    onChange={(e) => setSelectedFaction2(e.target.value)}
+                    disabled={!selectedFaction1}
+                    className="w-full bg-gray-700 text-white border border-gray-600 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">{t('noSecondFaction')}</option>
+                    {selectableFactions.filter(f => f.id !== selectedFaction1).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-gray-600">
+                <p className="text-sm font-bold text-indigo-400">
+                  {totalCards} Cards
+                </p>
+                <div className="flex gap-1 mt-[5px]">
+                  <div style={{ height: 'calc(30 * var(--vu-base))' }} className={`flex-1 text-center text-xs font-bold px-1 flex items-center justify-center rounded ${
+                    MAX_COST === 0 ? 'bg-gray-800 text-gray-500' :
+                    totalCost > MAX_COST ? 'bg-red-900 text-red-400' : 'bg-blue-900 bg-opacity-50 text-blue-300'
+                  }`}>
+                    Cost: {totalCost} / {MAX_COST || 0}
+                  </div>
+                  <div style={{ height: 'calc(30 * var(--vu-base))' }} className={`flex-1 text-center text-xs font-bold px-1 flex items-center justify-center rounded ${
+                    MAX_LOYALTY === 0 ? 'bg-gray-800 text-gray-500' :
+                    totalLoyalty > MAX_LOYALTY ? 'bg-red-900 text-red-400' : 'bg-purple-900 bg-opacity-50 text-purple-300'
+                  }`}>
+                    Loyalty: {totalLoyalty} / {MAX_LOYALTY || 0}
+                  </div>
+                  <div style={{ height: 'calc(30 * var(--vu-base))' }} className={`flex-1 text-center text-xs font-bold px-1 flex items-center justify-center rounded ${
+                    MAX_DISCIPLINE === 0 ? 'bg-gray-800 text-gray-500' :
+                    totalDiscipline > MAX_DISCIPLINE ? 'bg-red-900 text-red-400' : 'bg-red-900 bg-opacity-50 text-red-300'
+                  }`}>
+                    Discipline: {totalDiscipline} / {MAX_DISCIPLINE || 0}
+                  </div>
+                </div>
+                {!selectedFaction1 && (
+                  <p className="text-xs text-gray-500 mt-1 italic">{t('selectFaction1First') || 'Select Faction 1 to enable deck building'}</p>
+                )}
+              </div>
             </div>
             <div className="flex-grow overflow-y-auto p-2 space-y-2">
               {currentDeck.size === 0 && (
@@ -481,6 +672,8 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                 const limit = (isHero || isRarity) ? 1 : (isCommand ? 2 : 3)
                 const limitTitle = (isHero || isRarity) ? 'Max 1 (Rarity/Hero)' : (isCommand ? 'Max 2 (Command)' : 'Max 3')
 
+                const factionColor = getFactionColor(cardDef.faction)
+
                 return (
                   <div key={cardId} className="flex items-center bg-gray-700 rounded p-2 group hover:bg-gray-600 transition-colors select-none">
                     <div
@@ -490,11 +683,26 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                         setViewingCard({ card: displayCard })
                       }}
                     >
-                      <CardComponent card={displayCard} isFaceUp={true} playerColorMap={new Map()} hidePower={true} imageRefreshVersion={imageRefreshVersion} />
+                      <CardComponent card={displayCard} isFaceUp={true} playerColorMap={new Map()} playerColor={factionColor} hidePower={true} showDeckBuilderBadges={false} imageRefreshVersion={imageRefreshVersion} />
                     </div>
                     <div className="flex-grow min-w-0">
                       <div className="font-bold text-sm text-white truncate">{displayName}</div>
-                      <div className="text-xs text-gray-400 truncate">{cardDef.faction} {(isHero || isRarity) ? '(Hero/Rarity)' : ''}</div>
+                      <div className="text-xs whitespace-nowrap leading-none tracking-[0.1vu]">
+                        {(cardDef.cost ?? 2) > 0 && <span className="text-blue-400 font-bold align-baseline">{cardDef.cost ?? 2}</span>}
+                        {(cardDef.cost ?? 2) > 0 && ((cardDef.loyalty ?? 2) > 0 || (cardDef.discipline ?? 2) > 0) && <span className="text-white font-bold align-baseline"> / </span>}
+                        {(cardDef.loyalty ?? 2) > 0 && <span className="text-purple-400 font-bold align-baseline">{cardDef.loyalty ?? 2}</span>}
+                        {(cardDef.loyalty ?? 2) > 0 && (cardDef.discipline ?? 2) > 0 && <span className="text-white font-bold align-baseline"> / </span>}
+                        {(cardDef.discipline ?? 2) > 0 && <span className="text-red-400 font-bold align-baseline">{cardDef.discipline ?? 2}</span>}
+                        {(cardDef.cost ?? 2) > 0 || (cardDef.loyalty ?? 2) > 0 || (cardDef.discipline ?? 2) > 0 ? <span className="mx-1 text-gray-400 align-baseline">|</span> : null}
+                        {cardDef.types?.map((type, i) => {
+                          const isSpecial = type === 'Hero' || type === 'Rarity'
+                          return (
+                            <span key={type} className={`${isSpecial ? 'text-yellow-400' : 'text-gray-400'} align-baseline`}>
+                              {type}{i < cardDef.types.length - 1 ? ', ' : ''}
+                            </span>
+                          )
+                        }) || null}
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 ml-2">
                       <button

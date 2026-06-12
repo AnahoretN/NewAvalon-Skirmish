@@ -12,7 +12,7 @@
 
 import { DeckType, GameMode as GameModeEnum } from '@/types'
 import type { Card, Player, GameState } from '@/types'
-import { PLAYER_COLOR_NAMES } from '@/constants'
+import { SELECTABLE_PLAYER_COLORS } from '@/constants'
 import { getDecksData } from '@/content'
 import { shuffleDeck } from '@shared/utils/array'
 import { createInitialBoard } from '@shared/utils/boardUtils'
@@ -101,7 +101,7 @@ export function createNewPlayer(id: number, isDummy = false): Player {
       discard: [],
       announcedCard: null,
       selectedDeck: 'Damanaki' as DeckType,
-      color: PLAYER_COLOR_NAMES[id - 1] || 'blue',
+      color: SELECTABLE_PLAYER_COLORS[id - 1] || 'blue',
       isDummy,
       isReady: isDummy, // Dummy players are always ready
       boardHistory: [],
@@ -119,7 +119,7 @@ export function createNewPlayer(id: number, isDummy = false): Player {
     discard: [],
     announcedCard: null,
     selectedDeck: initialDeckType,
-    color: PLAYER_COLOR_NAMES[id - 1] || 'blue',
+    color: SELECTABLE_PLAYER_COLORS[id - 1] || 'blue',
     isDummy,
     isReady: isDummy, // Dummy players are always ready
     boardHistory: [],

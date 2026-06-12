@@ -29,6 +29,7 @@ interface CardCoreProps {
   playerColor?: PlayerColor; // Direct player color (used in PlayerPanel to avoid lookup issues)
   showCommandPlayButton?: boolean; // Show Play button for command cards (only for local player's hand)
   smallPowerDisplay?: boolean; // Use smaller power circle and font (for right panel opponents)
+  showDeckBuilderBadges?: boolean; // Show Cost (blue) and Loyalty (purple) badges in deck builder
 }
 
 interface CardInteractionProps {
@@ -188,6 +189,7 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
   playerColor, // Direct player color (used in PlayerPanel to avoid lookup issues)
   showCommandPlayButton = false, // Only show Play button for local player's hand
   smallPowerDisplay = false, // Use smaller power display (for right panel)
+  showDeckBuilderBadges = false, // Show Cost/Loyalty badges in deck builder
   preserveDeployAbilities: _preserveDeployAbilities = false, // Used in arePropsEqual comparison
   activeAbilitySourceCoords = null,
   boardCoords = null,
@@ -685,7 +687,7 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
     )
   }
 
-  const powerPositionClass = extraPowerSpacing ? 'bottom-vu-md right-vu-md' : 'bottom-vu-min right-vu-min'
+  const powerPositionClass = 'bottom-[3%] right-[3%]'
 
   return (
     <>
@@ -858,6 +860,27 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
                 </div>
               )}
 
+              {/* Deck Builder Badges: Cost (blue), Loyalty (purple), Discipline (red) */}
+              {showDeckBuilderBadges && isFaceUp && (
+                <div className="absolute top-1 left-1 flex flex-row gap-1 z-10 pointer-events-none">
+                  {(card.cost ?? 2) > 0 && (
+                    <div className="bg-blue-600 border border-blue-400 rounded w-6 h-6 flex items-center justify-center shadow-md" title={`Cost: ${card.cost ?? 2}`}>
+                      <span className="text-white font-black text-xs" style={{ textShadow: '0 0 2px black' }}>{card.cost ?? 2}</span>
+                    </div>
+                  )}
+                  {(card.loyalty ?? 2) > 0 && (
+                    <div className="bg-purple-600 border border-purple-400 rounded w-6 h-6 flex items-center justify-center shadow-md" title={`Loyalty: ${card.loyalty ?? 2}`}>
+                      <span className="text-white font-black text-xs" style={{ textShadow: '0 0 2px black' }}>{card.loyalty ?? 2}</span>
+                    </div>
+                  )}
+                  {(card.discipline ?? 2) > 0 && (
+                    <div className="bg-red-600 border border-red-400 rounded w-6 h-6 flex items-center justify-center shadow-md" title={`Discipline: ${card.discipline ?? 2}`}>
+                      <span className="text-white font-black text-xs" style={{ textShadow: '0 0 2px black' }}>{card.discipline ?? 2}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {uniqueStatusGroups.length > 0 && (
                 <>
                   <div className="absolute top-vu-effect-sm left-vu-effect-sm right-vu-effect-sm flex flex-row-reverse flex-wrap justify-start items-start z-10 pointer-events-none">
@@ -981,6 +1004,9 @@ const arePropsEqual = (prevProps: CardCoreProps & CardInteractionProps, nextProp
     return false
   }
   if (prevProps.showCommandPlayButton !== nextProps.showCommandPlayButton) {
+    return false
+  }
+  if (prevProps.showDeckBuilderBadges !== nextProps.showDeckBuilderBadges) {
     return false
   }
 
