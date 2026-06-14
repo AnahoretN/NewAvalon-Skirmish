@@ -299,6 +299,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   const stateVersionRef = useRef(0)
   // CRITICAL: Track when targetingMode was locally cleared to prevent host from overwriting
   const targetingModeLocallyClearedRef = useRef(false)
+  // CRITICAL: Debounce session save to avoid performance issues on rapid state changes
+  const sessionSaveTimerRef = useRef<number | null>(null)
 
   // Update refs when state changes
   useEffect(() => {
@@ -311,6 +313,42 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   useEffect(() => {
     localPlayerIdRef.current = localPlayerId
   }, [localPlayerId])
+
+  // CRITICAL: Debounced session save to prevent performance issues on rapid state changes
+  // Without debouncing, rapid card placement/removal can crash the browser due to
+  // JSON.parse(JSON.stringify()) being called on every state update
+  const debouncedSaveSession = useCallback(() => {
+    if (sessionSaveTimerRef.current !== null) {
+      clearTimeout(sessionSaveTimerRef.current)
+    }
+    sessionSaveTimerRef.current = window.setTimeout(() => {
+      // Try hostManagerRef first (for normal host), then hostRef (for restored session)
+      let sessionData = null
+      if (hostManagerRef.current) {
+        sessionData = hostManagerRef.current.exportSession()
+      } else if (hostRef.current) {
+        sessionData = hostRef.current.exportSession()
+      }
+
+      if (sessionData) {
+        try {
+          localStorage.setItem('webrtc_host_session', JSON.stringify(sessionData))
+        } catch (e) {
+          console.warn('[SessionSave] Failed to save session:', e)
+        }
+      }
+      sessionSaveTimerRef.current = null
+    }, 500) // 500ms debounce - only save after state settles
+  }, [])
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (sessionSaveTimerRef.current !== null) {
+        clearTimeout(sessionSaveTimerRef.current)
+      }
+    }
+  }, [])
 
   // States for visual effects
   // Note: latestHighlight can be HighlightData (client) or P2P highlight format
@@ -379,14 +417,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
             }))
           }, 0)
 
-          // Auto-save session on state updates
-          const manager = hostManagerRef.current
-          if (manager) {
-            const sessionData = manager.exportSession()
-            if (sessionData) {
-              localStorage.setItem('webrtc_host_session', JSON.stringify(sessionData))
-            }
-          }
+          // Debounced session save to prevent performance issues on rapid state changes
+          debouncedSaveSession()
         },
         onPlayerJoin: (playerId) => {
           // Player joined
@@ -488,14 +520,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
             }))
           }, 0)
 
-          // Auto-save session on state updates
-          const manager = hostManagerRef.current
-          if (manager) {
-            const sessionData = manager.exportSession()
-            if (sessionData) {
-              localStorage.setItem('webrtc_host_session', JSON.stringify(sessionData))
-            }
-          }
+          // Debounced session save to prevent performance issues on rapid state changes
+          debouncedSaveSession()
         },
         onPlayerJoin: (playerId) => {
           // Player joined
@@ -923,11 +949,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
                 setLocalPlayerId(1)
               }, 0)
 
-              // Continue saving session on state updates
-              const sessionData = host.exportSession()
-              if (sessionData) {
-                localStorage.setItem('webrtc_host_session', JSON.stringify(sessionData))
-              }
+              // Debounced session save to prevent performance issues on rapid state changes
+              debouncedSaveSession()
             },
             onPlayerJoin: (playerId) => {
               // Player joined restored session

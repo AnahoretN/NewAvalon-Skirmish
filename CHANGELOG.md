@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.2] - 2026-06-14
 
 ### Fixed
+- **Line Selection Visual Sync (P2P)**: Fixed line selection targeting modes not broadcasting to other players
+  - Affected abilities: Signal Prophet Deploy, Code Keeper Deploy, Unwavering Integrator Setup, Zius Setup, IP Dept Agent Setup
+  - Previously: Line selection highlights were only visible locally, not synchronized across players
+  - Now: All line selection modes properly broadcast targeting mode with board targets to all players
+  - SELECT_LINE_FOR_SUPPORT_COUNTERS, SELECT_LINE_FOR_THREAT_COUNTERS, SELECT_LINE_FOR_EXPLOIT_SCORING now call setTargetingMode
+- **Line Selection Offset Calculation**: Fixed line selection highlights being cut off at edges
+  - Previously: boardTargets were generated from 0 to gridSize-1 without accounting for board offset
+  - Now: boardTargets use full board coordinates with proper offset calculation
+  - This fixes the issue where edge cells in lines were not highlighted for remote players
 - **Starting Hero Mulligan**: Fixed Hero card mulligan when no other Heroes remain in deck
   - Previously: When only one Hero existed in deck, mulligan was blocked
   - Now: Hero card mulligans as normal card when no other Heroes available in deck

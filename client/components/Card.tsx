@@ -43,6 +43,7 @@ interface CardInteractionProps {
   activeAbilitySourceCoords?: { row: number, col: number } | null; // Source of currently active ability
   boardCoords?: { row: number, col: number } | null; // This card's position on board
   abilityCheckKey?: number; // Incremented to recheck ability readiness after ability completion
+  abilityMode?: any; // Current ability mode (for line selection modes)
   onCardClick?: (card: CardType, boardCoords: { row: number, col: number }) => void; // Called when card is clicked
   onCommandPlayClick?: (card: CardType) => void; // Called when command Play button is clicked
   targetingMode?: boolean; // Whether targeting mode is active (hides ready statuses)
@@ -196,6 +197,7 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
   activeAbilitySourceCoords = null,
   boardCoords = null,
   abilityCheckKey,
+  abilityMode,
   onCardClick,
   onCommandPlayClick,
   targetingMode = false,
@@ -560,17 +562,30 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
     // Only card owner can activate abilities, OR anyone can activate dummy player cards
     const canActivateAbility = localPlayerId === card.ownerId || isDummyCard
 
+    // Line selection modes that allow clicking on any card (including opponent cards)
+    const isLineSelectionMode = abilityMode?.mode && (
+      abilityMode.mode === 'SCORE_LAST_PLAYED_LINE' ||
+      abilityMode.mode === 'SELECT_LINE_END' ||
+      abilityMode.mode === 'SELECT_LINE_START' ||
+      abilityMode.mode === 'SELECT_LINE_FOR_EXPLOIT_SCORING' ||
+      abilityMode.mode === 'SELECT_LINE_FOR_SUPPORT_COUNTERS' ||
+      abilityMode.mode === 'SELECT_LINE_FOR_THREAT_COUNTERS' ||
+      abilityMode.mode === 'SELECT_DIAGONAL' ||
+      abilityMode.mode === 'ZIUS_LINE_SELECT' ||
+      abilityMode.mode === 'IP_AGENT_THREAT_SCORING'
+    )
+
     // If card has a ready ability and user clicks it, dismiss highlight and trigger ability
     if (shouldHighlight && canActivateAbility) {
       setHighlightDismissed(true)
     }
     // Call the parent's onCardClick handler if provided
-    // IMPORTANT: During targeting mode, allow clicking on ANY card (for targeting mode)
+    // IMPORTANT: During targeting mode or line selection mode, allow clicking on ANY card
     // Note: Hand cards are handled by the parent component's onClick, not here
-    if (onCardClick && boardCoords && (canActivateAbility || targetingMode)) {
+    if (onCardClick && boardCoords && (canActivateAbility || targetingMode || isLineSelectionMode)) {
       onCardClick(card, boardCoords)
     }
-  }, [shouldHighlight, localPlayerId, card, onCardClick, boardCoords, triggerClickWave, players, targetingMode])
+  }, [shouldHighlight, localPlayerId, card, onCardClick, boardCoords, triggerClickWave, players, targetingMode, abilityMode])
 
   // Aggregate statuses by TYPE and PLAYER ID to allow separate icons for different players.
   // Hidden statuses: readyDeploy, readySetup, readyCommit, deployUsedThisTurn, setupUsedThisTurn, commitUsedThisTurn

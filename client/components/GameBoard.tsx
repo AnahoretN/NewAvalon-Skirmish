@@ -709,6 +709,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
                   activeAbilitySourceCoords={abilitySourceCoords}
                   boardCoords={{ row: row, col: col }}
                   abilityCheckKey={abilityCheckKey}
+                  abilityMode={abilityMode}
                   onCardClick={onCardClick}
                   targetingMode={!!targetingModePlayerId}
                   triggerClickWave={triggerClickWave}

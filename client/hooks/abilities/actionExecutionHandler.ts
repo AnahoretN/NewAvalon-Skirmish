@@ -2206,7 +2206,9 @@ function handleEnterMode(
 
     // CRITICAL: Use getFreshGameState() to get the latest state from host/guest
     const freshState = getFreshGameState()
-    const gridSize = freshState.activeGridSize
+    const boardSize = freshState.board.length
+    const activeGridSize = freshState.activeGridSize || 5
+    const offset = Math.floor((boardSize - activeGridSize) / 2)
 
     // CRITICAL: Get the actual card from sourceCoords to determine correct ownerId
     // This fixes the bug where two dummy players have cards with the same name
@@ -2218,9 +2220,9 @@ function handleEnterMode(
     }
     const ownerId = actualCard.ownerId ?? 0
 
-    // Check for adjacent Support
+    // Check for adjacent Support (using full board coordinates)
     const hasSupport = (r: number, c: number): boolean => {
-      if (r < 0 || r >= gridSize || c < 0 || c >= gridSize) { return false }
+      if (r < 0 || r >= boardSize || c < 0 || c >= boardSize) { return false }
       const cell = freshState.board[r]?.[c]
       if (!cell?.card) { return false }
       return cell.card.statuses?.some((s: any) => s.type === 'Support' && s.addedByPlayerId === ownerId) ?? false
@@ -2239,10 +2241,11 @@ function handleEnterMode(
     }
 
     // Generate valid targets: all cells in the same row or column
+    // CRITICAL: Use full board coordinates with offset
     const boardTargets: { row: number; col: number }[] = []
-    for (let i = 0; i < gridSize; i++) {
-      boardTargets.push({ row: row, col: i }) // Entire row
-      boardTargets.push({ row: i, col: col }) // Entire column
+    for (let i = 0; i < activeGridSize; i++) {
+      boardTargets.push({ row: row, col: offset + i }) // Entire row
+      boardTargets.push({ row: offset + i, col: col }) // Entire column
     }
 
     // Set up targeting mode with custom payload for line selection
@@ -2968,33 +2971,94 @@ function handleEnterMode(
   }
 
   // SELECT_LINE_FOR_SUPPORT_COUNTERS (Signal Prophet Deploy)
-  // CRITICAL: Do NOT call setTargetingMode - line selection modes use abilityMode only!
+  // CRITICAL: MUST call setTargetingMode for P2P broadcast - other players need to see line selection!
   if (mode === 'SELECT_LINE_FOR_SUPPORT_COUNTERS') {
-    setAbilityMode(action)
+    const { row, col } = sourceCoords
+    const boardSize = gameState.board?.length || 7
+    const activeGridSize = gameState.activeGridSize || 5
+    const offset = Math.floor((boardSize - activeGridSize) / 2)
+
+    // Generate valid targets: all cells in the same row or column as source card
+    // CRITICAL: Use full board coordinates with offset, not 0-based active grid coordinates
+    const boardTargets: { row: number; col: number }[] = []
+    for (let i = 0; i < activeGridSize; i++) {
+      boardTargets.push({ row: row, col: offset + i }) // Entire row
+      boardTargets.push({ row: offset + i, col: col }) // Entire column
+    }
+
+    const targetingAction: AbilityAction = {
+      ...action,
+      payload: {
+        ...action.payload,
+        sourceRow: row,
+        sourceCol: col,
+      }
+    }
+
+    setAbilityMode(targetingAction)
+    setTargetingMode(targetingAction, getSafePlayerId(action, localPlayerId), sourceCoords, boardTargets, commandContext)
     return
   }
 
   // SELECT_LINE_FOR_THREAT_COUNTERS (Code Keeper Deploy)
-  // CRITICAL: Do NOT call setTargetingMode - line selection modes use abilityMode only!
+  // CRITICAL: MUST call setTargetingMode for P2P broadcast - other players need to see line selection!
   if (mode === 'SELECT_LINE_FOR_THREAT_COUNTERS') {
-    setAbilityMode(action)
+    const { row, col } = sourceCoords
+    const boardSize = gameState.board?.length || 7
+    const activeGridSize = gameState.activeGridSize || 5
+    const offset = Math.floor((boardSize - activeGridSize) / 2)
+
+    // Generate valid targets: all cells in the same row or column as source card
+    // CRITICAL: Use full board coordinates with offset, not 0-based active grid coordinates
+    const boardTargets: { row: number; col: number }[] = []
+    for (let i = 0; i < activeGridSize; i++) {
+      boardTargets.push({ row: row, col: offset + i }) // Entire row
+      boardTargets.push({ row: offset + i, col: col }) // Entire column
+    }
+
+    const targetingAction: AbilityAction = {
+      ...action,
+      payload: {
+        ...action.payload,
+        sourceRow: row,
+        sourceCol: col,
+      }
+    }
+
+    setAbilityMode(targetingAction)
+    setTargetingMode(targetingAction, getSafePlayerId(action, localPlayerId), sourceCoords, boardTargets, commandContext)
     return
   }
 
   // SELECT_LINE_FOR_EXPLOIT_SCORING (Zius Setup, Unwavering Integrator Setup)
-  // CRITICAL: Do NOT call setTargetingMode - line selection modes use abilityMode only!
+  // CRITICAL: MUST call setTargetingMode for P2P broadcast - other players need to see line selection!
   if (mode === 'SELECT_LINE_FOR_EXPLOIT_SCORING') {
+    const { row, col } = sourceCoords
+    const boardSize = gameState.board?.length || 7
+    const activeGridSize = gameState.activeGridSize || 5
+    const offset = Math.floor((boardSize - activeGridSize) / 2)
+
+    // Generate valid targets: all cells in the same row or column as source card
+    // CRITICAL: Use full board coordinates with offset, not 0-based active grid coordinates
+    const boardTargets: { row: number; col: number }[] = []
+    for (let i = 0; i < activeGridSize; i++) {
+      boardTargets.push({ row: row, col: offset + i }) // Entire row
+      boardTargets.push({ row: offset + i, col: col }) // Entire column
+    }
+
     // CRITICAL: Add sourceRow and sourceCol to payload for line selection handler
     // This fixes Unwavering Integrator line selection not working when clicking empty cells
     const targetingAction: AbilityAction = {
       ...action,
       payload: {
         ...action.payload,
-        sourceRow: sourceCoords.row,
-        sourceCol: sourceCoords.col,
+        sourceRow: row,
+        sourceCol: col,
       }
     }
+
     setAbilityMode(targetingAction)
+    setTargetingMode(targetingAction, getSafePlayerId(action, localPlayerId), sourceCoords, boardTargets, commandContext)
     return
   }
 

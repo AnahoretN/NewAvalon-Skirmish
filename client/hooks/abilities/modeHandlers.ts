@@ -3782,10 +3782,14 @@ function handleLinesWithSupport(
   // Find all cards with Support in lines (horizontal and vertical) from source card
   const { row, col } = sourceCoords || { row: boardCoords.row, col: boardCoords.col }
   const gridSize = gameState.board.length
+  const offset = Math.floor((gridSize - gameState.activeGridSize) / 2)
+  const minBound = offset
+  const maxBound = offset + gameState.activeGridSize - 1
   const validTargets: { row: number; col: number }[] = []
 
   // Check horizontal line (same row)
-  for (let c = 0; c < gridSize; c++) {
+  // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+  for (let c = minBound; c <= maxBound; c++) {
     if (c === col) { continue } // Skip source card itself
     const cell = gameState.board[row][c]
     if (cell.card?.ownerId === ownerId && cell.card.statuses?.some((s: any) => s.type === 'Support')) {
@@ -3794,7 +3798,8 @@ function handleLinesWithSupport(
   }
 
   // Check vertical line (same column)
-  for (let r = 0; r < gridSize; r++) {
+  // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+  for (let r = minBound; r <= maxBound; r++) {
     if (r === row) { continue } // Skip source card itself
     const cell = gameState.board[r][col]
     if (cell.card?.ownerId === ownerId && cell.card.statuses?.some((s: any) => s.type === 'Support')) {
@@ -3873,10 +3878,14 @@ function handleSelectLineForSupportTokens(
   // Determine which line was selected
   const targets: { row: number; col: number }[] = []
   const gridSize = gameState.board.length
+  const offset = Math.floor((gridSize - gameState.activeGridSize) / 2)
+  const minBound = offset
+  const maxBound = offset + gameState.activeGridSize - 1
 
   if (sameRow) {
     // Horizontal line selected - find all ally cards, then check for Support
-    for (let c = 0; c < gridSize; c++) {
+    // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+    for (let c = minBound; c <= maxBound; c++) {
       const cell = gameState.board[clickRow][c]
       if (cell.card?.ownerId === ownerId) {
         // Card belongs to same player - check if it has Support from any player
@@ -3888,7 +3897,8 @@ function handleSelectLineForSupportTokens(
     }
   } else {
     // Vertical line selected - find all ally cards, then check for Support
-    for (let r = 0; r < gridSize; r++) {
+    // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+    for (let r = minBound; r <= maxBound; r++) {
       const cell = gameState.board[r][clickCol]
       if (cell.card?.ownerId === ownerId) {
         // Card belongs to same player - check if it has Support from any player
@@ -3958,10 +3968,14 @@ function handleSelectLineForThreatCounters(
   // Determine which line was selected
   const targets: { row: number; col: number }[] = []
   const gridSize = gameState.board.length
+  const offset = Math.floor((gridSize - gameState.activeGridSize) / 2)
+  const minBound = offset
+  const maxBound = offset + gameState.activeGridSize - 1
 
   if (sameRow) {
     // Horizontal line selected - find all opponent cards, then check for Threat from owner
-    for (let c = 0; c < gridSize; c++) {
+    // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+    for (let c = minBound; c <= maxBound; c++) {
       const cell = gameState.board[clickRow][c]
       // Card belongs to opponent (not same player)
       if (cell.card && cell.card.ownerId !== ownerId) {
@@ -3976,7 +3990,8 @@ function handleSelectLineForThreatCounters(
     }
   } else {
     // Vertical line selected - find all opponent cards, then check for Threat from owner
-    for (let r = 0; r < gridSize; r++) {
+    // CRITICAL: Only iterate through ACTIVE grid bounds, not entire board
+    for (let r = minBound; r <= maxBound; r++) {
       const cell = gameState.board[r][clickCol]
       // Card belongs to opponent (not same player)
       if (cell.card && cell.card.ownerId !== ownerId) {
