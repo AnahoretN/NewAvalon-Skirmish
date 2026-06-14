@@ -544,6 +544,13 @@ export class TrysteroHost {
       }, trysteroId)
     })
 
+    // CRITICAL: Clear _deckViewRequest flag after broadcasting
+    // This prevents the flag from persisting and affecting future state updates
+    if (this.state._deckViewRequest) {
+      // @ts-ignore - temporary flag for deck view request
+      delete this.state._deckViewRequest
+    }
+
     if (this.state.floatingTexts && this.state.floatingTexts.length > 0) {
       this.state = {
         ...this.state,
@@ -568,6 +575,12 @@ export class TrysteroHost {
    */
   private personalizeForPlayer(localPlayerId: number): PersonalizedState {
     const baseState = this.state
+
+    // Check if there's a deck view request
+    // @ts-ignore - temporary flag for deck view request
+    const deckViewRequest = baseState._deckViewRequest as { requestingPlayerId: number; targetPlayerId: number } | undefined
+    const isDeckViewRequest = deckViewRequest &&
+      deckViewRequest.requestingPlayerId === localPlayerId
 
     const visualEffectsObj: Record<string, any> = {}
     if (baseState.visualEffects instanceof Map) {
@@ -597,6 +610,7 @@ export class TrysteroHost {
         const isLocalPlayer = player.id === localPlayerId
         const isDummy = player.isDummy
         const playerBgClass = getColorBgClass(player.color)
+        const isDeckViewTarget = isDeckViewRequest && player.id === deckViewRequest!.targetPlayerId
 
         if (isLocalPlayer || isDummy) {
           return {
@@ -618,6 +632,63 @@ export class TrysteroHost {
             discard: player.discard,
             announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
             boardHistory: player.boardHistory,
+            lastPlayedCardId: player.lastPlayedCardId || null,
+            hasMulliganed: player.hasMulliganed,
+            mulliganAttempts: player.mulliganAttempts,
+            disconnectTimestamp: player.disconnectTimestamp,
+            reconnectionDeadline: player.reconnectionDeadline
+          }
+        }
+
+        // For deck view target - include full deck and discard data but keep hand as placeholder
+        if (isDeckViewTarget) {
+          const placeholderHand = (player.hand || []).map((card: any) => {
+            const isRevealedToMe = card.revealedTo?.includes(localPlayerId) ||
+              (card.statuses || []).some((s: any) => s.type === 'Revealed' && s.ownerId === localPlayerId)
+
+            if (isRevealedToMe) {
+              return { ...card, _isPlaceholder: false }
+            }
+
+            return {
+              _isPlaceholder: true,
+              id: card.id,
+              baseId: card.baseId,
+              ownerId: card.ownerId || player.id,
+              statuses: card.statuses || [],
+              revealedTo: card.revealedTo,
+              deck: '' as const,
+              name: '',
+              power: 0,
+              abilityText: '',
+              types: [],
+              imageUrl: '',
+              fallbackImage: '',
+              color: playerBgClass
+            }
+          })
+
+          return {
+            id: player.id,
+            name: player.name,
+            score: player.score,
+            color: player.color,
+            isDummy: player.isDummy,
+            isDisconnected: player.isDisconnected,
+            isReady: player.isReady,
+            teamId: player.teamId,
+            autoDrawEnabled: player.autoDrawEnabled,
+            isSpectator: player.isSpectator,
+            position: player.position,
+            selectedDeck: player.selectedDeck,
+            hand: placeholderHand,
+            handSize: player.hand?.length || 0,
+            // CRITICAL FIX: Include full deck and discard data for deck view
+            deck: player.deck || [],
+            deckSize: player.deck?.length || 0,
+            discard: player.discard || [],
+            discardSize: player.discard?.length || 0,
+            announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
             lastPlayedCardId: player.lastPlayedCardId || null,
             hasMulliganed: player.hasMulliganed,
             mulliganAttempts: player.mulliganAttempts,
@@ -678,6 +749,11 @@ export class TrysteroHost {
           reconnectionDeadline: player.reconnectionDeadline
         }
       }) as any
+    }
+
+    // Clear the deck view request flag after processing
+    if (deckViewRequest) {
+      delete (result as any)._deckViewRequest
     }
 
     return result as PersonalizedState

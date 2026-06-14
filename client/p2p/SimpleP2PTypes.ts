@@ -117,6 +117,9 @@ export type ActionType =
   // Visual effects
   | 'CLICK_WAVE'
 
+  // Game logging
+  | 'ADD_GAME_LOG_ENTRY'
+
   // Host exit game
   | 'HOST_EXIT_GAME'
 

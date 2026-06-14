@@ -21,7 +21,7 @@ import GameLogModal from './components/GameLogModal'
 import { useGameState } from './hooks/useGameState'
 import { useAppAbilities } from './hooks/useAppAbilities'
 import { useAppCommand } from './hooks/useAppCommand'
-import { useAppCounters } from './hooks/useAppCounters'
+import { useAppCounters, countTokensFromBoard } from './hooks/useAppCounters'
 import { useGameLog, createLogDetails } from './hooks/useGameLog'
 import { initializeVUBasePixels } from './utils/virtualUnits'
 import type {
@@ -353,6 +353,47 @@ const AppInner = function AppInner() {
   // Local state for highlights - synchronized via WebSocket, NOT via gameState
   const [commandContext, setCommandContext] = useState<CommandContext>({})
   const [abilityCheckKey, setAbilityCheckKey] = useState(0)
+
+  // CRITICAL: Use ref to preserve placedTokens across React re-renders
+  // This fixes Overwatch where placedTokens was lost between clicks
+  const commandContextRef = useRef<CommandContext>({})
+
+  // CRITICAL: Wrap setCommandContext to also update ref
+  // CRITICAL: The ref is updated SYNCHRONOUSLY here (line 365), not via useEffect
+  // This ensures useAppCounters can read the current value immediately after update
+  const setCommandContextWithRef = useCallback((value: React.SetStateAction<CommandContext>) => {
+    console.log('[OVERWATCH-DEBUG-APP-FIX-ACTIVE] setCommandContextWithRef INVOKED - fix v2 is active!')
+    setCommandContext(prev => {
+      const updated = typeof value === 'function' ? value(prev) : value
+      commandContextRef.current = updated
+      // CRITICAL: Log all setCommandContext calls to track who's clearing placedTokens
+      console.log('[OVERWATCH-DEBUG-APP] setCommandContextWithRef called:', {
+        prevPlacedTokens: prev.placedTokens,
+        prevPlacedTokensCount: prev.placedTokens?.length || 0,
+        updatedPlacedTokens: updated.placedTokens,
+        updatedPlacedTokensCount: updated.placedTokens?.length || 0,
+        stackTrace: new Error().stack?.split('\n').slice(2, 15).join('\n'),
+      })
+      return updated
+    })
+  }, [])
+
+  // CRITICAL: Log commandContext changes to debug Overwatch placedTokens issue
+  const prevCommandContextRef = useRef<CommandContext>({})
+  useEffect(() => {
+    const prev = prevCommandContextRef.current
+    const current = commandContext
+    console.log('[OVERWATCH-DEBUG-APP] commandContext changed:', {
+      prevPlacedTokens: prev.placedTokens,
+      prevPlacedTokensCount: prev.placedTokens?.length || 0,
+      placedTokens: current.placedTokens,
+      placedTokensCount: current.placedTokens?.length || 0,
+      lastPlacedToken: current.lastPlacedToken,
+      stackTrace: new Error().stack?.split('\n').slice(2, 8).join('\n'),
+    })
+    prevCommandContextRef.current = current
+  }, [commandContext])
+
   const leftPanelRef = useRef<HTMLDivElement>(null)
   const boardContainerRef = useRef<HTMLDivElement>(null)
   const [sidePanelWidth, setSidePanelWidth] = useState<number | undefined>(undefined)
@@ -413,7 +454,7 @@ const AppInner = function AppInner() {
     gameState,
     localPlayerId,
     setActionQueue,
-    setCommandContext,
+    setCommandContext: setCommandContextWithRef, // Use wrapper that also updates ref
     setCommandModalCard,
     setCounterSelectionData,
     moveItem,
@@ -470,10 +511,27 @@ const AppInner = function AppInner() {
         targetPlayer?.name,
         card.name,
         coords,
-        'board'
+        'board',
+        count
       ), ownerId)
     }
   }, [addBoardCardStatus, gameLogHook, gameState, localPlayerId])
+
+  // Wrapper for addHandCardStatus with logging (placing tokens/counters on hand cards)
+  const addHandCardStatusWithLogging = useCallback((playerId: number, cardIndex: number, status: any, addedByPlayerId?: number, count?: number) => {
+    addHandCardStatus(playerId, cardIndex, status, addedByPlayerId)
+    const ownerId = addedByPlayerId ?? localPlayerId ?? 0
+    const player = gameState?.players.find(p => p.id === playerId)
+    const card = player?.hand[cardIndex]
+    if (card) {
+      const actingPlayer = gameState?.players.find(p => p.id === ownerId)
+      gameLogHook.addLogEntry('ADD_STATUS', createLogDetails.addStatus(
+        status,
+        card.name,
+        count
+      ), ownerId)
+    }
+  }, [addHandCardStatus, gameLogHook, gameState, localPlayerId])
 
   // Wrapper for handleCommandConfirm with logging
   const handleCommandConfirmWithLogging = useCallback((optionIndex: number, card: Card) => {
@@ -496,7 +554,7 @@ const AppInner = function AppInner() {
     cursorStack,
     setCursorStack,
     commandContext,
-    setCommandContext,
+    setCommandContext: setCommandContextWithRef, // Use wrapper that also updates ref
     setViewingDiscard,
     triggerNoTarget,
     triggerClickWave,
@@ -658,7 +716,7 @@ const AppInner = function AppInner() {
     markAbilityUsed,
     requestCardReveal,
     interactionLock,
-    setCommandContext, // Passed down for False Orders Step 1 recording
+    setCommandContext: setCommandContextWithRef, // Use wrapper that also updates ref
     onAction: executeAction, // Pass the executor here
     cursorStack,
     setCursorStack,
@@ -669,6 +727,7 @@ const AppInner = function AppInner() {
     setValidHandTargets,
     setTargetingMode,
     abilityMode,
+    commandContextRef, // Pass ref to preserve placedTokens across re-renders
   })
 
   // ============================================================================
@@ -1341,6 +1400,13 @@ const AppInner = function AppInner() {
   useEffect(() => {
     // When playMode goes from non-null to null and there's a pending command card
     if (prevPlayModeRef.current && !playMode && commandContext.pendingCommandCard) {
+      console.log('[OVERWATCH-DEBUG-APP] playMode useEffect - clearing pendingCommandCard', {
+        prevPlayMode: prevPlayModeRef.current,
+        playMode,
+        pendingCommandCard: commandContext.pendingCommandCard,
+        placedTokens: commandContext.placedTokens,
+        lastPlacedToken: commandContext.lastPlacedToken,
+      })
       const { sourceCoords, isDeployAbility, readyStatusToRemove, _autoStepsContext } = commandContext.pendingCommandCard
 
       // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
@@ -1371,13 +1437,20 @@ const AppInner = function AppInner() {
       }
 
       // Clear the pending command card
-      setCommandContext((prev: any) => {
+      // CRITICAL: Use setCommandContextWithRef to ensure ref is updated
+      // CRITICAL: Preserve placedTokens and lastPlacedToken for multi-step commands
+      setCommandContextWithRef((prev: any) => {
         const { pendingCommandCard, ...rest } = prev
+        console.log('[OVERWATCH-DEBUG-APP] playMode useEffect - clearing pendingCommandCard, returning:', {
+          hasPlacedTokens: !!rest.placedTokens,
+          placedTokensCount: rest.placedTokens?.length || 0,
+          hasLastPlacedToken: !!rest.lastPlacedToken,
+        })
         return rest
       })
     }
     prevPlayModeRef.current = playMode
-  }, [playMode, commandContext.pendingCommandCard, markAbilityUsed, setCommandContext, setActionQueue, gameState.players])
+  }, [playMode, markAbilityUsed, setCommandContextWithRef, setActionQueue, gameState.players])
 
   // Handle command card from token panel - open modal when card appears in announced
   const pendingCommandFromTokenPanelRef = useRef<string | null>(null)
@@ -1952,7 +2025,6 @@ const AppInner = function AppInner() {
 
   useEffect(() => {
     if (latestFloatingTexts && latestFloatingTexts.length > 0) {
-      console.log('[App.tsx latestFloatingTexts] Received', latestFloatingTexts.length, 'floating texts from triggerFloatingText:', latestFloatingTexts)
       // Convert P2P format to FloatingTextData format
       const newTexts = latestFloatingTexts.map(ft => {
         const base = {
@@ -1974,13 +2046,11 @@ const AppInner = function AppInner() {
 
       // CRITICAL FIX: Clear previous floating texts before adding new ones
       // This prevents floating texts from multiple scorings from being visible simultaneously
-      console.log('[App.tsx latestFloatingTexts] Setting activeFloatingTexts to', newTexts.length, 'texts (replacing previous)')
       setActiveFloatingTexts(newTexts as any)
 
       const timer = setTimeout(() => {
         setActiveFloatingTexts((prev: any) => {
           const filtered = prev.filter((item: any) => !newTexts.find((nt: any) => nt.id === item.id))
-          console.log('[App.tsx latestFloatingTexts] Cleanup: removing texts after 2s, remaining:', filtered.length)
           return filtered
         })
       }, 2000)
@@ -2334,6 +2404,11 @@ const AppInner = function AppInner() {
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
       const actionToProcess = { ...nextAction }
+      console.log('[OVERWATCH-DEBUG] Processing action from queue:', {
+        actionType: actionToProcess.type,
+        hasStepContext: !!actionToProcess.payload?.stepContext,
+        stepPlacedTokensCount: actionToProcess.payload?.stepContext?.placedTokens?.length || 0,
+      })
 
       // Only use commandContext if the action explicitly requests it (via useContextCard flag)
       // This prevents actions like Recon Drone's Setup from incorrectly targeting the wrong card
@@ -2366,68 +2441,12 @@ const AppInner = function AppInner() {
         actionToProcess.recordContext = true
       }
 
+      // OPTIMIZED: Use countTokensFromBoard instead of manual board scanning
+      // This function correctly counts ALL tokens (handles multiple tokens of same type on one card)
+      // and includes lastPlacedToken if not yet on board (fixes guest WebRTC sync delay)
       const calculateDynamicCount = (factor: string, ownerId: number, baseCount: number = 0) => {
-        let count = baseCount
-        if (factor === 'Aim') {
-          gameState.board.forEach(row => row.forEach(cell => {
-            if (cell.card?.statuses) {
-              count += cell.card.statuses.filter(s => s.type === 'Aim' && s.addedByPlayerId === ownerId).length
-            }
-          }))
-          // CRITICAL: Also count Aim token from commandContext.lastPlacedToken
-          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
-          const justPlaced = commandContext.lastPlacedToken
-          if (justPlaced && justPlaced.tokenType === 'Aim' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
-            // Check if this token is already counted on the board (it might not be synced yet)
-            const alreadyCounted = gameState.board.some(row =>
-              row.some(cell => {
-                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
-                  // Count Aim tokens at this location
-                  const aimCount = cell.card.statuses.filter(s =>
-                    s.type === 'Aim' &&
-                    s.addedByPlayerId === ownerId
-                  ).length
-                  // If we found the card, check if we're at the right coords
-                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
-                    return aimCount > 0
-                  }
-                }
-                return false
-              })
-            )
-            if (!alreadyCounted) {
-              count += 1
-            }
-          }
-        } else if (factor === 'Exploit') {
-          gameState.board.forEach(row => row.forEach(cell => {
-            if (cell.card?.statuses) {
-              count += cell.card.statuses.filter(s => s.type === 'Exploit' && s.addedByPlayerId === ownerId).length
-            }
-          }))
-          // CRITICAL: Also count Exploit token from commandContext.lastPlacedToken
-          const justPlaced = commandContext.lastPlacedToken
-          if (justPlaced && justPlaced.tokenType === 'Exploit' && justPlaced.addedByPlayerId === ownerId && justPlaced.boardCoords) {
-            const alreadyCounted = gameState.board.some(row =>
-              row.some(cell => {
-                if (cell.card?.statuses && cell.card.id === justPlaced.cardId) {
-                  const exploitCount = cell.card.statuses.filter(s =>
-                    s.type === 'Exploit' &&
-                    s.addedByPlayerId === ownerId
-                  ).length
-                  if (cell.card.id === justPlaced.cardId && cell.row === justPlaced.boardCoords.row && cell.col === justPlaced.boardCoords.col) {
-                    return exploitCount > 0
-                  }
-                }
-                return false
-              })
-            )
-            if (!alreadyCounted) {
-              count += 1
-            }
-          }
-        }
-        return count
+        const allTokens = countTokensFromBoard(ownerId, gameState, factor, commandContext.lastPlacedToken)
+        return baseCount + allTokens.length
       }
 
       if (actionToProcess.type === 'GLOBAL_AUTO_APPLY') {
@@ -2551,7 +2570,7 @@ const AppInner = function AppInner() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionQueue, abilityMode, cursorStack, localPlayerId, drawCard, updatePlayerScore, gameState.activePlayerId, gameState.board, moveItem, commandContext, addBoardCardStatus, gameState.players, executeAction, triggerNoTarget])
+  }, [actionQueue, abilityMode, cursorStack, localPlayerId, drawCard, updatePlayerScore, gameState.activePlayerId, gameState.board, moveItem, addBoardCardStatus, gameState.players, executeAction, triggerNoTarget])
 
   const closeAllModals = useCallback(() => {
     setModalsState(prev => ({
@@ -2883,8 +2902,18 @@ const AppInner = function AppInner() {
     setViewingDiscard({ player, isDeckView: true })
   }, [localPlayerId, requestDeckView, sendFullDeckToHost, shareHostDeckWithGuests, gameState.players, webrtcIsHost])
   const handleViewDiscard = useCallback((player: Player) => {
+    // Check if WebRTC is enabled and we're viewing another player's discard
+    const isWebRTCMode = getWebRTCEnabled()
+    const isOtherPlayerDiscard = player.id !== localPlayerId
+
+    // Request full discard data from host if viewing another player's discard
+    if (isWebRTCMode && isOtherPlayerDiscard) {
+      // Use REQUEST_DECK_VIEW with a flag to indicate discard view
+      requestDeckView(player.id)
+    }
+
     setViewingDiscard({ player, isDeckView: false })
-  }, [])
+  }, [localPlayerId, requestDeckView])
 
   const viewingDiscardPlayer = useMemo(() => {
     if (!viewingDiscard) {
@@ -3060,8 +3089,8 @@ const AppInner = function AppInner() {
           ]
           const validTargets = neighbors
             .filter(nb =>
-              nb.r >= 0 && nb.r < gameState.activeGridSize &&
-              nb.c >= 0 && nb.c < gameState.activeGridSize &&
+              nb.r >= 0 && nb.r < gameState.board.length &&
+              nb.c >= 0 && nb.c < gameState.board[0].length &&
               !gameState.board[nb.r][nb.c].card
             )
             .map(nb => ({ row: nb.r, col: nb.c }))
@@ -3088,8 +3117,8 @@ const AppInner = function AppInner() {
           ]
           const validTargets = neighbors
             .filter(nb =>
-              nb.r >= 0 && nb.r < gameState.activeGridSize &&
-              nb.c >= 0 && nb.c < gameState.activeGridSize &&
+              nb.r >= 0 && nb.r < gameState.board.length &&
+              nb.c >= 0 && nb.c < gameState.board[0].length &&
               !gameState.board[nb.r][nb.c].card
             )
             .map(nb => ({ row: nb.r, col: nb.c }))
@@ -3340,7 +3369,7 @@ const AppInner = function AppInner() {
             if (items.length > 0 && !('isDivider' in items[items.length - 1])) {
               items.push({ isDivider: true })
             }
-            items.push({ type: 'statusControl', label: t('revealed'), onAdd: () => addHandCardStatus(player.id, cardIndex, 'Revealed', localPlayerId), onRemove: () => removeHandCardStatus(player.id, cardIndex, 'Revealed'), removeDisabled: false })
+            items.push({ type: 'statusControl', label: t('revealed'), onAdd: () => addHandCardStatusWithLogging(player.id, cardIndex, 'Revealed', localPlayerId), onRemove: () => removeHandCardStatus(player.id, cardIndex, 'Revealed'), removeDisabled: false })
           }
         }
       } else if (type === 'handCard' && !isVisible) {
@@ -3384,7 +3413,7 @@ const AppInner = function AppInner() {
       return true
     })
     return <ContextMenu x={x} y={y} items={items} onClose={closeContextMenu} />
-  }, [gameState, localPlayerId, moveItem, handleTriggerHighlight, addBoardCardStatus, removeBoardCardStatus, modifyBoardCardPower, addAnnouncedCardStatus, removeAnnouncedCardStatus, modifyAnnouncedCardPower, addHandCardStatus, removeHandCardStatus, drawCard, shufflePlayerDeck, flipBoardCard, flipBoardCardFaceDown, revealHandCard, revealBoardCard, requestCardReveal, t, playCommandCard, contextMenuProps, closeAllModals, closeContextMenu, handleViewDeck, handleViewDiscard])
+  }, [gameState, localPlayerId, moveItem, handleTriggerHighlight, addBoardCardStatus, removeBoardCardStatus, modifyBoardCardPower, addAnnouncedCardStatus, removeAnnouncedCardStatus, modifyAnnouncedCardPower, addHandCardStatusWithLogging, removeHandCardStatus, drawCard, shufflePlayerDeck, flipBoardCard, flipBoardCardFaceDown, revealHandCard, revealBoardCard, requestCardReveal, t, playCommandCard, contextMenuProps, closeAllModals, closeContextMenu, handleViewDeck, handleViewDiscard])
 
   useEffect(() => {
     window.addEventListener('click', closeContextMenu)

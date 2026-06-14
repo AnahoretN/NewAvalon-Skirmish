@@ -627,7 +627,7 @@ export function advanceToNextStepWithCoords(
   props: ModeHandlersProps,
   _completedCoords: { row: number; col: number },
   nextStepIndex: number,
-  stepContext?: { lastMovedCardCoords?: { row: number; col: number }; targetCoords?: { row: number; col: number }; sourceOwnerId?: number },
+  stepContext?: { lastMovedCardCoords?: { row: number; col: number }; targetCoords?: { row: number; col: number }; sourceOwnerId?: number; lastPlacedToken?: { cardId: string; tokenType: string; addedByPlayerId: number; boardCoords: { row: number; col: number } }; placedTokens?: Array<{ boardCoords: { row: number; col: number }; cardId: string; tokenType: string; addedByPlayerId: number }> },
   chainedActionFromStep?: AbilityAction
 ): void {
   const { abilityMode, setAbilityMode, markAbilityUsed, gameState, getFreshGameState, commandContext, setTargetingMode, calculateValidTargets, handleActionExecution } = props
@@ -781,6 +781,9 @@ export function advanceToNextStepWithCoords(
             ...(targetCoords && targetCoords.row >= 0 ? { lastMovedCardCoords: targetCoords } : {}),
             // CRITICAL: Pass commandContext so handleGlobalAutoApply can access lastMovedCardCoords
             _commandContext: commandContext,
+            // CRITICAL FIX: Preserve stepContext to maintain placedTokens across AUTO_STEPS
+            // This fixes guest Overwatch where tokens placed in earlier steps need to be counted in dynamicCount
+            stepContext: stepContext,
           },
           _sourceOwnerId: contextOwnerId,
           sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
@@ -795,6 +798,9 @@ export function advanceToNextStepWithCoords(
             ...(targetCoords && targetCoords.row >= 0 ? { lastMovedCardCoords: targetCoords } : {}),
             // CRITICAL: Pass commandContext so handleGlobalAutoApply can access lastMovedCardCoords
             _commandContext: commandContext,
+            // CRITICAL FIX: Preserve stepContext to maintain placedTokens across AUTO_STEPS
+            // This fixes guest Overwatch where tokens placed in earlier steps need to be counted in dynamicCount
+            stepContext: stepContext,
           },
           sourceCard: chainedActionFromStep.sourceCard ?? sourceCard,
           sourceCoords: targetCoords || chainedActionFromStep.sourceCoords || _completedCoords,
@@ -870,9 +876,25 @@ export function advanceToNextStepWithCoords(
             ...chainedActionFromStep,
             ...(contextOwnerId !== undefined ? {
               details: { ...(chainedActionFromStep as any).details, targetOwnerId: contextOwnerId },
-              payload: { ...(chainedActionFromStep as any).payload, targetOwnerId: contextOwnerId },
+              payload: {
+                ...(chainedActionFromStep as any).payload,
+                targetOwnerId: contextOwnerId,
+                // CRITICAL FIX: Preserve stepContext to maintain placedTokens across AUTO_STEPS
+                // This fixes guest Overwatch where tokens placed in earlier steps need to be counted in dynamicCount
+                stepContext: stepContext,
+              },
               _sourceOwnerId: contextOwnerId,
             } : {}),
+          }
+        } else if (chainedActionFromStep && stepContext) {
+          // CRITICAL FIX: Even without resolution, preserve stepContext in chainedAction
+          // This fixes guest Overwatch where stepContext needs to be passed through
+          resolvedChainedAction = {
+            ...chainedActionFromStep,
+            payload: {
+              ...(chainedActionFromStep as any).payload,
+              stepContext: stepContext,
+            },
           }
         }
       }
@@ -890,6 +912,16 @@ export function advanceToNextStepWithCoords(
           // CRITICAL: Pass commandContext through payload so handleGlobalAutoApply can access lastPlacedToken
           // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
           _commandContext: props.commandContext,
+          // CRITICAL: Pass _lastPlacedToken directly from stepContext (synchronous, no async React state)
+          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+          _lastPlacedToken: stepContext?.lastPlacedToken,
+          // CRITICAL FIX: Pass _placedTokens from stepContext to track ALL tokens placed in current step
+          // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+          _placedTokens: stepContext?.placedTokens,
+          _sourceOwnerIdFromStep: stepContext?.sourceOwnerId,
+          // CRITICAL FIX: Pass stepContext to preserve it across AUTO_STEPS
+          // This fixes Overwatch where stepContext.placedTokens needs to be passed to next step
+          stepContext: stepContext,
           // CRITICAL: Pass _autoStepsContext so CLEANUP_COMMAND can find commandCardId
           _autoStepsContext: {
             steps: steps,
@@ -904,6 +936,19 @@ export function advanceToNextStepWithCoords(
         // This fixes False Orders Option 1 where Revealed tokens need to be placed after step 2 completes
         ...(resolvedChainedAction ? { chainedAction: resolvedChainedAction } : {}),
       }
+
+      console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - creating GLOBAL_AUTO_APPLY action:', {
+        hasLastPlacedTokenInStepContext: !!stepContext?.lastPlacedToken,
+        lastPlacedTokenInStepContext: stepContext?.lastPlacedToken,
+        hasLastPlacedTokenInAction: !!actionToExecute.payload._lastPlacedToken,
+        lastPlacedTokenInAction: actionToExecute.payload._lastPlacedToken,
+        hasPlacedTokensInStepContext: !!stepContext?.placedTokens,
+        placedTokensCountInStepContext: stepContext?.placedTokens?.length || 0,
+        placedTokensInStepContext: stepContext?.placedTokens,
+        hasPlacedTokensInAction: !!actionToExecute.payload._placedTokens,
+        placedTokensInAction: actionToExecute.payload._placedTokens,
+      })
+
       handleActionExecution(actionToExecute, sourceCoords || { row: 0, col: 0 })
 
       // After execution, check if there are more steps
@@ -1063,6 +1108,11 @@ export function advanceToNextStepWithCoords(
             filter: buildFilterFromString(details.filter, ownerId, sourceCoords || { row: 0, col: 0 }),
             filterString: details.filter  // Keep original string for serialization
           } : {}),
+          // CRITICAL FIX: Pass stepContext to preserve it across AUTO_STEPS
+          // This fixes Overwatch option 1 (Reveal cards) where Aim token placed in step 0
+          // needs to be counted in step 1's dynamicCount calculation
+          // Without this, guests get incorrect token counts because freshState is stale
+          stepContext: stepContext,
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
@@ -1192,6 +1242,11 @@ export function advanceToNextStepWithCoords(
             filter: buildFilterFromString(nextStep.details.filter, ownerId, effectiveSourceCoords),
             filterString: nextStep.details.filter  // Keep original string for serialization
           } : {}),
+          // CRITICAL: Pass lastPlacedToken from stepContext directly in payload
+          // This ensures it's immediately available without relying on async React state updates
+          // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+          _lastPlacedToken: stepContext?.lastPlacedToken,
+          _sourceOwnerIdFromStep: stepContext?.sourceOwnerId,
           _autoStepsContext: {
             steps: steps,
             currentStepIndex: nextStepIndex + 1,
@@ -1246,21 +1301,46 @@ export function advanceToNextStepWithCoords(
         return
       }
 
-      // CRITICAL: For CREATE_STACK actions, handleActionExecution will set targeting mode
-      // This fixes False Orders Option 1 where setTargetingMode was called with wrong ownerId
-      if (nextStep.action === "CREATE_STACK" && props.handleActionExecution) {
-        // CRITICAL: Update commandContext with lastPlacedToken from stepContext
-        // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
-        if (stepContext?.lastPlacedToken && props.setCommandContext) {
-          props.setCommandContext(prev => ({
+      // CRITICAL: Update commandContext with lastPlacedToken from stepContext BEFORE executing any action
+      // This ensures Enhanced Interrogation and Overwatch Option 2 can count tokens just placed
+      if (stepContext?.lastPlacedToken && props.setCommandContext) {
+        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - updating commandContext with lastPlacedToken from stepContext:', {
+          lastPlacedToken: stepContext.lastPlacedToken,
+          sourceOwnerId: stepContext.sourceOwnerId,
+          currentCommandContext: props.commandContext,
+          nextStepAction: nextStep.action,
+        })
+        props.setCommandContext(prev => {
+          const updated = {
             ...prev,
             lastPlacedToken: stepContext.lastPlacedToken,
             sourceOwnerId: stepContext.sourceOwnerId,
-          }))
-        }
+          }
+          console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - commandContext updated:', updated)
+          return updated
+        })
+      } else {
+        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - NOT updating commandContext:', {
+          hasStepContext: !!stepContext,
+          hasLastPlacedToken: !!stepContext?.lastPlacedToken,
+          stepContext,
+          hasSetCommandContext: !!props.setCommandContext,
+          nextStepAction: nextStep.action,
+        })
+      }
+
+      // CRITICAL: For CREATE_STACK actions, handleActionExecution will set targeting mode
+      // This fixes False Orders Option 1 where setTargetingMode was called with wrong ownerId
+      if (nextStep.action === "CREATE_STACK" && props.handleActionExecution) {
         // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
         setAbilityMode(stepAction)
         // Call handleActionExecution synchronously to ensure cursorStack is set before any useEffect runs
+        props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
+      } else if (nextStep.action === "GLOBAL_AUTO_APPLY" && props.handleActionExecution) {
+        // CRITICAL: For GLOBAL_AUTO_APPLY actions (Overwatch Option 2), execute directly
+        // These are auto-executed actions that don't require targeting mode
+        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - executing GLOBAL_AUTO_APPLY directly')
+        setAbilityMode(stepAction)
         props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
       } else {
         // For non-CREATE_STACK actions, set targeting mode normally
@@ -1281,11 +1361,20 @@ export function advanceToNextStepWithCoords(
         // CRITICAL: Update commandContext with lastPlacedToken from stepContext
         // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
         if (stepContext?.lastPlacedToken && props.setCommandContext) {
-          props.setCommandContext(prev => ({
-            ...prev,
+          console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords (hand targeting) - updating commandContext with lastPlacedToken from stepContext:', {
             lastPlacedToken: stepContext.lastPlacedToken,
             sourceOwnerId: stepContext.sourceOwnerId,
-          }))
+            currentCommandContext: props.commandContext,
+          })
+          props.setCommandContext(prev => {
+            const updated = {
+              ...prev,
+              lastPlacedToken: stepContext.lastPlacedToken,
+              sourceOwnerId: stepContext.sourceOwnerId,
+            }
+            console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords (hand targeting) - commandContext updated:', updated)
+            return updated
+          })
         }
         // CRITICAL: Set abilityMode BEFORE handleActionExecution to prevent race condition
         setAbilityMode(stepAction)
@@ -3814,9 +3903,10 @@ function handleSelectLineForSupportTokens(
   // Apply Exploit counter to all targets
   const counterType = payload?.tokenType || 'Exploit'
   const counterOwnerId = ownerId ?? 0
+  const counterCount = payload?.count || 1
 
   for (const target of targets) {
-    addBoardCardStatus(target, counterType, counterOwnerId)
+    addBoardCardStatus(target, counterType, counterOwnerId, counterCount)
   }
 
   // CRITICAL: Set abilityMode to null BEFORE clearing targetingMode
@@ -3904,9 +3994,10 @@ function handleSelectLineForThreatCounters(
   // Apply Exploit counter to all targets
   const counterType = payload?.tokenType || 'Exploit'
   const counterOwnerId = ownerId ?? 0
+  const counterCount = payload?.count || 1
 
   for (const target of targets) {
-    addBoardCardStatus(target, counterType, counterOwnerId)
+    addBoardCardStatus(target, counterType, counterOwnerId, counterCount)
   }
 
   // CRITICAL: Set abilityMode to null BEFORE clearing targetingMode

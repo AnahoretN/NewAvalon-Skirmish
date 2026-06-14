@@ -69,8 +69,22 @@ export function handleSelectScoringLine(state: GameState, playerId: number, data
  * Calculate points for line
  * lineType: 'row' | 'col' | 'diagonal' | 'anti-diagonal'
  * lineIndex: row/column number (0-based), or undefined for diagonals
+ *
+ * CRITICAL: This function is the final authority on scoring calculations.
+ * All card checks must be defensive and handle null/undefined cases.
  */
 export function calculateLineScore(state: GameState, playerId: number, lineType: string, lineIndex?: number): number {
+  // Defensive: Validate inputs
+  if (!state || !state.board || state.board.length === 0) {
+    console.warn('[calculateLineScore] Invalid state or board')
+    return 0
+  }
+
+  if (playerId === undefined || playerId === null) {
+    console.warn('[calculateLineScore] Invalid playerId')
+    return 0
+  }
+
   const gridSize = state.activeGridSize
   const cellsToCheck: { row: number; col: number }[] = []
 
@@ -79,15 +93,37 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
   const totalSize = state.board.length
   const offset = Math.floor((totalSize - gridSize) / 2)
 
+  // Validate lineIndex for row/col types
+  if ((lineType === 'row' || lineType === 'col') && (lineIndex === undefined || lineIndex === null)) {
+    console.warn(`[calculateLineScore] Invalid lineIndex for ${lineType}`)
+    return 0
+  }
+
+  // Validate lineIndex is within bounds
+  if (lineIndex !== undefined && (lineIndex < 0 || lineIndex >= gridSize)) {
+    console.warn(`[calculateLineScore] lineIndex ${lineIndex} out of bounds [0, ${gridSize})`)
+    return 0
+  }
+
   if (lineType === 'row' && lineIndex !== undefined) {
     // Horizontal line - convert lineIndex to full board coordinate
     const actualRow = lineIndex + offset
+    // Validate actualRow is within board bounds
+    if (actualRow < 0 || actualRow >= totalSize) {
+      console.warn(`[calculateLineScore] actualRow ${actualRow} out of board bounds [0, ${totalSize})`)
+      return 0
+    }
     for (let c = 0; c < gridSize; c++) {
       cellsToCheck.push({ row: actualRow, col: c + offset })
     }
   } else if (lineType === 'col' && lineIndex !== undefined) {
     // Vertical line - convert lineIndex to full board coordinate
     const actualCol = lineIndex + offset
+    // Validate actualCol is within board bounds
+    if (actualCol < 0 || actualCol >= totalSize) {
+      console.warn(`[calculateLineScore] actualCol ${actualCol} out of board bounds [0, ${totalSize})`)
+      return 0
+    }
     for (let r = 0; r < gridSize; r++) {
       cellsToCheck.push({ row: r + offset, col: actualCol })
     }
@@ -101,6 +137,9 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
     for (let i = 0; i < gridSize; i++) {
       cellsToCheck.push({ row: i + offset, col: (gridSize - 1 - i) + offset })
     }
+  } else {
+    console.warn(`[calculateLineScore] Invalid lineType: ${lineType}`)
+    return 0
   }
 
   // Count sum of power of all player's cards in this line
@@ -155,14 +194,29 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
   }
 
   let score = 0
+  const debugInfo: { row: number; col: number; cardName: string; ownerId: number; points: number; skipped: string }[] = []
+
   for (const { row, col } of cellsToCheck) {
+    // Defensive: Check bounds
+    if (row < 0 || row >= state.board.length || col < 0 || col >= state.board[0].length) {
+      console.warn(`[calculateLineScore] Cell (${row}, ${col}) out of board bounds`)
+      continue
+    }
+
     const cell = state.board[row]?.[col]
-    if (!cell.card) {continue}
+    if (!cell || !cell.card) {continue}
 
     const card = cell.card
 
-    // Skip stunned cards
-    if (card.statuses?.some((s: any) => s.type === 'Stun')) {
+    // Skip stunned cards (stunned cards don't score)
+    if (card.statuses && Array.isArray(card.statuses) && card.statuses.some((s: any) => s?.type === 'Stun')) {
+      debugInfo.push({ row, col, cardName: card.name || 'Unknown', ownerId: card.ownerId, points: 0, skipped: 'Stun' })
+      continue
+    }
+
+    // Defensive: Ensure card has valid ownerId
+    if (card.ownerId === undefined || card.ownerId === null) {
+      console.warn(`[calculateLineScore] Card at (${row}, ${col}) has invalid ownerId:`, card)
       continue
     }
 
@@ -171,7 +225,16 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
       const power = card.power || 0
       const powerModifier = card.powerModifier || 0
       const bonusPower = card.bonusPower || 0
-      score += power + powerModifier + bonusPower
+      const points = power + powerModifier + bonusPower
+
+      // Defensive: Ensure points are non-negative
+      if (points < 0) {
+        console.warn(`[calculateLineScore] Card at (${row}, ${col}) has negative power: ${points}`)
+        continue
+      }
+
+      score += points
+      debugInfo.push({ row, col, cardName: card.name || 'Unknown', ownerId: card.ownerId, points, skipped: '' })
     }
     // Scoring modifiers: cards matching the modifier filter also score for the modifier owner
     else if (scoringModifiers.length > 0) {
@@ -182,7 +245,7 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
         if (modifier.targetFilter === 'hasCounter_Exploit') {
           // Cards with Exploit tokens from the modifier owner score
           const hasExploitFromPlayer = (card.statuses || []).some((s: any) =>
-            s.type === 'Exploit' && s.addedByPlayerId === modifier.sourceOwnerId
+            s?.type === 'Exploit' && s?.addedByPlayerId === modifier.sourceOwnerId
           )
           shouldScore = hasExploitFromPlayer
         }
@@ -192,11 +255,29 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
           const power = card.power || 0
           const powerModifier = card.powerModifier || 0
           const bonusPower = card.bonusPower || 0
-          score += power + powerModifier + bonusPower
+          const points = power + powerModifier + bonusPower
+
+          // Defensive: Ensure points are non-negative
+          if (points >= 0) {
+            score += points
+            debugInfo.push({ row, col, cardName: card.name || 'Unknown', ownerId: card.ownerId, points, skipped: 'Modifier' })
+          }
           break // Only apply one scoring modifier per card
         }
       }
     }
+  }
+
+  // Debug logging for scoring issues (only log if we got 0 points but had cards in line)
+  if (score === 0 && debugInfo.length > 0 && debugInfo.some(d => !d.skipped && d.points === 0)) {
+    console.warn('[calculateLineScore] Got 0 points despite having cards in line:', {
+      playerId,
+      lineType,
+      lineIndex,
+      cardsChecked: debugInfo.length,
+      cardsSkipped: debugInfo.filter(d => d.skipped).length,
+      details: debugInfo
+    })
   }
 
   return score
@@ -205,13 +286,30 @@ export function calculateLineScore(state: GameState, playerId: number, lineType:
 /**
  * Find all lines containing player's card
  * Returns array of lines that can be highlighted for scoring
+ *
+ * CRITICAL: This function finds lines (row and column) that contain the player's last played card.
+ * These lines are used for highlighting and for the player to select which line to score.
  */
 export function findScoringLinesWithPlayerCard(
   state: GameState,
   playerId: number
 ): Array<{ type: string; index?: number; cells: { row: number; col: number }[] }> {
+  // Defensive: Validate inputs
+  if (!state || !state.board || state.board.length === 0) {
+    console.warn('[findScoringLinesWithPlayerCard] Invalid state or board')
+    return []
+  }
+
+  if (playerId === undefined || playerId === null) {
+    console.warn('[findScoringLinesWithPlayerCard] Invalid playerId')
+    return []
+  }
+
   const player = state.players.find(p => p.id === playerId)
-  if (!player) {return []}
+  if (!player) {
+    console.warn(`[findScoringLinesWithPlayerCard] Player ${playerId} not found`)
+    return []
+  }
 
   // Find coordinates of last played card
   let lastPlayedCoords: { row: number; col: number } | null = null
@@ -247,6 +345,7 @@ export function findScoringLinesWithPlayerCard(
 
   // If no card found - no lines for scoring
   if (!lastPlayedCoords) {
+    console.warn(`[findScoringLinesWithPlayerCard] No card found for player ${playerId} (lastPlayedCardId: ${player.lastPlayedCardId})`)
     return []
   }
 
@@ -257,23 +356,38 @@ export function findScoringLinesWithPlayerCard(
   const totalSize = state.board.length
   const offset = Math.floor((totalSize - state.activeGridSize) / 2)
 
+  // Validate that the card is within the active grid
+  const activeRow = row - offset
+  const activeCol = col - offset
+
+  if (activeRow < 0 || activeRow >= state.activeGridSize || activeCol < 0 || activeCol >= state.activeGridSize) {
+    console.warn(`[findScoringLinesWithPlayerCard] Card at (${row}, ${col}) is outside active grid [${state.activeGridSize}x${state.activeGridSize}]`)
+    return []
+  }
+
   const lines: Array<{ type: string; index?: number; cells: { row: number; col: number }[] }> = []
+
+  // CRITICAL FIX: Cells MUST use full board coordinates consistently
+  // The row and col variables are already in full board coordinates (found by searching the board)
+  // When iterating through the line, we must add the offset to convert from active grid to full board coordinates
 
   // Horizontal line (row)
   const rowCells: { row: number; col: number }[] = []
   for (let c = 0; c < state.activeGridSize; c++) {
-    rowCells.push({ row, col: c })
+    // Add offset to column to get full board coordinate
+    rowCells.push({ row, col: c + offset })
   }
   // Convert full board coordinate to active grid coordinate for index
-  lines.push({ type: 'row', index: row - offset, cells: rowCells })
+  lines.push({ type: 'row', index: activeRow, cells: rowCells })
 
   // Vertical line (col)
   const colCells: { row: number; col: number }[] = []
   for (let r = 0; r < state.activeGridSize; r++) {
-    colCells.push({ row: r, col })
+    // Add offset to row to get full board coordinate
+    colCells.push({ row: r + offset, col })
   }
   // Convert full board coordinate to active grid coordinate for index
-  lines.push({ type: 'col', index: col - offset, cells: colCells })
+  lines.push({ type: 'col', index: activeCol, cells: colCells })
 
   // Diagonal lines not currently used in scoring phase
   // (may be used in card abilities)

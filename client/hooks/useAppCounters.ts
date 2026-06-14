@@ -2,7 +2,66 @@ import { useRef, useEffect, useLayoutEffect } from 'react'
 import { flushSync } from 'react-dom'
 import type { CursorStackState, GameState, AbilityAction, DragItem, DropTarget, CommandContext } from '@/types'
 import { validateTarget } from '@shared/utils/targeting'
-import { createTokenCursorStack } from '@/utils/tokenTargeting'
+import { createTokenCursorStack, canTokenTargetHand } from '@/utils/tokenTargeting'
+
+/**
+ * Count all tokens on board for a specific player
+ * Used by command cards (Overwatch, etc.) to count tokens for dynamicResource
+ * This is MORE RELIABLE than commandContext.placedTokens because board state is always accurate
+ * CRITICAL: Also includes lastPlacedToken if provided (for guest where newly placed token isn't in gameState yet)
+ * CRITICAL: Returns ONE ELEMENT PER TOKEN (not per card) - a card can have multiple tokens of same type
+ * @export - Used by actionExecutionHandler.ts for dynamicResource calculations
+ */
+export function countTokensFromBoard(playerId: number, gameState: GameState, tokenType?: string, lastPlacedToken?: {boardCoords: {row: number, col: number}, cardId: string, tokenType: string, addedByPlayerId: number}) {
+  const tokens: Array<{boardCoords: {row: number, col: number}, cardId: string, tokenType: string, addedByPlayerId: number}> = []
+  const countedTokens = new Set<string>() // Track individual tokens to avoid duplicates
+
+  gameState.board.forEach((row, rowIdx) => {
+    row.forEach((cell, colIdx) => {
+      if (cell.card?.statuses) {
+        cell.card.statuses.forEach((status, statusIndex) => {
+          // CRITICAL: Only count tokens matching the tokenType (e.g., "Aim")
+          // If tokenType is not specified, count all tokens (for debugging)
+          if (status.addedByPlayerId === playerId && (!tokenType || status.type === tokenType)) {
+            // CRITICAL: Create a UNIQUE identifier for each token (not just per card)
+            // Uses statusIndex to differentiate multiple tokens of same type on same card
+            // This fixes the case where a card has multiple tokens of the same type (e.g., 2 Aim on Secret Informant)
+            const tokenKey = `${rowIdx},${colIdx},${status.type},${status.addedByPlayerId},${statusIndex}`
+            if (!countedTokens.has(tokenKey)) {
+              tokens.push({
+                boardCoords: { row: rowIdx, col: colIdx },
+                cardId: cell.card.id,
+                tokenType: status.type,
+                addedByPlayerId: status.addedByPlayerId
+              })
+              countedTokens.add(tokenKey)
+            }
+          }
+        })
+      }
+    })
+  })
+
+  // CRITICAL FIX: Include lastPlacedToken if provided and not already counted
+  // This fixes guest Overwatch where the newly placed token isn't in gameState yet (WebRTC sync delay)
+  if (lastPlacedToken && lastPlacedToken.addedByPlayerId === playerId && (!tokenType || lastPlacedToken.tokenType === tokenType)) {
+    const tokenKey = `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId}`
+    if (!countedTokens.has(tokenKey)) {
+      console.log('[OVERWATCH-DEBUG] countTokensFromBoard - adding lastPlacedToken (not on board yet):', lastPlacedToken)
+      tokens.push(lastPlacedToken)
+      countedTokens.add(tokenKey)
+    } else {
+      console.log('[OVERWATCH-DEBUG] countTokensFromBoard - lastPlacedToken already on board, skipping')
+    }
+  }
+
+  console.log('[OVERWATCH-DEBUG] countTokensFromBoard - result:', {
+    tokenCount: tokens.length,
+    tokens: tokens.map(t => ({ cardId: t.cardId, tokenType: t.tokenType }))
+  })
+
+  return tokens
+}
 
 interface UseAppCountersProps {
     gameState: GameState;
@@ -49,6 +108,27 @@ export const useAppCounters = ({
   // This fixes Data Interception/Enhanced Interrogation where new Revealed cursorStack
   // is created but old useEffect sees previous cursorStack and clears it
   const handTargetingCursorStackJustCreated = useRef(false)
+  // CRITICAL FIX: Track commandContext to access placedTokens when creating CONTINUE_AUTO_STEPS
+  // This fixes Overwatch where we need to pass ALL tokens placed in the current step
+  const commandContextRef = useRef<CommandContext>({})
+
+  // CRITICAL: Helper function to update both commandContext state and ref
+  // This ensures we can access the current value when creating CONTINUE_AUTO_STEPS
+  const updateCommandContext = (updater: React.SetStateAction<CommandContext>) => {
+    setCommandContext(prev => {
+      console.log('[OVERWATCH-DEBUG] updateCommandContext - prev:', {
+        prevPlacedTokens: prev.placedTokens,
+        prevPlacedTokensCount: prev.placedTokens?.length || 0,
+      })
+      const updated = typeof updater === 'function' ? updater(prev) : updater
+      commandContextRef.current = updated
+      console.log('[OVERWATCH-DEBUG] updateCommandContext - updated:', {
+        updatedPlacedTokens: updated.placedTokens,
+        updatedPlacedTokensCount: updated.placedTokens?.length || 0,
+      })
+      return updated
+    })
+  }
 
   // Initial positioning layout effect
   useLayoutEffect(() => {
@@ -169,6 +249,12 @@ export const useAppCounters = ({
             // Special handling for Revealed tokens on hand cards
             // Rules: Can place on opponent or dummy hand cards, NOT on own hand cards
             const isRevealedToken = cursorStack.type === 'Revealed'
+
+            // CRITICAL: Check if this token type is allowed to target hand cards
+            // Some tokens (Aim, Exploit, Shield, Stun) can only be placed on board cards
+            if (!isRevealedToken && !canTokenTargetHand(cursorStack.type)) {
+              return
+            }
 
             if (isRevealedToken) {
               // CRITICAL: Cannot place Revealed on own hand cards (left panel)
@@ -436,6 +522,7 @@ export const useAppCounters = ({
             const [rowStr, colStr] = coords.split(',')
             const row = parseInt(rowStr, 10)
             const col = parseInt(colStr, 10)
+
             // Add bounds check before accessing board
             if (
               !isNaN(row) && !isNaN(col) &&
@@ -445,6 +532,12 @@ export const useAppCounters = ({
               gameState.board[row][col]
             ) {
               const targetCard = gameState.board[row][col].card
+
+              // CRITICAL: If no card at this location, do NOT place token
+              // Tokens can only be placed on cards, not on empty cells
+              if (!targetCard) {
+                return
+              }
 
               if (targetCard?.ownerId !== undefined) {
                 const constraints = {
@@ -470,9 +563,11 @@ export const useAppCounters = ({
                   cursorStack.originalOwnerId, // CRITICAL: Pass token owner ID for command cards
                 )
 
+                console.log('[OVERWATCH-DEBUG] Target validation result:', { isValid, targetCard: targetCard?.name, cursorStackType: cursorStack.type })
                 if (!isValid) {
                   // Invalid target - keep cursor stack active to allow retry
                   // Don't close selection mode on invalid target
+                  console.log('[OVERWATCH-DEBUG] Invalid target - returning early, NOT calling updateCommandContext')
                   return
                 }
 
@@ -512,17 +607,41 @@ export const useAppCounters = ({
                   boardCoords: { row, col },
                 }
 
-                setCommandContext(prev => ({
-                  ...prev,
+                console.log('[OVERWATCH-DEBUG] Token placed - creating lastPlacedToken:', {
                   lastPlacedToken,
-                  ...(cursorStack.recordContext ? {
-                    lastMovedCardCoords: { row, col },
-                    lastMovedCardId: targetCard.id,
-                    // CRITICAL: Store target card's owner ID for False Orders Option 1
-                    // This allows Revealed tokens to target the correct player's hand
-                    sourceOwnerId: targetCard.ownerId,
-                  } : {}),
-                }))
+                  targetCard: targetCard.name,
+                  effectiveActorId,
+                  localPlayerId,
+                  cursorStackType: cursorStack.type,
+                })
+                console.log('[OVERWATCH-DEBUG] About to call updateCommandContext - commandContextRef.current.placedTokens:', commandContextRef.current.placedTokens)
+
+                updateCommandContext(prev => {
+                  console.log('[OVERWATCH-DEBUG] updateCommandContext INSINE function - prev.placedTokens:', prev.placedTokens)
+                  // CRITICAL FIX: Append to placedTokens array to track ALL tokens placed in current step
+                  // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+                  const newToken = {
+                    boardCoords: { row, col },
+                    cardId: targetCard.id,
+                    tokenType: cursorStack.type,
+                    addedByPlayerId: effectiveActorId,
+                  }
+                  const updated = {
+                    ...prev,
+                    lastPlacedToken,
+                    // Append to placedTokens array (or initialize if doesn't exist)
+                    placedTokens: [...(prev.placedTokens || []), newToken],
+                    ...(cursorStack.recordContext ? {
+                      lastMovedCardCoords: { row, col },
+                      lastMovedCardId: targetCard.id,
+                      // CRITICAL: Store target card's owner ID for False Orders Option 1
+                      // This allows Revealed tokens to target the correct player's hand
+                      sourceOwnerId: targetCard.ownerId,
+                    } : {}),
+                  }
+                  console.log('[OVERWATCH-DEBUG] setCommandContext called with:', updated)
+                  return updated
+                })
 
                 if (cursorStack.sourceCoords && cursorStack.sourceCoords.row >= 0) {
                   markAbilityUsed(cursorStack.sourceCoords, cursorStack.isDeployAbility)
@@ -535,6 +654,12 @@ export const useAppCounters = ({
                 } else {
                   // Stack is now empty - clear it and execute chained action
                   if (cursorStack.chainedAction) {
+                    console.log('[OVERWATCH-DEBUG] cursorStack.chainedAction found:', {
+                      chainedActionType: cursorStack.chainedAction.type,
+                      chainedActionMode: cursorStack.chainedAction.mode,
+                      placedTokens: commandContextRef.current.placedTokens,
+                      placedTokensCount: commandContextRef.current.placedTokens?.length || 0,
+                    })
                     const chained = { ...cursorStack.chainedAction }
                     if (cursorStack.recordContext) {
                       if (chained.mode === 'SELECT_CELL') {
@@ -609,37 +734,95 @@ export const useAppCounters = ({
 
                       // Update commandContext before executing chained action
                       if (cursorStack.recordContext && setCommandContext) {
-                        setCommandContext(prev => ({
+                        console.log('[OVERWATCH-DEBUG] setCommandContext (chainedAction) - prev:', {
+                          prevPlacedTokens: commandContextRef.current.placedTokens,
+                          prevPlacedTokensCount: commandContextRef.current.placedTokens?.length || 0,
+                        })
+                        // CRITICAL FIX: Use updateCommandContext instead of setCommandContext to ensure commandContextRef.current is updated
+                        updateCommandContext(prev => ({
                           ...prev,
                           lastMovedCardCoords: { row, col },
                           lastMovedCardId: targetCard.id,
                           sourceOwnerId: targetCard.ownerId,
                         }))
+                        console.log('[OVERWATCH-DEBUG] setCommandContext (chainedAction) - updated')
                       }
 
                       // CRITICAL: Use flushSync to ensure abilityMode is set synchronously
                       // This prevents useEffect from running before abilityMode is updated
                       // which would cause CONTINUE_AUTO_STEPS to skip the interactive step
                       flushSync(() => {
-                        onAction(chained, { row, col })
+                        // CRITICAL FIX: Add stepContext to chainedAction for interactive modes
+                        // This ensures dynamicCount can access placedTokens from previous steps
+                        const chainedWithContext = {
+                          ...chained,
+                          payload: {
+                            ...(chained.payload || chained.details || {}),
+                            stepContext: {
+                              targetCoords: { row, col },
+                              targetCard: targetCard,
+                              lastPlacedToken: lastPlacedToken,
+                              placedTokens: commandContextRef.current.placedTokens,
+                              sourceOwnerId: targetCard.ownerId,
+                            },
+                          },
+                        }
+                        onAction(chainedWithContext, { row, col })
                       })
                     } else if (setActionQueue) {
                       // CRITICAL FIX: Add chainedAction to actionQueue AFTER clearing abilityMode and cursorStack
                       // This ensures the actionQueue useEffect can process the chained action immediately
                       // Also ensures cleanupCommand stays at the end
                       // Add unique ID to prevent duplicate processing
+                      console.log('[OVERWATCH-DEBUG] CREATE_STACK with AUTO_STEPS - adding to actionQueue:', {
+                        chainedType: chained.type,
+                        chainedMode: chained.mode,
+                        chainedAction: chained.action,
+                        hasDynamicCount: !!chained.details?.dynamicCount || !!chained.payload?.dynamicCount,
+                      })
                       if (!chained._uniqueId) {
                         chained._uniqueId = `${chained.type}_${Date.now()}_${Math.random()}`
                       }
 
                       // CRITICAL: If this is part of AUTO_STEPS, also add CONTINUE_AUTO_STEPS after chainedAction
                       // This ensures command cards are discarded after all steps complete
-                      const actionsToQueue: any[] = [chained]
+                      // CRITICAL FIX: Prepare stepContext to pass to chainedAction for dynamicCount calculation
+                      // This fixes guest Overwatch where tokens placed in step 0 need to be counted in step 1
+                      const stepContextForChained = {
+                        targetCoords: { row, col },
+                        targetCard: targetCard,
+                        lastPlacedToken: lastPlacedToken,
+                        placedTokens: commandContextRef.current.placedTokens,
+                        sourceOwnerId: targetCard.ownerId,
+                      }
+                      // CRITICAL: Add stepContext to chainedAction payload
+                      // This ensures dynamicCount can access placedTokens from previous steps
+                      const chainedWithContext = {
+                        ...chained,
+                        payload: {
+                          ...(chained.payload || chained.details || {}),
+                          stepContext: stepContextForChained,
+                        },
+                      }
+                      console.log('[OVERWATCH-DEBUG] Adding chainedWithContext to queue:', {
+                        hasStepContext: !!chainedWithContext.payload.stepContext,
+                        stepPlacedTokensCount: chainedWithContext.payload.stepContext?.placedTokens?.length || 0,
+                        chainedType: chained.type,
+                      })
+                      const actionsToQueue: any[] = [chainedWithContext]
                       if (cursorStack._autoStepsContext) {
                         // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
                         // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
                         const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
+
+                        console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS with stepContext:', {
+                          lastPlacedToken,
+                          targetCard: targetCard.name,
+                          completedStepIndex,
+                          totalSteps: autoStepsContext.steps?.length,
+                        })
+
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
                           sourceCard: cursorStack.sourceCard,
@@ -655,12 +838,16 @@ export const useAppCounters = ({
                               targetCoords: { row, col },
                               targetCard: targetCard,
                               lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                              // CRITICAL FIX: Pass placedTokens to track ALL tokens placed in current step
+                              // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+                              placedTokens: commandContextRef.current.placedTokens,
                               // CRITICAL: Pass sourceOwnerId for False Orders Option 1
                               // This ensures Revealed tokens target the correct player's hand
                               sourceOwnerId: targetCard.ownerId,
                             }
                           }
                         }
+                        console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS action created:', continueAction)
                         actionsToQueue.push(continueAction)
                       }
 
@@ -711,6 +898,14 @@ export const useAppCounters = ({
                         // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
                         const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
+
+                        console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS (direct exec) with stepContext:', {
+                          lastPlacedToken,
+                          targetCard: targetCard.name,
+                          completedStepIndex,
+                          totalSteps: autoStepsContext.steps?.length,
+                        })
+
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
                           sourceCard: cursorStack.sourceCard,
@@ -726,12 +921,16 @@ export const useAppCounters = ({
                               targetCoords: { row, col },
                               targetCard: targetCard,
                               lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                              // CRITICAL FIX: Pass placedTokens to track ALL tokens placed in current step
+                              // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+                              placedTokens: commandContextRef.current.placedTokens,
                               // CRITICAL: Pass sourceOwnerId for False Orders Option 1
                               // This ensures Revealed tokens target the correct player's hand
                               sourceOwnerId: targetCard.ownerId,
                             }
                           }
                         }
+                        console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS (direct exec) action created:', continueAction)
                         onAction(continueAction, { row, col })
                       }
                     }
@@ -769,12 +968,31 @@ export const useAppCounters = ({
                           targetCoords: { row, col },
                           targetCard: targetCard,
                           lastPlacedToken: lastPlacedToken, // CRITICAL: Pass lastPlacedToken for next step
+                          // CRITICAL FIX: Use commandContext.placedTokens directly instead of recalculating
+                          // This fixes guest Overwatch where countTokensFromBoard uses stale gameState
+                          // and returns an incomplete count (missing the just-placed token)
+                          placedTokens: commandContextRef.current.placedTokens,
                           // CRITICAL: Pass sourceOwnerId for False Orders Option 1
                           // This ensures Revealed tokens target the correct player's hand
                           sourceOwnerId: targetCard.ownerId,
                         }
                       }
                     }
+
+                    console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS (cursorStack complete) with stepContext:', {
+                      lastPlacedToken,
+                      targetCard: targetCard.name,
+                      completedStepIndex,
+                      totalSteps: autoStepsContext.steps?.length,
+                      hasChainedAction,
+                      chainedActionType,
+                      commandContextRefPlacedTokens: commandContextRef.current.placedTokens,
+                      commandContextRefPlacedTokensCount: commandContextRef.current.placedTokens?.length || 0,
+                      usingCommandContextRef: true,
+                    })
+                    console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS (cursorStack complete) action created:', continueAction)
+                    console.log('[OVERWATCH-DEBUG] stepContext.placedTokens:', continueAction.payload.stepContext.placedTokens)
+                    console.log('[OVERWATCH-DEBUG] stepContext.placedTokensCount:', continueAction.payload.stepContext.placedTokens?.length || 0)
 
                     // CRITICAL: Pass chainedAction so modeHandlers can execute it before advancing to next step
                     // This fixes Temporary Shelter where chainedAction (REMOVE_ALL_AIM_FROM_CONTEXT) must execute
@@ -839,9 +1057,10 @@ export const useAppCounters = ({
             if (isOverModal) {
               setCursorStack(prev => prev ? { ...prev, isDragging: false } : null)
             } else {
-              // Only close if not clicking on game board or hand cards
-              // This allows retrying token placement on valid targets
-              if (!isOverGameBoard && !isOverHandCard) {
+              // CRITICAL FIX: Only clear if NOT clicking on game board, hand cards, or modal
+              // This keeps cursorStack active when clicking outside valid target areas
+              // allowing user to retry token placement or cancel via right-click
+              if (!isOverGameBoard && !isOverHandCard && !isOverModal) {
                 // CRITICAL: Clear abilityMode AND cursorStack SYNCHRONOUSLY to prevent
                 // useEffect in App.tsx from restoring targetingMode
                 flushSync(() => {
@@ -851,18 +1070,10 @@ export const useAppCounters = ({
                 clearTargetingMode()
               }
             }
-          } else {
-            // Only close if clicking outside modal and outside game areas
-            if (!isOverModal && !isOverGameBoard && !isOverHandCard) {
-              // CRITICAL: Clear abilityMode AND cursorStack SYNCHRONOUSLY to prevent
-              // useEffect in App.tsx from restoring targetingMode
-              flushSync(() => {
-                setAbilityMode(null)
-                setCursorStack(null)
-              })
-              clearTargetingMode()
-            }
           }
+          // When isDragging=false, NEVER clear cursorStack on click
+          // User may click anywhere (empty space, UI elements) while holding tokens
+          // Only way to cancel should be right-click or ESC
         }
       }
     }

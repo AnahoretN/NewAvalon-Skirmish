@@ -11,6 +11,7 @@ import { buildFilterFromString } from '@shared/abilities/contentAbilities.js'
 import { TIMING } from '@/utils/common'
 import { createTokenCursorStack } from '@/utils/tokenTargeting'
 import { executeInstantAutoStep, advanceToNextStepWithCoords, type AutoStep } from './modeHandlers.js'
+import { countTokensFromBoard } from '../useAppCounters.js'
 
 export interface ActionHandlerProps {
   gameState: GameState
@@ -237,6 +238,14 @@ function handleContinueAutoSteps(
 
   const autoStepsContext = action.payload?._autoStepsContext
 
+  console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps called', {
+    hasAutoStepsContext: !!autoStepsContext,
+    hasSteps: !!autoStepsContext?.steps,
+    currentStepIndex: autoStepsContext?.currentStepIndex,
+    totalSteps: autoStepsContext?.steps?.length,
+    stepContext: action.payload?.stepContext,
+  })
+
   if (!autoStepsContext || !autoStepsContext.steps) {
     markAbilityUsed(sourceCoords, !!action.isDeployAbility, false, action.readyStatusToRemove)
     return
@@ -249,13 +258,40 @@ function handleContinueAutoSteps(
   // This fixes False Orders Option 2 where Stun x2 needs to be placed after move
   const chainedActionFromStep = action.payload?.chainedAction
 
+  console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps - stepContext:', {
+    lastPlacedToken: stepContext?.lastPlacedToken,
+    placedTokens: stepContext?.placedTokens,
+    placedTokensCount: stepContext?.placedTokens?.length || 0,
+  })
+
   // CRITICAL: currentStepIndex is the COMPLETED step index from autoStepsContext
   // advanceToNextStepWithCoords expects the COMPLETED step index and will calculate nextStepIndex itself
   const completedStepIndex = currentStepIndex
 
+  // CRITICAL FIX: DO NOT clear placedTokens when advancing to next step
+  // This fixes Overwatch where tokens are placed in multiple CREATE_STACK steps
+  // and ALL placed tokens need to be counted in the final dynamicResource calculation
+  // placedTokens should accumulate throughout all steps of the current action
+  // Only clear placedTokens when all steps are complete (see below)
+  console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps - keeping placedTokens for accumulation', {
+    completedStepIndex,
+    totalSteps: steps.length,
+    placedTokens: commandContext?.placedTokens,
+  })
+
   // Check if there are more steps
   if (completedStepIndex >= steps.length) {
+    console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps - all steps complete')
     // All steps complete!
+    // CRITICAL: Clear placedTokens after all steps are done
+    if (props.setCommandContext) {
+      props.setCommandContext(prev => ({
+        ...prev,
+        placedTokens: undefined,
+        lastPlacedToken: undefined,
+      }))
+      console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps - cleared placedTokens after all steps complete')
+    }
     // CRITICAL: Execute chainedAction if present (False Orders Option 2: Stun x2 after move)
     if (chainedActionFromStep) {
       // Execute the chained action directly
@@ -285,6 +321,11 @@ function handleContinueAutoSteps(
   // Call advanceToNextStepWithCoords with the necessary props
   // CRITICAL: Pass completedStepIndex + 1 because advanceToNextStepWithCoords uses the index directly
   // Type assertion: we pass a subset of ModeHandlersProps
+  console.log('[OVERWATCH-DEBUG] handleContinueAutoSteps - calling advanceToNextStepWithCoords with stepContext:', {
+    stepContextLastPlacedToken: stepContext?.lastPlacedToken,
+    stepContextPlacedTokensCount: stepContext?.placedTokens?.length || 0,
+    completedStepIndex,
+  })
   advanceToNextStepWithCoords(
     {
       abilityMode: tempAbilityMode,
@@ -318,9 +359,56 @@ function handleGlobalAutoApply(
 ): void {
   const { gameState, getFreshGameState, localPlayerId, commandContext, markAbilityUsed, triggerNoTarget, triggerFloatingText, updatePlayerScore, applyGlobalEffect, addBoardCardStatus, removeStatusByType, handleActionExecution: execAction, sendAction } = props
 
+  console.log('[OVERWATCH-DEBUG] handleGlobalAutoApply called:', {
+    actionType: action.type,
+    sourceCard: action.sourceCard?.name,
+    hasCustomAction: !!action.payload?.customAction,
+    customAction: action.payload?.customAction,
+    hasDynamicResource: !!action.payload?.dynamicResource,
+    hasTokenPlacement: !!(action.payload?.tokenType && (action.payload?.count || action.payload?.count === 0)),
+    hasAutoStepsContext: !!(action.payload as any)?._autoStepsContext,
+    currentStepIndex: (action.payload as any)?._autoStepsContext?.currentStepIndex,
+  })
+
   // CRITICAL: Use _commandContext from payload if available (from AUTO_STEPS)
   // This ensures that lastPlacedToken from stepContext is available
-  const effectiveCommandContext = (action.payload as any)?._commandContext || commandContext
+  let effectiveCommandContext = (action.payload as any)?._commandContext || commandContext
+
+  // CRITICAL: Also check for _lastPlacedToken directly in payload (from advanceToNextStepWithCoords)
+  // This is passed synchronously and doesn't rely on async React state updates
+  // This fixes Overwatch Option 2 where the Aim token placed in step 1 needs to be counted in step 2
+  const lastPlacedTokenFromPayload = (action.payload as any)?._lastPlacedToken
+  // CRITICAL FIX: Also check for _placedTokens from payload (from advanceToNextStepWithCoords)
+  // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+  const placedTokensFromPayload = (action.payload as any)?._placedTokens
+  console.log('[OVERWATCH-DEBUG] handleGlobalAutoApply - checking for _lastPlacedToken:', {
+    hasLastPlacedToken: !!lastPlacedTokenFromPayload,
+    lastPlacedToken: lastPlacedTokenFromPayload,
+    hasEffectiveCommandContext: !!effectiveCommandContext,
+    effectiveCommandContextHasLastPlacedToken: !!effectiveCommandContext.lastPlacedToken,
+    hasPlacedTokens: !!placedTokensFromPayload,
+    placedTokensCount: placedTokensFromPayload?.length || 0,
+    placedTokens: placedTokensFromPayload,
+  })
+  if (lastPlacedTokenFromPayload && !effectiveCommandContext.lastPlacedToken) {
+    effectiveCommandContext = {
+      ...effectiveCommandContext,
+      lastPlacedToken: lastPlacedTokenFromPayload,
+      sourceOwnerId: (action.payload as any)?._sourceOwnerIdFromStep,
+      // CRITICAL FIX: Also add placedTokens from payload
+      // This fixes Overwatch where multiple tokens placed in the same step need to be counted
+      ...(placedTokensFromPayload ? { placedTokens: placedTokensFromPayload } : {}),
+    }
+    console.log('[OVERWATCH-DEBUG] handleGlobalAutoApply - using _lastPlacedToken from payload:', lastPlacedTokenFromPayload)
+  } else if (placedTokensFromPayload && !effectiveCommandContext.placedTokens) {
+    // CRITICAL FIX: If we have placedTokens but no lastPlacedToken, still add placedTokens
+    // This can happen when stepContext only has placedTokens (backward compatibility)
+    effectiveCommandContext = {
+      ...effectiveCommandContext,
+      placedTokens: placedTokensFromPayload,
+    }
+    console.log('[OVERWATCH-DEBUG] handleGlobalAutoApply - using _placedTokens from payload (no lastPlacedToken):', placedTokensFromPayload)
+  }
 
   // P2P: Token placement on moved card (False Orders option 2: Stun x2)
   // Send to host for processing since client can't directly modify shared state
@@ -567,12 +655,16 @@ function handleGlobalAutoApply(
         }
         // CRITICAL: Preserve _autoStepsContext in chainedAction for AUTO_STEPS continuation
         const autoStepsContext = (action.payload as any)?._autoStepsContext
+        const currentStepContext = (action.payload as any)?.stepContext
         const chainedActionToExecute = autoStepsContext
           ? {
               ...action.chainedAction,
               payload: {
                 ...(action.chainedAction.payload || (action.chainedAction as any).details || {}),
                 _autoStepsContext: autoStepsContext,
+                // CRITICAL FIX: Also preserve stepContext to maintain placedTokens across steps
+                // This fixes guest Overwatch where tokens placed in step 0 need to be counted in step 1 dynamicCount
+                stepContext: currentStepContext,
               },
             }
           : action.chainedAction
@@ -594,6 +686,7 @@ function handleGlobalAutoApply(
     // CRITICAL: Continue AUTO_STEPS if this was part of a multi-step command
     // This ensures CLEANUP_COMMAND is executed after contextReward step (Tactical Maneuver)
     const autoStepsContext = (action.payload as any)?._autoStepsContext
+    const currentStepContext = (action.payload as any)?.stepContext
     if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
       // CRITICAL: Do NOT increment currentStepIndex here!
       // handleContinueAutoSteps will pass it to advanceToNextStepWithCoords as the COMPLETED step index,
@@ -608,6 +701,9 @@ function handleGlobalAutoApply(
             // Keep currentStepIndex as-is - it represents the step that just completed
             currentStepIndex: autoStepsContext.currentStepIndex,
           },
+          // CRITICAL FIX: Preserve stepContext to maintain placedTokens across AUTO_STEPS
+          // This fixes Overwatch where tokens placed in earlier steps need to be counted in later steps
+          stepContext: currentStepContext,
         },
         sourceCard: action.sourceCard,
         sourceCoords: action.sourceCoords || sourceCoords,
@@ -631,18 +727,32 @@ function handleGlobalAutoApply(
     if (type === 'draw') {
       const ownerId = action.sourceCard?.ownerId ?? localPlayerId ?? 0
       const freshState = getFreshGameState()
-      let tokenCount = 0
 
-      // Count tokens of specified type owned by this player on battlefield
-      freshState.board.forEach((row: any[]) => {
-        row.forEach((cell: any) => {
-          if (cell.card?.statuses) {
-            const matchingTokens = cell.card.statuses.filter((s: any) =>
-              s.type === factor && s.addedByPlayerId === ownerId
-            )
-            tokenCount += matchingTokens.length
-          }
-        })
+      console.log('[OVERWATCH-DEBUG] dynamicResource calculation START', {
+        factor,
+        baseCount,
+        ownerId,
+        localPlayerId,
+        sourceCard: action.sourceCard?.name,
+      })
+
+      // OPTIMIZED: Use countTokensFromBoard instead of manual board scanning
+      // This function:
+      // - Correctly counts ALL tokens (uses statusIndex to handle multiple tokens of same type on one card)
+      // - Includes lastPlacedToken if not yet on board (fixes guest WebRTC sync delay)
+      const lastPlacedToken = effectiveCommandContext?.lastPlacedToken
+      const allTokens = countTokensFromBoard(ownerId, freshState, factor, lastPlacedToken)
+      const tokenCount = allTokens.length
+
+      console.log('[OVERWATCH-DEBUG] dynamicResource - used countTokensFromBoard:', {
+        tokenCount,
+        tokens: allTokens.map(t => ({ cardId: t.cardId, tokenType: t.tokenType, coords: t.boardCoords }))
+      })
+
+      console.log('[OVERWATCH-DEBUG] dynamicResource FINAL result:', {
+        tokenCount,
+        baseCount,
+        totalToDraw: baseCount + tokenCount,
       })
 
       const totalToDraw = baseCount + tokenCount
@@ -665,8 +775,11 @@ function handleGlobalAutoApply(
       // CRITICAL: Continue AUTO_STEPS if this was part of a multi-step command
       // This ensures CLEANUP_COMMAND is executed after dynamicResource step
       const autoStepsContext = (action.payload as any)?._autoStepsContext
+      const currentStepContext = (action.payload as any)?.stepContext
       if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined) {
         // Create CONTINUE_AUTO_STEPS action to advance to the next step
+        // CRITICAL FIX: Preserve stepContext across AUTO_STEPS to maintain placedTokens
+        // This fixes Overwatch where tokens placed in earlier steps need to be tracked across all steps
         const continueAction: AbilityAction = {
           type: 'CONTINUE_AUTO_STEPS',
           mode: 'AUTO_STEPS',
@@ -675,6 +788,9 @@ function handleGlobalAutoApply(
               ...autoStepsContext,
               currentStepIndex: autoStepsContext.currentStepIndex + 1,
             },
+            // CRITICAL: Carry forward stepContext to preserve placedTokens across steps
+            // This ensures the next step has access to all tokens placed so far
+            stepContext: currentStepContext,
           },
           sourceCard: action.sourceCard,
           sourceCoords: action.sourceCoords || sourceCoords,
@@ -831,7 +947,20 @@ function handleCreateStack(
   props: ActionHandlerProps
 ): void {
   // CRITICAL: Extract commandContext first before logging
-  const { gameState, getFreshGameState, setAbilityMode, setCursorStack, triggerNoTarget, localPlayerId, setTargetingMode, addBoardCardStatus, markAbilityUsed, handleActionExecution: execAction, commandContext } = props
+  const { gameState, getFreshGameState, setAbilityMode, setCursorStack, triggerNoTarget, localPlayerId, setTargetingMode, addBoardCardStatus, markAbilityUsed, handleActionExecution: execAction, commandContext, setCommandContext } = props
+
+  // CRITICAL FIX: Clear placedTokens at the start of CREATE_STACK
+  // This ensures that tokens from previous abilities/steps are not counted
+  // Only needed for the first CREATE_STACK in a sequence (not AUTO_STEPS continuation)
+  // CRITICAL: Do NOT clear placedTokens if this is from a command card (Overwatch, etc.)
+  // Command cards have multiple CREATE_STACK steps that need to accumulate placedTokens
+  if (setCommandContext && !action.payload?._autoStepsContext && !action.payload?.commandCardId && commandContext?.placedTokens) {
+    setCommandContext(prev => ({
+      ...prev,
+      placedTokens: undefined,
+    }))
+    console.log('[OVERWATCH-DEBUG] handleCreateStack - cleared placedTokens from previous command')
+  }
 
   // CRITICAL: Resolve targetOwnerId -2 (TARGET_MOVED_OWNER) before processing CREATE_STACK
   // This fixes False Orders Option 1 where chainedAction is executed directly from useAppCounters
@@ -922,39 +1051,71 @@ function handleCreateStack(
     const sourceOwnerIdForResolution = action.sourceCard?.ownerId ?? actionSourceOwnerId ?? localPlayerId ?? 0
     const ownerId = rawOwnerId === 'source' ? sourceOwnerIdForResolution : rawOwnerId
 
-    // CRITICAL: Use getFreshGameState() instead of gameState to get the most up-to-date state
-    // This fixes commands like Data Interception where dynamicCount needs to see tokens
-    // added in previous steps (e.g., Exploit counters placed in the same command)
-    const freshState = getFreshGameState()
-
-    // Also check commandContext.lastPlacedToken for tokens just placed in current step
-    const justPlaced = commandContext?.lastPlacedToken
-    let justPlacedCounted = false
-
-    freshState.board.forEach((r: any[], rowIdx: number) => {
-      r.forEach((c: any, colIdx: number) => {
-        if (c.card?.statuses) {
-          const matchingTokens = c.card.statuses.filter((s: any) => s.type === factor && s.addedByPlayerId === ownerId)
-          if (matchingTokens.length > 0) {
-            dynamic += matchingTokens.length
-            tokenLocations.push({ row: rowIdx, col: colIdx, cardName: c.card.name })
-          }
-        }
-      })
+    console.log('[OVERWATCH-DEBUG] dynamicCount calculation START', {
+      factor,
+      rawOwnerId,
+      resolvedOwnerId: ownerId,
+      localPlayerId,
+      sourceCard: action.sourceCard?.name,
+      stepLastPlacedToken: (action.payload as any)?.stepContext?.lastPlacedToken,
+      commandLastPlacedToken: commandContext?.lastPlacedToken,
     })
 
-    // DIAGNOSTIC: Check if token was just placed but not yet in freshState
-    if (justPlaced && justPlaced.tokenType === factor && justPlaced.addedByPlayerId === ownerId) {
-      if (!tokenLocations.some(t => t.row === justPlaced.boardCoords?.row && t.col === justPlaced.boardCoords?.col)) {
-        dynamic += 1
-        tokenLocations.push({
-          row: justPlaced.boardCoords?.row ?? -1,
-          col: justPlaced.boardCoords?.col ?? -1,
-          cardName: '(just placed via commandContext)'
-        })
-        justPlacedCounted = true
+    // OPTIMIZED: Use countTokensFromBoard instead of manual board scanning
+    // CRITICAL: For guests, freshState may be stale due to WebRTC sync delay
+    // We need to ALSO count tokens from stepContext.placedTokens that aren't on board yet
+    const freshState = getFreshGameState()
+    // CRITICAL FIX: Check both stepContext and _lastPlacedToken (from advanceToNextStepWithCoords)
+    // This fixes guest Overwatch where the Aim token placed in step 1 needs to be counted in step 2
+    // stepContext is used by CONTINUE_AUTO_STEPS, _lastPlacedToken is used by advanceToNextStepWithCoords
+    const stepLastPlacedToken = (action.payload as any)?._lastPlacedToken || (action.payload as any)?.stepContext?.lastPlacedToken
+    const stepPlacedTokens = (action.payload as any)?._placedTokens || (action.payload as any)?.stepContext?.placedTokens || []
+
+    console.log('[OVERWATCH-DEBUG] dynamicCount - stepContext data:', {
+      stepLastPlacedToken: stepLastPlacedToken ? { cardId: stepLastPlacedToken.cardId, tokenType: stepLastPlacedToken.tokenType } : null,
+      stepPlacedTokensCount: stepPlacedTokens.length,
+      stepPlacedTokens: stepPlacedTokens.map(t => ({ cardId: t.cardId, tokenType: t.tokenType, addedByPlayerId: t.addedByPlayerId })),
+      // Debug: show where the data came from
+      hasUnderscoreLastPlacedToken: !!(action.payload as any)?._lastPlacedToken,
+      hasStepContextLastPlacedToken: !!(action.payload as any)?.stepContext?.lastPlacedToken,
+      hasUnderscorePlacedTokens: !!(action.payload as any)?._placedTokens,
+      hasStepContextPlacedTokens: !!(action.payload as any)?.stepContext?.placedTokens,
+    })
+
+    // Use countTokensFromBoard for base count (handles board + lastPlacedToken)
+    let allTokens = countTokensFromBoard(ownerId, freshState, factor, stepLastPlacedToken)
+
+    console.log('[OVERWATCH-DEBUG] dynamicCount - after countTokensFromBoard:', {
+      boardTokenCount: allTokens.length,
+      boardTokens: allTokens.map(t => ({ cardId: t.cardId, tokenType: t.tokenType, coords: t.boardCoords }))
+    })
+
+    // CRITICAL: For guests with WebRTC sync delay, ALSO add tokens from stepContext.placedTokens
+    // that aren't already counted on the board (freshState is stale)
+    let addedFromStepPlaced = 0
+    if (stepPlacedTokens.length > 0) {
+      const boardTokenKeys = new Set(allTokens.map(t => `${t.boardCoords.row},${t.boardCoords.col}`))
+      for (const pt of stepPlacedTokens) {
+        if (pt.tokenType === factor && pt.addedByPlayerId === ownerId) {
+          const key = `${pt.boardCoords.row},${pt.boardCoords.col}`
+          if (!boardTokenKeys.has(key)) {
+            allTokens.push(pt)
+            boardTokenKeys.add(key)
+            addedFromStepPlaced++
+          }
+        }
       }
     }
+
+    dynamic = allTokens.length
+
+    console.log('[OVERWATCH-DEBUG] dynamicCount - FINAL calculation:', {
+      boardTokenCount: allTokens.length - addedFromStepPlaced,
+      addedFromStepPlaced,
+      finalTokenCount: dynamic,
+      factor,
+      ownerId
+    })
 
     count = dynamic
   }

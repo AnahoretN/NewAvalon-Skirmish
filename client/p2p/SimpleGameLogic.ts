@@ -688,6 +688,10 @@ export function applyAction(
       newState = handleModifyCardPower(newState, data)
       break
 
+    case 'ADD_GAME_LOG_ENTRY':
+      newState = handleAddGameLogEntry(newState, data)
+      break
+
     default:
     }
 
@@ -1279,42 +1283,8 @@ function handleMoveCardOnBoard(state: GameState, playerId: number, data: any): G
   }
 
 
-  // STUN RULE: If card is stunned and owner tries to move it, skip movement but apply other effects
-  const isStunned = sourceCard.statuses?.some((s: any) => s.type === 'Stun')
-  const isOwnedByMover = sourceCard.ownerId === playerId
-  const skipMovement = isStunned && isOwnedByMover
-
-  if (skipMovement) {
-    // Skip movement but still process token placement (other effects) below
-    // We keep the original state.board since no movement occurred
-    let newState = { ...state }
-
-    // CRITICAL: Handle token placement on the (non-moved) card (False Orders Option 1: Stun x2)
-    // The card stays at fromCoords, not toCoords
-    const payload = targetingMode?.chainedAction?.payload || targetingMode?.action?.chainedAction?.payload || targetingMode?.action?.payload?.chainedAction?.payload
-    const contextCardId = directContextCardId || payload?.contextCardId
-    const tokenType = payload?.tokenType
-    const count = payload?.count
-    const ownerId = payload?.ownerId
-
-    if (tokenType && count && contextCardId) {
-      // Find the card by ID - it's at fromCoords since movement was skipped
-      const cardAtSource = state.board[fromRow]?.[fromCol]?.card
-      if (cardAtSource && cardAtSource.id === contextCardId) {
-        const targetCoords = { row: fromRow, col: fromCol }
-        for (let i = 0; i < count; i++) {
-          newState = handleAddStatusToBoardCard(newState, playerId, {
-            boardCoords: targetCoords,
-            statusType: tokenType,
-            ownerId: ownerId || playerId,
-            count: 1,
-          })
-        }
-      }
-    }
-
-    return newState
-  }
+  // STUN RULE REMOVED: Cards with Stun can now be moved by effects
+  // Stun still prevents ability activation, but no longer blocks movement
 
   // Move card
   const newBoard = state.board.map((row, r) =>
@@ -4493,6 +4463,23 @@ function handleRequestDeckView(state: GameState, playerId: number, data: any): G
       requestingPlayerId: playerId,
       targetPlayerId
     }
+  }
+}
+
+/**
+ * ADD_GAME_LOG_ENTRY - Add a log entry to the game logs
+ * This syncs game logs between all players in P2P mode
+ */
+function handleAddGameLogEntry(state: GameState, data: any): GameState {
+  const { entry } = data || {}
+  if (!entry) {
+    return state
+  }
+
+  // Add the log entry to the game logs
+  return {
+    ...state,
+    gameLogs: [...(state.gameLogs || []), entry]
   }
 }
 

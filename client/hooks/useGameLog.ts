@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { GameState, GameLogEntry, GameLogActionType, Player, PlayerColor, GameDelta } from '@/types'
 import { deepCloneState } from '@/utils/common'
 import { applyDeltas, invertDeltas } from '@/utils/deltaUtils'
@@ -50,6 +50,19 @@ export const useGameLog = ({
   const generateLogId = useCallback((): string => {
     return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   }, [])
+
+  // Sync logs with gameState.gameLogs (for P2P mode)
+  // When host broadcasts gameState with updated gameLogs, sync local logs
+  useEffect(() => {
+    if (gameState?.gameLogs && gameState.gameLogs.length > 0) {
+      // Only update if gameState.gameLogs is different from current logs
+      const currentIds = new Set(logs.map(l => l.id))
+      const newLogs = gameState.gameLogs.filter(l => !currentIds.has(l.id))
+      if (newLogs.length > 0) {
+        setLogs(prev => [...prev, ...newLogs])
+      }
+    }
+  }, [gameState?.gameLogs, logs])
 
   // Initialize base state (call once when game starts)
   const initializeBaseState = useCallback((initialState: GameState) => {
@@ -315,9 +328,9 @@ export const createLogDetails = {
   discardFromBoard: (cardName: string) => ({ cardName }),
   activateAbility: (cardName: string, abilityText: string, targetLocation?: 'board' | 'hand' | 'discard' | 'deck' | 'showcase', targetPlayerName?: string, toCoords?: { row: number; col: number }) => ({ cardName, abilityText, targetLocation, targetPlayerName, toCoords }),
   placeToken: (tokenType: string, targetCardName?: string) => ({ abilityText: tokenType, targetCardName }),
-  placeTokenOnCard: (tokenType: string, targetPlayerName?: string, targetCardName?: string, toCoords?: { row: number; col: number }, targetLocation?: 'board' | 'hand') => ({ abilityText: tokenType, targetPlayerName, targetCardName, toCoords, targetLocation }),
+  placeTokenOnCard: (tokenType: string, targetPlayerName?: string, targetCardName?: string, toCoords?: { row: number; col: number }, targetLocation?: 'board' | 'hand', count?: number) => ({ abilityText: tokenType, targetPlayerName, targetCardName, toCoords, targetLocation, count }),
   removeStatus: (statusType: string, cardName: string) => ({ abilityText: statusType, cardName }),
-  addStatus: (statusType: string, cardName: string) => ({ abilityText: statusType, cardName }),
+  addStatus: (statusType: string, cardName: string, count?: number) => ({ abilityText: statusType, cardName, count }),
   scorePoints: (amount: number, newScore: number) => ({ amount, newScore }),
   roundWin: (winners: number[], winnerName?: string) => ({ winners, winnerName }),
   matchWin: (winnerName: string) => ({ winnerName }),

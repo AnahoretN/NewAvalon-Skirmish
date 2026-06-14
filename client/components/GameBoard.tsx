@@ -109,6 +109,7 @@ interface GridCellProps {
   hoveredCell: { row: number; col: number } | null; // State-based hover tracking for drag highlight
   setHoveredCell: (cell: { row: number; col: number } | null) => void; // Setter for hover state
   hideDummyCards?: boolean; // Hide dummy cards setting
+  boardSize?: number; // Board size for offset calculations (defaults to 7)
 }
 
 const GridCell = memo((props: GridCellProps) => {
@@ -144,8 +145,8 @@ const GridCell = memo((props: GridCellProps) => {
         if (!scoringLines || scoringLines.length === 0) {return null}
         // CRITICAL: Convert full board coordinates to active grid coordinates
         // The active grid is centered in the full board
-        // board is available in parent scope, use fixed size 7 for consistency
-        const totalSize = 7  // Board is always 7x7
+        // Use boardSize prop if available, otherwise default to 7 (GRID_MAX_SIZE)
+        const totalSize = props.boardSize ?? 7
         const offset = Math.floor((totalSize - activeGridSize) / 2)
         const activeRow = row - offset
         const activeCol = col - offset
@@ -197,6 +198,12 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
       }, [draggedItem, handleDrop, row, col, setHoveredCell])
 
       const handleClick = useCallback(() => {
+        // CRITICAL: Ignore ALL clicks when cursorStack is active (has tokens in cursor slot)
+        // This prevents tokens from disappearing when clicking empty cells
+        if (cursorStack) {
+          return
+        }
+
         // Check if we're in line selection mode (for abilities) - check FIRST before other modes
         // This ensures abilities like Zius, Unwavering Integrator, Logistics Chain work correctly
         const isInLineSelectionMode = abilityMode && isLineSelectionMode(abilityMode.mode)
@@ -1208,6 +1215,7 @@ export const GameBoard = memo<GameBoardProps>(({
                 hoveredCell={hoveredCell}
                 setHoveredCell={setHoveredCell}
                 hideDummyCards={hideDummyCards}
+                boardSize={board.length}
               />
               {/* Legacy floating texts (for backward compatibility) */}
               {cellFloatingTexts.map(ft => (

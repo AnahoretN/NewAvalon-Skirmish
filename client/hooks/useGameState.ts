@@ -20,6 +20,7 @@ import { shuffleDeck } from '@shared/utils/array'
 import { assignUniqueRandomColor } from '../utils/colorAssigner'
 import { getDecksData } from '../content'
 import { DeckType } from '../types'
+import { canTokenTargetHand } from '../utils/tokenTargeting'
 
 // Export type for use in other files
 export type ConnectionStatus = 'Connecting' | 'Connected' | 'Disconnected'
@@ -1356,6 +1357,12 @@ export function useGameState(_props: any = {}): UseGameStateResult {
         })
       } else if (item.source === 'counter_panel') {
         // Размещение жетона/статуса на карту в руке (например, Revealed)
+        // CRITICAL: Check if this token type is allowed to target hand cards
+        // Some tokens (Aim, Exploit, Shield, Stun) can only be placed on board cards
+        if (!canTokenTargetHand(item.statusType || '')) {
+          console.log('[CURSOR-DEBUG] Token', item.statusType, 'cannot target hand cards - dropping rejected')
+          return // Reject the drop
+        }
         sendAction('ADD_STATUS_TO_HAND_CARD', {
           playerId: target.playerId,
           cardIndex: target.cardIndex,

@@ -92,7 +92,7 @@
       "cost": 2,
       "loyalty": 0,
       "discipline": 1,
-      "abilityText": "Setup: Move to an empty cell in its line.\nCommit: Place a Stun counter on an adjacent opponent card with your Threat.",
+      "abilityText": "Deploy: Place 2 Stun counters on a card with your Threat.\nSetup: Move to an empty cell in its line.",
       "flavorText": "They say the city never sleeps. We make sure it doesn't even blink.",
       "types": [
         "Unit",
@@ -104,24 +104,24 @@
       ],
       "ABILITIES": [
         {
-          "type": "setup",
-          "supportRequired": false,
-          "action": "ENTER_MODE",
-          "mode": "PATROL_MOVE",
-          "details": {}
-        },
-        {
-          "type": "commit",
+          "type": "deploy",
           "supportRequired": false,
           "action": "CREATE_STACK",
           "mode": null,
           "details": {
             "tokenType": "Stun",
-            "count": 1,
+            "count": 2,
             "requiredTargetStatus": "Threat",
-            "onlyOpponents": true,
-            "mustBeAdjacentToSource": true
+            "requireStatusFromSourceOwner": true,
+            "placeAllAtOnce": true
           }
+        },
+        {
+          "type": "setup",
+          "supportRequired": false,
+          "action": "ENTER_MODE",
+          "mode": "PATROL_MOVE",
+          "details": {}
         }
       ]
     },
@@ -133,7 +133,7 @@
       "cost": 1,
       "loyalty": 1,
       "discipline": 1,
-      "abilityText": "Deploy: Push an adjacent opponent card 1 cell; you may move into its former cell.\nCommit: Place a Stun counter on an adjacent opponent card with your Threat.",
+      "abilityText": "Deploy: Push an adjacent opponent card 1 cell; you may move into its former cell.\nSetup: Place a Stun counter on an adjacent opponent card with your Threat.",
       "flavorText": "- \"Citizens, disperse! This meeting is unauthorized by SynchroTech.\"",
       "types": [
         "Unit",
@@ -152,7 +152,7 @@
           "details": {}
         },
         {
-          "type": "commit",
+          "type": "setup",
           "supportRequired": false,
           "action": "CREATE_STACK",
           "mode": null,
@@ -772,7 +772,7 @@
       "cost": 0,
       "loyalty": 1,
       "discipline": 2,
-      "abilityText": "Deploy: Place 1 Exploit counter on each opponent card in lines with any Threat.\nCommit (requires Support): Move an opponent card with your Exploit counter 1 cell.",
+      "abilityText": "Deploy: Place 2 Exploit counter on each opponent card in line with any Threat.\nCommit (requires Support): Move an opponent card with your Exploit counter 1 cell.",
       "flavorText": "The Signal is truth. All else is noise.",
       "types": [
         "Unit",
@@ -790,7 +790,7 @@
           "mode": "LINES_WITH_THREAT",
           "details": {
             "tokenType": "Exploit",
-            "count": 1,
+            "count": 2,
             "target": "opponent",
             "filter": "inLinesWithThreat"
           }
@@ -2188,7 +2188,7 @@
     "Stun": {
       "name": "Stun",
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365403/Stun_pbe7ex.webp",
-      "description": "A stunned card cannot activate abilities or gain points. Its owner's effects cannot move it, but opponent effects can.\nRemove 1 stun counter from the card after the Scoring Phase.",
+      "description": "A stunned card cannot activate abilities (Deploy, Setup, Commit, Passive). It is ignored when calculating dynamic statuses (Support, Threat).\nRemove 1 stun counter from the card after the Scoring Phase.",
       "sortOrder": 4,
       "allowedPanels": [
         "COUNTER_PANEL"

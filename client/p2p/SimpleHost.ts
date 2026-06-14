@@ -1026,6 +1026,13 @@ export class SimpleHost {
       }
     })
 
+    // CRITICAL: Clear _deckViewRequest flag after broadcasting
+    // This prevents the flag from persisting and affecting future state updates
+    if (this.state._deckViewRequest) {
+      // @ts-ignore - temporary flag for deck view request
+      delete this.state._deckViewRequest
+    }
+
     // NOTE: Do NOT clear floatingTexts here anymore
     // They are cleared by each client's useEffect after processing
     // This prevents multiple notifyStateUpdate calls from overwriting floatingTexts
@@ -1311,7 +1318,9 @@ export class SimpleHost {
             // Deck is full data (for viewing)
             deck: player.deck || [],
             deckSize: player.deck?.length || 0,
-            discard: [],
+            // CRITICAL FIX: Include full discard data for deck view
+            // This fixes the bug where players couldn't see other players' discard piles
+            discard: player.discard || [],
             discardSize: player.discard?.length || 0,
             announcedCard: player.announcedCard ? { ...player.announcedCard } : null,
             lastPlayedCardId: player.lastPlayedCardId || null,

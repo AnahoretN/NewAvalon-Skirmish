@@ -227,6 +227,10 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
         return `${tr('placed')} ${details.abilityText} ${tr('gl_on')} ${details.targetCardName || tr('target')}`
       case 'PLACE_TOKEN_ON_CARD': {
         let tokenDesc = `${tr('placed')} ${details.abilityText || tr('token')}`
+        // Add count if more than 1
+        if (details.count && details.count > 1) {
+          tokenDesc += ` x${details.count}`
+        }
         if (details.targetPlayerName) {
           tokenDesc += ` ${tr('gl_on')} ${details.targetPlayerName}'s`
         }
@@ -242,8 +246,11 @@ const GameLogModal: React.FC<GameLogModalProps> = ({
       }
       case 'REMOVE_STATUS':
         return `${tr('removed')} ${details.abilityText} ${tr('gl_from')} ${details.cardName}`
-      case 'ADD_STATUS':
-        return `${tr('added')} ${details.abilityText} ${tr('gl_to')} ${details.cardName}`
+      case 'ADD_STATUS': {
+        const count = details.count || 1
+        const countText = count > 1 ? ` x${count}` : ''
+        return `${tr('added')} ${details.abilityText}${countText} ${tr('gl_to')} ${details.cardName}`
+      }
       case 'SCORE_POINTS': {
         const points = details.amount || 0
         const newScore = details.newScore || 0

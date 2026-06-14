@@ -413,6 +413,12 @@ export interface CommandContext {
         tokenType: string;
         addedByPlayerId: number;
     }; // For Data Interception, Overwatch - tracks token placement for dynamic count calculations
+    placedTokens?: Array<{
+        boardCoords: { row: number; col: number };
+        cardId: string;
+        tokenType: string;
+        addedByPlayerId: number;
+    }>; // For Overwatch - tracks ALL tokens placed in the current step (for accurate dynamic count calculations)
 }
 
 /**
