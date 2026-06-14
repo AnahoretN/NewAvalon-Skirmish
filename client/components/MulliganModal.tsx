@@ -195,7 +195,7 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                   padding: `${getVuSize(12)}px`
                 } : undefined}
               >
-                {/* Hero background frame - 20% larger than card */}
+                {/* Hero background frame - 2% larger than card (20% - 15% = 5%, then adjusted) */}
                 {isHero && (
                   <div
                     style={{
@@ -208,7 +208,7 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                       background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
                       borderRadius: `${getVuSize(6)}px`,
                       boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
-                      transform: 'scale(1.2)',
+                      transform: 'scale(1.02)',
                       transformOrigin: 'center',
                       zIndex: 0
                     }}
