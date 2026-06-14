@@ -189,33 +189,29 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                 }`}
                 style={isHero ? {
                   position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: `${getVuSize(12)}px`
+                  zIndex: 0
                 } : undefined}
               >
-                {/* Hero background frame - 2% larger than card (20% - 15% = 5%, then adjusted) */}
+                {/* Hero background frame - extends beyond card */}
                 {isHero && (
                   <div
                     style={{
                       position: 'absolute',
-                      inset: 0,
-                      margin: 'auto',
-                      width: '100%',
-                      height: '100%',
+                      top: '50%',
+                      left: '50%',
+                      width: 'calc(100% + 22px)',
+                      height: 'calc(100% + 22px)',
                       padding: `${getVuSize(3)}px`,
                       background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
                       borderRadius: `${getVuSize(6)}px`,
                       boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
-                      transform: 'scale(1.02)',
-                      transformOrigin: 'center',
-                      zIndex: 0
+                      transform: 'translate(-50%, -50%)',
+                      zIndex: -1
                     }}
                   />
                 )}
                 {/* Card - normal size */}
-                <div className="aspect-square w-full" style={isHero ? { position: 'relative', zIndex: 1 } : undefined}>
+                <div className="aspect-square w-full">
                   <div data-card-image="true" className="w-full h-full">
                     <Card
                       card={card}
