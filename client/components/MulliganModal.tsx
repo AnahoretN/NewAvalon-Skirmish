@@ -193,12 +193,12 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                   background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
                   borderRadius: `${getVuSize(6)}px`,
                   boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
-                  transform: 'scale(1.05)',
+                  transform: 'scale(0.945)',
                   transformOrigin: 'center'
                 } : undefined}
               >
                 <div className="aspect-square w-full" style={isHero ? {
-                  transform: 'scale(0.9524)',
+                  transform: 'scale(1.058)',
                   transformOrigin: 'center'
                 } : undefined}>
                   <div data-card-image="true" className="w-full h-full">
