@@ -199,8 +199,8 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                       position: 'absolute',
                       top: '50%',
                       left: '50%',
-                      width: 'calc(100% + 22px)',
-                      height: 'calc(100% + 22px)',
+                      width: 'calc(100% + 10px)',
+                      height: 'calc(100% + 10px)',
                       padding: `${getVuSize(3)}px`,
                       background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
                       borderRadius: `${getVuSize(6)}px`,
@@ -220,6 +220,7 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                       localPlayerId={localPlayerId}
                       imageRefreshVersion={imageRefreshVersion}
                       disableActiveHighlights={true}
+                      overrideBorderColor={isHero ? 'white' : undefined}
                     />
                   </div>
                 </div>

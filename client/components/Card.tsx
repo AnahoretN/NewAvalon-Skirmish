@@ -30,6 +30,7 @@ interface CardCoreProps {
   showCommandPlayButton?: boolean; // Show Play button for command cards (only for local player's hand)
   smallPowerDisplay?: boolean; // Use smaller power circle and font (for right panel opponents)
   showDeckBuilderBadges?: boolean; // Show Cost (blue) and Loyalty (purple) badges in deck builder
+  overrideBorderColor?: string; // Override border color (e.g., for hero cards in mulligan)
 }
 
 interface CardInteractionProps {
@@ -190,6 +191,7 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
   showCommandPlayButton = false, // Only show Play button for local player's hand
   smallPowerDisplay = false, // Use smaller power display (for right panel)
   showDeckBuilderBadges = false, // Show Cost/Loyalty badges in deck builder
+  overrideBorderColor, // Override border color (e.g., white for hero cards in mulligan)
   preserveDeployAbilities: _preserveDeployAbilities = false, // Used in arePropsEqual comparison
   activeAbilitySourceCoords = null,
   boardCoords = null,
@@ -732,6 +734,7 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
               onMouseLeave={handleMouseLeave}
               onMouseMove={handleMouseMove}
               onMouseDown={handleMouseDown}
+              style={overrideBorderColor ? { borderColor: `${overrideBorderColor} !important` } : undefined}
               className={`relative w-full h-full ${backColorClass} rounded-vu-5 shadow-md border-2 ${borderColorClass} flex-shrink-0 ${shouldHighlight ? 'z-10' : ''}`}
             >
               {revealedGroups.length > 0 && (
@@ -752,13 +755,6 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
       ) : (
         // --- CARD FACE ---
         (() => {
-          // Theme color priority: owner's player color > card color > deck theme > dark gray (visible)
-          // ownerColorData is null if card.ownerId is missing or not found in playerColorMap
-          // IMPORTANT: Always ensure themeColor is set to avoid invisible borders
-          const themeColor = ownerColorData
-            ? ownerColorData.border
-            : (DECK_THEMES[card.deck]?.color || 'border-gray-600')
-
           // Background priority:
           // 1. Token cards use their color
           // 2. Placeholder cards (with card.color set) use player's color for fill
@@ -780,6 +776,10 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
 
           // Border: Always use base width, white border for ready ability is now at cell level
           const borderClass = 'border-[calc(4*var(--vu-base))]'
+          // Determine theme color class (but will be overridden if overrideBorderColor is set)
+          const themeColor = overrideBorderColor ? '' : (ownerColorData
+            ? ownerColorData.border
+            : (DECK_THEMES[card.deck]?.color || 'border-gray-600'))
 
           // Inner glow effect with owner's color when ready
           // Note: White border is now applied at cell level in GameBoard to avoid overflow clipping
@@ -818,7 +818,10 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
               onMouseMove={handleMouseMove}
               onMouseDown={handleMouseDown}
               onClick={handleCardClick}
-              style={innerGlowStyle}
+              style={{
+                ...innerGlowStyle,
+                ...(overrideBorderColor && { borderColor: `${overrideBorderColor} !important` })
+              }}
               className={`relative w-full h-full ${cardBg} rounded-vu-5 shadow-md ${borderClass} ${themeColor} ${textColor} select-none overflow-hidden ${shouldHighlight ? 'z-10' : ''}`}
             >
               {currentImageSrc ? (
@@ -846,7 +849,10 @@ const CardCore: React.FC<CardCoreProps & CardInteractionProps> = memo(({
                       className={`absolute inset-0 w-full h-full object-cover ${
                         disableImageTransition ? 'opacity-100' : (imageLoadState === 'loading' ? 'opacity-0' : 'opacity-100')
                       }`}
-                      style={disableImageTransition ? undefined : { transition: 'opacity 0.15s ease-out' }}
+                      style={{
+                        ...(!disableImageTransition && { transition: 'opacity 0.15s ease-out' }),
+                        ...(overrideBorderColor && { outline: 'none', border: 'none' })
+                      }}
                     />
                   )}
                   {readyAbilityOverlay}
