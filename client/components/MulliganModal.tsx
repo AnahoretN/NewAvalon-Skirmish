@@ -1,7 +1,20 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import type { Card as CardType, Player as PlayerType } from '@/types'
 import { Card } from './Card'
 import { useLanguage } from '@/contexts/LanguageContext'
+
+// Player color mapping for borders
+const PLAYER_BORDER_COLORS: Record<string, string> = {
+  blue: '#3b82f6',
+  purple: '#a855f7',
+  red: '#ef4444',
+  green: '#22c55e',
+  yellow: '#eab308',
+  orange: '#f97316',
+  pink: '#ec4899',
+  brown: '#a16207',
+  cyan: '#06b6d4',
+}
 
 // Вычисляем VU размер для элементов динамически
 const getVuSize = (vu: number) => {
@@ -45,6 +58,56 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
   const [attempts, setAttempts] = useState<number>(freshPlayer?.mulliganAttempts ?? MAX_MULLIGAN_ATTEMPTS)
   const [exchangingIndex, setExchangingIndex] = useState<number | null>(null)
 
+  // Sort hand so Hero card is always first (when starting hero mode is enabled)
+  const displayHand = useMemo(() => {
+    if (!gameState?.startingHeroEnabled) {
+      return hand
+    }
+
+    const heroIndex = hand.findIndex(card => card.types && card.types.includes('Hero'))
+    if (heroIndex === -1 || heroIndex === 0) {
+      return hand // No hero or already first
+    }
+
+    // Move hero to first position
+    const sortedHand = [...hand]
+    const [heroCard] = sortedHand.splice(heroIndex, 1)
+    sortedHand.unshift(heroCard)
+    return sortedHand
+  }, [hand, gameState?.startingHeroEnabled])
+
+  // Get the original index for display hand (because we may have moved hero to front)
+  const getOriginalIndex = (displayIndex: number) => {
+    if (!gameState?.startingHeroEnabled) {
+      return displayIndex
+    }
+
+    const heroIndex = hand.findIndex(card => card.types && card.types.includes('Hero'))
+    if (heroIndex === -1) {
+      return displayIndex
+    }
+
+    // If we're looking at the first card and it's the hero, return the hero's original index
+    if (displayIndex === 0) {
+      return heroIndex
+    }
+
+    // For cards after position 0, adjust for the shift
+    const originalHand = hand.map((c, i) => ({ card: c, originalIndex: i }))
+    const withoutHero = originalHand.filter((_, i) => i !== heroIndex)
+
+    return withoutHero[displayIndex]?.originalIndex ?? displayIndex
+  }
+
+  // Check if a card at display index is the hero card
+  const isHeroCard = (displayIndex: number) => {
+    if (!gameState?.startingHeroEnabled) {
+      return false
+    }
+    const card = displayHand[displayIndex]
+    return card?.types && card.types.includes('Hero')
+  }
+
   // Sync with gameState when it updates
   useEffect(() => {
     if (freshPlayer) {
@@ -72,7 +135,7 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
   const confirmedCount = realPlayers.filter(p => p.hasMulliganed).length
   const totalPlayers = realPlayers.length
 
-  const handleCardClick = useCallback((index: number) => {
+  const handleCardClick = useCallback((displayIndex: number) => {
     if (exchangingIndex !== null) {
       return // Already exchanging
     }
@@ -83,14 +146,17 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
       return // No attempts left
     }
 
-    setExchangingIndex(index)
-    onExchangeCard(index)
+    // Convert display index to original index for the handler
+    const originalIndex = getOriginalIndex(displayIndex)
+
+    setExchangingIndex(displayIndex)
+    onExchangeCard(originalIndex)
 
     // Reset exchanging state after a short delay
     setTimeout(() => {
       setExchangingIndex(null)
     }, 500)
-  }, [exchangingIndex, onExchangeCard, canExchange])
+  }, [exchangingIndex, onExchangeCard, canExchange, getOriginalIndex])
 
   const handleConfirm = useCallback(() => {
     onConfirm(hand)
@@ -108,17 +174,33 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
 
         {/* Cards grid - 2 rows by 3 columns */}
         <div className="grid grid-cols-3 gap-vu-md mb-vu-lg mx-auto" style={{ gap: `${getVuSize(16)}px`, marginBottom: `${getVuSize(24)}px`, maxWidth: `${getVuSize(600)}px` }}>
-          {hand.map((card, index) => {
+          {displayHand.map((card, displayIndex) => {
             const isClickable = canInteract && canExchange
+            const isHero = isHeroCard(displayIndex)
+            const playerColor = freshPlayer?.color || 'blue'
+            const borderColor = PLAYER_BORDER_COLORS[playerColor] || PLAYER_BORDER_COLORS.blue
+
             return (
               <div
                 key={card.id}
-                onClick={() => isClickable && handleCardClick(index)}
+                onClick={() => isClickable && handleCardClick(displayIndex)}
                 className={`flex flex-col ${
                   isClickable ? 'cursor-pointer' : 'cursor-default'
                 }`}
+                style={isHero ? {
+                  position: 'relative',
+                  padding: `${getVuSize(3)}px`,
+                  background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
+                  borderRadius: `${getVuSize(6)}px`,
+                  boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
+                  transform: 'scale(1.05)',
+                  transformOrigin: 'center'
+                } : undefined}
               >
-                <div className="aspect-square w-full">
+                <div className="aspect-square w-full" style={isHero ? {
+                  transform: 'scale(0.9524)',
+                  transformOrigin: 'center'
+                } : undefined}>
                   <div data-card-image="true" className="w-full h-full">
                     <Card
                       card={card}

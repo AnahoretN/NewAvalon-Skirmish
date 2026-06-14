@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-06-14
+
+### Fixed
+- **Starting Hero Mulligan**: Fixed Hero card mulligan when no other Heroes remain in deck
+  - Previously: When only one Hero existed in deck, mulligan was blocked
+  - Now: Hero card mulligans as normal card when no other Heroes available in deck
+  - Maintains flexibility while preserving Starting Hero rule intent
+
 ## [0.4.1] - 2026-06-12
 
 ### Changed
@@ -17,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Patrol Agent & Riot Agent Ability Timing**: Stun placement moved from Commit to Setup phase
   - **Patrol Agent**: Now places Stun in Setup phase instead of Commit
   - **Riot Agent**: Now places Stun in Setup phase instead of Commit
-  - Changed ability text to show "Setup: Move OR Place Stun" for Patrol Agent
-  - More logical timing: control effects applied at turn start rather than end
 
 
 

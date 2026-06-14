@@ -157,7 +157,7 @@ export function createInitialState(): GameState {
     autoAbilitiesEnabled: true, // Match server default
     autoDrawEnabled: true, // Match server default
     strictRulesEnabled: true, // Lateness effect enabled by default
-    startingHeroEnabled: false, // Starting hero rule disabled by default
+    startingHeroEnabled: true, // Starting hero rule enabled by default
     currentRound: 1,
     turnNumber: 1,
     roundEndTriggered: false,

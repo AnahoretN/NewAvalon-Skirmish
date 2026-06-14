@@ -87,13 +87,54 @@ export function handleExchangeMulliganCard(ws, data) {
     // Remove the card from hand
     const [exchangedCard] = player.hand.splice(data.cardIndex, 1);
 
-    // Put exchanged card at bottom of deck
-    player.deck.push(exchangedCard);
+    // Variable to track the new card drawn (for logging)
+    let newCard = null;
 
-    // Draw new card from top of deck
-    const newCard = player.deck.shift();
-    if (newCard) {
-      player.hand.push(newCard);
+    // Check if starting hero rule is enabled and the exchanged card is a Hero
+    const isHeroCard = exchangedCard.types && exchangedCard.types.includes('Hero');
+
+    if (gameState.startingHeroEnabled && isHeroCard) {
+      // Count heroes in deck (excluding the one being exchanged)
+      const heroesInDeck = player.deck.filter(card => card.types && card.types.includes('Hero'));
+
+      if (heroesInDeck.length > 0) {
+        // Put exchanged hero at bottom of deck
+        player.deck.push(exchangedCard);
+
+        // Draw the next hero from deck (the topmost one)
+        const nextHeroIndex = player.deck.findIndex(card => card.types && card.types.includes('Hero'));
+        if (nextHeroIndex !== -1) {
+          const [nextHero] = player.deck.splice(nextHeroIndex, 1);
+          player.hand.push(nextHero);
+          newCard = nextHero;
+        }
+      } else {
+        // No heroes in deck - mulligan as normal card (draw from top)
+        player.deck.push(exchangedCard);
+        newCard = player.deck.shift();
+        if (newCard) {
+          player.hand.push(newCard);
+        }
+      }
+    } else {
+      // Normal exchange - put card at bottom of deck, draw from top
+      player.deck.push(exchangedCard);
+
+      // Draw new card from top of deck
+      newCard = player.deck.shift();
+      if (newCard) {
+        player.hand.push(newCard);
+      }
+    }
+
+    // After mulligan, ensure Hero card is always at first position (if starting hero rule is enabled)
+    if (gameState.startingHeroEnabled) {
+      const heroIndex = player.hand.findIndex(card => card.types && card.types.includes('Hero'));
+      if (heroIndex !== -1 && heroIndex !== 0) {
+        // Move hero to first position
+        const [heroCard] = player.hand.splice(heroIndex, 1);
+        player.hand.unshift(heroCard);
+      }
     }
 
     // Update sizes

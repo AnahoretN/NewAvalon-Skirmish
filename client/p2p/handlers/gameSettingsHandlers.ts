@@ -266,23 +266,26 @@ export function handleExchangeMulliganCard(state: GameState, playerId: number, c
   const isHeroCard = exchangedCard.types && exchangedCard.types.includes('Hero')
 
   if (state.startingHeroEnabled && isHeroCard) {
-    // Count heroes in deck (including the one being put at bottom)
+    // Count heroes in deck (excluding the one being exchanged)
     const heroesInDeck = newDeck.filter(card => card.types && card.types.includes('Hero'))
 
-    if (heroesInDeck.length === 0) {
-      // Only one hero in deck (the one being exchanged) - cannot mulligan
-      // Return the card to hand and don't change anything
-      return state
-    }
+    if (heroesInDeck.length > 0) {
+      // Put exchanged hero at bottom of deck
+      newDeck.push(exchangedCard)
 
-    // Put exchanged hero at bottom of deck
-    newDeck.push(exchangedCard)
-
-    // Draw the next hero from deck (the topmost one)
-    const nextHeroIndex = newDeck.findIndex(card => card.types && card.types.includes('Hero'))
-    if (nextHeroIndex !== -1) {
-      const [nextHero] = newDeck.splice(nextHeroIndex, 1)
-      newHand.push(nextHero)
+      // Draw the next hero from deck (the topmost one)
+      const nextHeroIndex = newDeck.findIndex(card => card.types && card.types.includes('Hero'))
+      if (nextHeroIndex !== -1) {
+        const [nextHero] = newDeck.splice(nextHeroIndex, 1)
+        newHand.push(nextHero)
+      }
+    } else {
+      // No heroes in deck - mulligan as normal card (draw from top)
+      newDeck.push(exchangedCard)
+      const newCard = newDeck.shift()
+      if (newCard) {
+        newHand.push(newCard)
+      }
     }
   } else {
     // Normal exchange - put card at bottom of deck, draw from top
@@ -293,13 +296,25 @@ export function handleExchangeMulliganCard(state: GameState, playerId: number, c
     }
   }
 
+  // After mulligan, ensure Hero card is always at first position (if starting hero rule is enabled)
+  let finalHand = newHand
+  if (state.startingHeroEnabled) {
+    const heroIndex = newHand.findIndex(card => card.types && card.types.includes('Hero'))
+    if (heroIndex !== -1 && heroIndex !== 0) {
+      // Move hero to first position
+      finalHand = [...newHand]
+      const [heroCard] = finalHand.splice(heroIndex, 1)
+      finalHand.unshift(heroCard)
+    }
+  }
+
   // Update player with new hand, deck, and decremented attempts
   const newPlayers = [...state.players]
   newPlayers[playerIndex] = {
     ...player,
-    hand: newHand,
+    hand: finalHand,
     deck: newDeck,
-    handSize: newHand.length,
+    handSize: finalHand.length,
     deckSize: newDeck.length,
     mulliganAttempts: attemptsLeft - 1,
   }
