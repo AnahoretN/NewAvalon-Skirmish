@@ -189,18 +189,33 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
                 }`}
                 style={isHero ? {
                   position: 'relative',
-                  padding: `${getVuSize(3)}px`,
-                  background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
-                  borderRadius: `${getVuSize(6)}px`,
-                  boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
-                  transform: 'scale(0.945)',
-                  transformOrigin: 'center'
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: `${getVuSize(12)}px`
                 } : undefined}
               >
-                <div className="aspect-square w-full" style={isHero ? {
-                  transform: 'scale(1.058)',
-                  transformOrigin: 'center'
-                } : undefined}>
+                {/* Hero background frame - 20% larger than card */}
+                {isHero && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      margin: 'auto',
+                      width: '100%',
+                      height: '100%',
+                      padding: `${getVuSize(3)}px`,
+                      background: `linear-gradient(135deg, ${borderColor}, ${borderColor}dd)`,
+                      borderRadius: `${getVuSize(6)}px`,
+                      boxShadow: `0 0 ${getVuSize(20)}px ${borderColor}88, inset 0 0 ${getVuSize(10)}px ${borderColor}44`,
+                      transform: 'scale(1.2)',
+                      transformOrigin: 'center',
+                      zIndex: 0
+                    }}
+                  />
+                )}
+                {/* Card - normal size */}
+                <div className="aspect-square w-full" style={isHero ? { position: 'relative', zIndex: 1 } : undefined}>
                   <div data-card-image="true" className="w-full h-full">
                     <Card
                       card={card}
