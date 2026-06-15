@@ -188,6 +188,8 @@ const enUI = {
   readyToStart: 'Ready to Start?',
   gameWillBegin: 'The game will begin once all players are ready. You can still change your name and deck.',
   mulliganInstruction: 'Click on a card to send it to the bottom of the deck and draw another card in its place.',
+  roundTransitionMulligan: 'Round Transition Mulligan',
+  roundTransitionMulliganInstruction: 'All players draw 1 card. The winner has 1 less mulligan attempt, the loser has 1 more.',
   dragCardsReorder: 'Drag cards to reorder. Drag outside to move card to another zone.',
   dragOutsideAnotherZone: 'Drag outside to move card to another zone.',
   dropHere: 'Drop here',

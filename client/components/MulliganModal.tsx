@@ -52,6 +52,7 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
 
   // Get player from gameState (fresh data)
   const freshPlayer = gameState?.players?.find((p: any) => p.id === localPlayerId)
+  const isRoundTransition = gameState?.isRoundTransitionMulligan || false
 
   // Internal state - sync with fresh data from gameState
   const [hand, setHand] = useState<CardType[]>(freshPlayer?.hand || players.find(p => p.id === localPlayerId)?.hand || [])
@@ -129,6 +130,8 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
   }, [freshPlayer, attempts, hand])
 
   const canExchange = attempts > 0
+  const needsScrolling = displayHand.length > 6
+  const gridCols = 'repeat(3, minmax(0, 1fr))'
 
   // Check player confirmation status - only count REAL players (dummy auto-confirm)
   const realPlayers = players.filter(p => !p.isDummy && !p.isSpectator)
@@ -164,16 +167,27 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
 
   const canInteract = localPlayerId !== null && !freshPlayer?.hasMulliganed
 
+  // Get appropriate text based on mulligan type
+  const mulliganTitle = isRoundTransition ? tt('roundTransitionMulligan') : tt('mulligan')
+  const mulliganInstruction = isRoundTransition ? tt('roundTransitionMulliganInstruction') : tt('mulliganInstruction')
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
       <div className="bg-gray-800 rounded-vu-2 p-vu-xl max-w-vu-modal w-full max-h-vu-modal overflow-y-auto" style={{ padding: `${getVuSize(24)}px`, maxWidth: `${getVuSize(800)}px`, maxHeight: `${getVuSize(900)}px` }}>
         <div className="text-center mb-vu-min" style={{ marginBottom: `${getVuSize(8)}px` }}>
-          <h2 className="font-bold text-white" style={{ fontSize: `${getVuSize(32)}px` }}>{tt('mulligan')}</h2>
+          <h2 className="font-bold text-white" style={{ fontSize: `${getVuSize(32)}px` }}>{mulliganTitle}</h2>
         </div>
-        <p className="text-gray-400 mb-vu-lg text-center" style={{ marginBottom: `${getVuSize(24)}px`, fontSize: `${getVuSize(18)}px` }}>{tt('mulliganInstruction')}</p>
+        <p className="text-gray-400 mb-vu-lg text-center" style={{ marginBottom: `${getVuSize(24)}px`, fontSize: `${getVuSize(18)}px` }}>{mulliganInstruction}</p>
 
-        {/* Cards grid - 2 rows by 3 columns */}
-        <div className="grid grid-cols-3 gap-vu-md mb-vu-lg mx-auto" style={{ gap: `${getVuSize(16)}px`, marginBottom: `${getVuSize(24)}px`, maxWidth: `${getVuSize(600)}px` }}>
+        {/* Cards grid - scrollable if more than 6 cards */}
+        <div className={`${needsScrolling ? 'overflow-y-auto' : ''} grid gap-vu-md mb-vu-lg mx-auto`}
+          style={{
+            gap: `${getVuSize(16)}px`,
+            marginBottom: `${getVuSize(24)}px`,
+            maxWidth: `${getVuSize(600)}px`,
+            gridTemplateColumns: gridCols,
+            maxHeight: needsScrolling ? `${getVuSize(500)}px` : 'auto'
+          }}>
           {displayHand.map((card, displayIndex) => {
             const isClickable = canInteract && canExchange
             const isHero = isHeroCard(displayIndex)

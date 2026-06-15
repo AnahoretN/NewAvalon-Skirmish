@@ -242,6 +242,7 @@ export interface GameState {
   isPrivate: boolean;
   isReadyCheckActive: boolean;
   isMulliganActive: boolean; // True when mulligan/reorder initial hand is available
+  isRoundTransitionMulligan: boolean; // True if this is a round transition mulligan (not initial game mulligan)
   mulliganCompletePlayers: number[]; // Player IDs who have confirmed their mulligan
   revealRequests: RevealRequest[];
   activePlayerId: number | null; // Aligned with server: null when no active player

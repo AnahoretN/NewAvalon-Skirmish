@@ -408,35 +408,83 @@ export function handleCompleteRound(state: GameState): GameState {
  * - Resets all players' scores to 0
  * - Closes round end modal
  * - Clears game winner
- * - Starts Preparation phase for active player (auto-draw if enabled)
- * - Transitions to Setup phase
+ * - ALL players draw 1 additional card for the new round
+ * - Activates mulligan phase with attempts based on round results:
+ *   - Base: 3 attempts
+ *   - Round winner(s): lose 1 attempt (so 2 attempts)
+ *   - Player with lowest score: +1 attempt (so 4 attempts)
  */
 export function handleStartNextRound(state: GameState): GameState {
   const newRound = (state.currentRound || 1) + 1
 
-  const newPlayers = state.players.map(p => ({
-    ...p,
-    score: 0  // Reset score
-  }))
+  // Get round winners and find lowest score player
+  const roundWinnerIds = state.roundWinners[state.currentRound] || []
+  const activeNonDummyPlayers = state.players.filter(p => !p.isDummy && !p.isSpectator && !p.isDisconnected)
 
-  const activePlayerId = state.activePlayerId
-  let finalPhase = 0  // Preparation phase
+  // Find player with lowest score at end of round
+  let lowestScore = Infinity
+  let lowestScorePlayerIds: number[] = []
 
-  // Execute Preparation phase for active player
-  if (activePlayerId) {
-    const player = newPlayers.find(p => p.id === activePlayerId)
-    if (player && state.autoDrawEnabled && player.deck && player.deck.length > 0) {
-      const drawnCard = player.deck.shift()
-      if (drawnCard) {
-        player.hand.push(drawnCard)
-        player.handSize = player.hand.length
-        player.deckSize = player.deck.length
+  activeNonDummyPlayers.forEach(p => {
+    if (p.score < lowestScore) {
+      lowestScore = p.score
+      lowestScorePlayerIds = [p.id]
+    } else if (p.score === lowestScore) {
+      lowestScorePlayerIds.push(p.id)
+    }
+  })
+
+  // Update players: reset scores, draw 1 card, calculate mulligan attempts
+  const newPlayers = state.players.map(p => {
+    // Skip disconnected and spectators
+    if (p.isDisconnected || p.isSpectator) {
+      return { ...p, score: 0 }
+    }
+
+    // Skip dummy players - reset score, no draw, no mulligan
+    if (p.isDummy) {
+      return {
+        ...p,
+        score: 0,
+        mulliganAttempts: 0,
+        hasMulliganed: true
       }
     }
 
-    // Transition to Setup phase
-    finalPhase = 1
-  }
+    // Calculate mulligan attempts for real players
+    let attempts = 3  // Base
+
+    // Round winner loses 1 attempt
+    if (roundWinnerIds.includes(p.id)) {
+      attempts = Math.max(0, attempts - 1)
+    }
+    // Lowest score player gets +1 attempt (but NOT if they're also a winner)
+    else if (lowestScorePlayerIds.includes(p.id)) {
+      attempts = attempts + 1
+    }
+
+    // Draw 1 card for new round
+    const newHand = [...(p.hand || [])]
+    const newDeck = [...(p.deck || [])]
+
+    if (newDeck.length > 0) {
+      const drawnCard = newDeck.shift()
+      if (drawnCard) {
+        newHand.push(drawnCard)
+      }
+    }
+
+    return {
+      ...p,
+      score: 0,
+      hand: newHand,
+      deck: newDeck,
+      handSize: newHand.length,
+      deckSize: newDeck.length,
+      mulliganAttempts: attempts,
+      hasMulliganed: false
+    }
+  })
 
   const newState = {
     ...state,
@@ -444,7 +492,10 @@ export function handleStartNextRound(state: GameState): GameState {
     players: newPlayers,
     isRoundEndModalOpen: false,
     gameWinner: null,
-    currentPhase: finalPhase
+    isMulliganActive: true,  // Activate mulligan phase
+    isRoundTransitionMulligan: true,  // This is round transition mulligan
+    mulliganCompletePlayers: [],
+    currentPhase: 0  // Stay at phase 0 during mulligan (will be set to 1 after all confirm)
   }
 
   // CRITICAL FIX: Clear processed triggers when starting new round

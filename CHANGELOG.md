@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-06-15
+
+### Added
+- **Round Transition Mulligan**: New mulligan phase when starting a new round
+  - After a round ends and players click "Start Round X", all players draw 1 card
+  - Mulligan modal opens with dynamic mulligan attempts based on round results:
+    - Base: 3 attempts for all players
+    - Round winner(s): 1 less attempt (2 attempts)
+    - Player with lowest score (not winner): 1 extra attempt (4 attempts)
+    - All other players: 3 attempts
+  - Mulligan modal now supports scrolling when players have more than 6 cards
+  - Different modal text for round transition vs initial game mulligan
+  - Added `isRoundTransitionMulligan` flag to GameState to distinguish mulligan types
+  - Translations added in all languages (English, Russian, Serbian, Ukrainian, Belarusian)
+
+### Changed
+- **Round Transition Flow**: Completely redesigned round start flow
+  - Previously: Round start simply reset scores and began next turn
+  - Now: All players draw 1 card, then enter mulligan phase, then begin next round
+  - Mulligan attempts are strategically balanced based on previous round performance
+
 ## [0.4.2] - 2026-06-14
 
 ### Fixed

@@ -213,6 +213,8 @@ export const sr: TranslationResource = {
     readyToStart: 'Spremni za početak?',
     gameWillBegin: 'Igra će početi kada svi igrači budu spremni. I dalje možete promeniti ime i špil.',
     mulliganInstruction: 'Kliknite na kartu da biste je poslali na dno špila i izvukli drugu kartu umesto nje.',
+    roundTransitionMulligan: 'Mulingan između rundi',
+    roundTransitionMulliganInstruction: 'Svi igrači izvlače po 1 kartu. Kod pobednika ima 1 pokušaj mulingana manje, kod gubitka 1 više.',
     dragCardsReorder: 'Prevucite karte za ređanje. Prevucite napolje da biste premestili kartu u drugu zonu.',
     dragOutsideAnotherZone: 'Prevucite napolje da biste premestili kartu u drugu zonu.',
     dropHere: 'Spusti ovde',

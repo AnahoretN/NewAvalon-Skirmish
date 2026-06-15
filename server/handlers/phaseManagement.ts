@@ -88,8 +88,11 @@ export function handleToggleAutoDraw(ws, data) {
  * - Resets all players' scores to 0
  * - Closes round end modal
  * - Clears game winner
- * - Starts Preparation phase for active player (auto-draw if enabled)
- * - Transitions to Setup phase
+ * - ALL players draw 1 additional card for the new round
+ * - Activates mulligan phase with attempts based on round results:
+ *   - Base: 3 attempts
+ *   - Round winner(s): lose 1 attempt (so 2 attempts)
+ *   - Player with lowest score: +1 attempt (so 4 attempts)
  */
 export function handleStartNextRound(ws, data) {
   try {
@@ -106,49 +109,132 @@ export function handleStartNextRound(ws, data) {
 
     const newRound = (gameState.currentRound || 1) + 1;
 
-    // Reset all players' scores
-    const newPlayers = gameState.players.map(p => ({
-      ...p,
-      score: 0
-    }));
+    // Get round winners and find lowest score player
+    const roundWinnerIds = gameState.roundWinners[gameState.currentRound] || [];
+    const activeNonDummyPlayers = gameState.players.filter(p => !p.isDummy && !p.isSpectator && !p.isDisconnected);
 
-    // Update game state with new round, reset scores, and Preparation phase
+    // Find player with lowest score at end of round
+    let lowestScore = Infinity;
+    let lowestScorePlayerIds = [];
+
+    activeNonDummyPlayers.forEach(p => {
+      if (p.score < lowestScore) {
+        lowestScore = p.score;
+        lowestScorePlayerIds = [p.id];
+      } else if (p.score === lowestScore) {
+        lowestScorePlayerIds.push(p.id);
+      }
+    });
+
+    // Update players: reset scores, draw 1 card, calculate mulligan attempts
+    const newPlayers = gameState.players.map(p => {
+      // Skip disconnected and spectators
+      if (p.isDisconnected || p.isSpectator) {
+        return { ...p, score: 0 };
+      }
+
+      // Skip dummy players - reset score, no draw, no mulligan
+      if (p.isDummy) {
+        return {
+          ...p,
+          score: 0,
+          mulliganAttempts: 0,
+          hasMulliganed: true
+        };
+      }
+
+      // Calculate mulligan attempts for real players
+      let attempts = 3;  // Base
+
+      // Round winner loses 1 attempt
+      if (roundWinnerIds.includes(p.id)) {
+        attempts = Math.max(0, attempts - 1);
+      }
+      // Lowest score player gets +1 attempt (but NOT if they're also a winner)
+      else if (lowestScorePlayerIds.includes(p.id)) {
+        attempts = attempts + 1;
+      }
+
+      // Draw 1 card for new round
+      const newHand = [...(p.hand || [])];
+      const newDeck = [...(p.deck || [])];
+
+      if (newDeck.length > 0) {
+        const drawnCard = newDeck.shift();
+        if (drawnCard) {
+          newHand.push(drawnCard);
+        }
+      }
+
+      return {
+        ...p,
+        score: 0,
+        hand: newHand,
+        deck: newDeck,
+        handSize: newHand.length,
+        deckSize: newDeck.length,
+        mulliganAttempts: attempts,
+        hasMulliganed: false
+      };
+    });
+
+    // Update game state with new round, reset scores, and activate mulligan
     const updatedState = {
       ...gameState,
       currentRound: newRound,
       players: newPlayers,
       isRoundEndModalOpen: false,
       gameWinner: null,
-      currentPhase: 0  // Preparation phase
+      isMulliganActive: true,  // Activate mulligan phase
+      isRoundTransitionMulligan: true,  // This is round transition mulligan
+      mulliganCompletePlayers: [],
+      currentPhase: 0  // Stay at phase 0 during mulligan (will be set to 1 after all confirm)
     };
-
-    // Execute Preparation phase for active player (auto-draw if enabled)
-    const activePlayerId = updatedState.activePlayerId;
-    if (activePlayerId) {
-      const player = updatedState.players.find((p: any) => p.id === activePlayerId) as any;
-      if (player && (updatedState as any).autoDrawEnabled && player.deck && player.deck.length > 0) {
-        const drawnCard = player.deck.shift();
-        if (drawnCard) {
-          player.hand.push(drawnCard);
-          player.handSize = player.hand.length;
-          player.deckSize = player.deck.length;
-          logger.info(`[handleStartNextRound] Player ${activePlayerId} drew card, hand: ${player.hand.length}`);
-        }
-      }
-
-      // Transition to Setup phase
-      updatedState.currentPhase = 1;
-      logger.info(`[handleStartNextRound] Transition to Setup phase for player ${activePlayerId}`);
-    }
 
     // Update the game state
     updateGameState(gameId, updatedState);
     // Broadcast to all players
     broadcastToGame(gameId, updatedState);
 
-    logger.info(`[handleStartNextRound] Game ${gameId}: Round ${newRound} started, scores reset`);
+    logger.info(`[handleStartNextRound] Game ${gameId}: Round ${newRound} started, mulligan activated`);
   } catch (err) {
     logger.error('[handleStartNextRound] Error:', err);
+  }
+}
+
+/**
+ * Handle COMPLETE_ROUND message
+ * - Closes the round end modal
+ * - Does NOT start a new round or reset scores
+ * - Allows player to view the battlefield after game over
+ */
+export function handleCompleteRound(ws, data) {
+  try {
+    const { gameId } = data;
+    const gameState = getGameState(gameId);
+
+    if (!gameState) {
+      ws.send(JSON.stringify({
+        type: 'ERROR',
+        message: 'Game not found'
+      }));
+      return;
+    }
+
+    // Just close the modal, don't change anything else
+    const updatedState = {
+      ...gameState,
+      isRoundEndModalOpen: false
+    };
+
+    // Update the game state
+    updateGameState(gameId, updatedState);
+    // Broadcast to all players
+    broadcastToGame(gameId, updatedState);
+
+    logger.info(`[handleCompleteRound] Game ${gameId}: Round end modal closed`);
+  } catch (err) {
+    logger.error('[handleCompleteRound] Error:', err);
   }
 }
 

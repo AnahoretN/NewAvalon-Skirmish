@@ -225,6 +225,8 @@ export interface TranslationResource {
     readyToStart: string;
     gameWillBegin: string;
     mulliganInstruction: string;
+    roundTransitionMulligan: string;
+    roundTransitionMulliganInstruction: string;
     dragCardsReorder: string;
     dragOutsideAnotherZone: string;
     dropHere: string;

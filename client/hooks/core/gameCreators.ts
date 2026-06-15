@@ -146,6 +146,7 @@ export function createInitialState(): GameState {
     isPrivate: true,
     isReadyCheckActive: false,
     isMulliganActive: false,
+    isRoundTransitionMulligan: false,
     mulliganCompletePlayers: [],
     revealRequests: [],
     activePlayerId: null, // Aligned with server default (null)

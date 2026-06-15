@@ -81,6 +81,7 @@ export function createGameState(gameId: string, options: GameOptions = {}): Game
     activeGridSize: 4,
     isReadyCheckActive: false,
     isMulliganActive: false,
+    isRoundTransitionMulligan: false,
     mulliganCompletePlayers: [],
     created: Date.now(),
     lastActivity: Date.now(),

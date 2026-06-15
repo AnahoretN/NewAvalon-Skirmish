@@ -1697,8 +1697,8 @@ export function useGameState(_props: any = {}): UseGameStateResult {
   }, [sendAction])
 
   const closeRoundEndModalOnly = useCallback(() => {
-    // TODO
-  }, [])
+    sendAction('COMPLETE_ROUND', {})
+  }, [sendAction])
 
   const confirmMulligan = useCallback((newHand: any[]) => {
     sendAction('CONFIRM_MULLIGAN', { newHand })
