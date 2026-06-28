@@ -1154,7 +1154,7 @@
       "cost": 2,
       "loyalty": 5,
       "discipline": 0,
-      "abilityText": "Commit: Look at the top 2 cards of any deck. Put any number of them on the bottom of that deck.",
+      "abilityText": "Commit: Look at the top 3 cards of any deck. Put any number of them on the bottom of that deck.",
       "flavorText": "He finds things. Sometimes things that should stay lost.",
       "types": [
         "Unit",
@@ -1178,7 +1178,7 @@
         }
       ]
     },
-    "edithByron": {
+    "edithByronEE": {
       "name": "Edith Byron, Extreme Engineer",
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771367434/HERO_Edith_Byron_ny23vb.webp",
       "fallbackImage": "/images/cards/HOO_INVENTIVE_MAKER.png",
@@ -2349,7 +2349,7 @@
           "quantity": 1
         },
         {
-          "cardId": "EleftheriaMD",
+          "cardId": "edithByronEE",
           "quantity": 1
         },
         {
@@ -2515,7 +2515,7 @@
           "quantity": 1
         },
         {
-          "cardId": "edithByron",
+          "cardId": "FalkPD",
           "quantity": 1
         },
         {
