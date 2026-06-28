@@ -44,6 +44,7 @@ import { DeckType } from './types'
 import { STATUS_ICONS, STATUS_DESCRIPTIONS, PLAYER_COLOR_RGB } from './constants'
 import { getCountersDatabase, fetchContentDatabase } from './content'
 import { validateTarget, calculateValidTargets, checkActionHasTargets } from '@shared/utils/targeting'
+import { calculateActiveBounds } from '@shared/utils/lineSelection'
 import { getCommandActionByOption, getCommandOptions, isCommandCard } from './utils/autoAbilities'
 import { createTargetingActionFromCursorStack, createTargetingActionFromAbilityMode, determineTargetingPlayerId } from './utils/targetingActionUtils'
 import { getTokenTargetingRules } from './utils/tokenTargeting'
@@ -362,7 +363,6 @@ const AppInner = function AppInner() {
   // CRITICAL: The ref is updated SYNCHRONOUSLY here (line 365), not via useEffect
   // This ensures useAppCounters can read the current value immediately after update
   const setCommandContextWithRef = useCallback((value: React.SetStateAction<CommandContext>) => {
-    console.log('[OVERWATCH-DEBUG-APP-FIX-ACTIVE] setCommandContextWithRef INVOKED - fix v2 is active!')
     setCommandContext(prev => {
       const updated = typeof value === 'function' ? value(prev) : value
       commandContextRef.current = updated
@@ -1514,6 +1514,7 @@ const AppInner = function AppInner() {
   // These track previous targets to prevent unnecessary re-renders
   const prevBoardTargetsRef = useRef<{row: number, col: number}[]>([])
   const prevHandTargetsRef = useRef<{playerId: number, cardIndex: number}[]>([])
+  const prevAbilityModeRef = useRef<AbilityAction | null>(null)
 
   // Reset justAutoTransitioned when phase changes
   useEffect(() => {
@@ -1657,7 +1658,14 @@ const AppInner = function AppInner() {
 
     // CRITICAL: Use gameState for calculateValidTargets
     // This ensures filters see tokens added in previous steps of multi-step commands (e.g., Data Interception)
-    const boardTargets = effectiveAction ? calculateValidTargets(effectiveAction, gameState, actorId ?? null, commandContext) : []
+    // CRITICAL: Skip calculateValidTargets for line selection modes - they have their own targeting logic below
+    const isLineSelectionMode = abilityMode && !cursorStack && (
+      abilityMode.mode === 'SCORE_LAST_PLAYED_LINE' ||
+      abilityMode.mode === 'SELECT_LINE_START' ||
+      abilityMode.mode === 'SELECT_LINE_END' ||
+      abilityMode.mode === 'ZIUS_LINE_SELECT'
+    )
+    const boardTargets = (effectiveAction && !isLineSelectionMode) ? calculateValidTargets(effectiveAction, gameState, actorId ?? null, commandContext) : []
     const handTargets: {playerId: number, cardIndex: number}[] = []
 
     // Handle playMode - highlight empty board cells for unit placement
@@ -1757,24 +1765,42 @@ const AppInner = function AppInner() {
       }
     }
     // Line selection modes - only active when cursorStack is NOT active
-    if (abilityMode && !cursorStack && (abilityMode.mode === 'SCORE_LAST_PLAYED_LINE' || abilityMode.mode === 'SELECT_LINE_END' || abilityMode.mode === 'ZIUS_LINE_SELECT')) {
+    if (abilityMode && !cursorStack && (abilityMode.mode === 'SCORE_LAST_PLAYED_LINE' || abilityMode.mode === 'SELECT_LINE_START' || abilityMode.mode === 'SELECT_LINE_END' || abilityMode.mode === 'ZIUS_LINE_SELECT')) {
       const gridSize = boardSize
-      if (abilityMode.sourceCoords) {
-        // Highlight horizontal line (same row)
-        for (let c = 0; c < gridSize; c++) {
-          boardTargets.push({ row: abilityMode.sourceCoords.row, col: c })
+      const activeGridSize = gameState.activeGridSize || gridSize
+      // CRITICAL: Use active grid boundaries for line selection
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, activeGridSize)
+
+      // For SELECT_LINE_END, use firstCoords from payload (the first clicked cell)
+      // For other modes, use sourceCoords (but only if valid!)
+      const rawLineCoords = abilityMode.mode === 'SELECT_LINE_END' && abilityMode.payload?.firstCoords
+        ? abilityMode.payload.firstCoords
+        : abilityMode.sourceCoords
+
+      // CRITICAL: Check if lineCoords is valid (not {-1, -1} and not undefined)
+      const lineCoords = rawLineCoords && rawLineCoords.row >= 0 && rawLineCoords.col >= 0
+        ? rawLineCoords
+        : null
+
+      if (lineCoords) {
+        // Highlight horizontal line (same row) - only within active grid
+        for (let c = minBound; c <= maxBound; c++) {
+          boardTargets.push({ row: lineCoords.row, col: c })
         }
-        // Highlight vertical line (same column)
-        for (let r = 0; r < gridSize; r++) {
-          boardTargets.push({ row: r, col: abilityMode.sourceCoords.col })
+        // Highlight vertical line (same column) - only within active grid
+        for (let r = minBound; r <= maxBound; r++) {
+          boardTargets.push({ row: r, col: lineCoords.col })
         }
       } else {
-        for (let r = 0; r < gridSize; r++) {
-          for (let c = 0; c < gridSize; c++) {
+        // No line selected yet - highlight all cells in active grid
+        for (let r = minBound; r <= maxBound; r++) {
+          for (let c = minBound; c <= maxBound; c++) {
             boardTargets.push({ row: r, col: c })
           }
         }
       }
+    } else {
+      // Skip line selection for non-line modes
     }
 
     // Use universal targeting mode system to sync targets to all players
@@ -1810,7 +1836,22 @@ const AppInner = function AppInner() {
                                  !!gameState.targetingMode.action?.payload?.targetOwnerId)
 
     // Check if targets actually changed before setting state
-    const boardTargetsChanged = JSON.stringify(boardTargets) !== JSON.stringify(prevBoardTargetsRef.current)
+    // For line selection modes, also check if mode changed (e.g., SELECT_LINE_START -> SELECT_LINE_END)
+    // This ensures highlights update correctly when transitioning between line selection modes
+    const prevMode = prevAbilityModeRef.current?.mode
+    const currMode = abilityMode?.mode
+    const prevFirstCoords = prevAbilityModeRef.current?.payload?.firstCoords
+    const currFirstCoords = abilityMode?.payload?.firstCoords
+
+    // CRITICAL: Mode changed if:
+    // 1. The mode string is different (e.g., SELECT_LINE_START -> SELECT_LINE_END)
+    // 2. We're in SELECT_LINE_END and firstCoords changed (rare edge case)
+    // This ensures highlights update correctly during mode transitions
+    const modeChanged = currMode !== prevMode ||
+                       (currMode === 'SELECT_LINE_END' && prevMode === 'SELECT_LINE_END' &&
+                        ((currFirstCoords?.row !== prevFirstCoords?.row) || (currFirstCoords?.col !== prevFirstCoords?.col)))
+
+    const boardTargetsChanged = modeChanged || JSON.stringify(boardTargets) !== JSON.stringify(prevBoardTargetsRef.current)
     const handTargetsChanged = JSON.stringify(handTargets) !== JSON.stringify(prevHandTargetsRef.current)
 
     if (isHandTargetingMode) {
@@ -1881,48 +1922,47 @@ const AppInner = function AppInner() {
           targetingAction
         )
 
-        // CRITICAL: Line selection modes use abilityMode + handleLineSelection for their interaction
-        // They should NOT use setTargetingMode() which sends ABILITY_ACTIVATED to host
-        // This prevents immediate processing when guest clicks on a line
+        // CRITICAL: Line selection modes also need setTargetingMode for visual highlights
+        // The handleLineSelection still handles the actual interaction, but setTargetingMode
+        // ensures all players see the same highlights
+        // CRITICAL: For SELECT_CELL mode, never pass handTargets - only board targets
+        // SELECT_CELL is for selecting empty cells on the board, NOT cards in hand
+        const finalHandTargets = targetingAction.mode === 'SELECT_CELL' ? [] : handTargets
+
+        // CRITICAL: Don't override targetingMode if it already has handTargets
+        // This prevents CREATE_STACK handler's handTargets from being overwritten by useEffect
+        // When cursorStack is active, createTargetingActionFromCursorStack doesn't calculate handTargets,
+        // so we need to preserve the existing handTargets from gameState.targetingMode
+        const hasExistingHandTargets = gameState.targetingMode?.handTargets && gameState.targetingMode.handTargets.length > 0
+        if (hasExistingHandTargets && finalHandTargets.length === 0 && targetingAction.mode === 'SELECT_TARGET') {
+          // Preserve existing targetingMode with handTargets - don't overwrite with empty array
+          // Still update validTargets for UI highlights
+          if (boardTargetsChanged) {
+            setValidTargets(boardTargets)
+            prevBoardTargetsRef.current = boardTargets
+          }
+          const handTargetsToUse = gameState.targetingMode?.handTargets ?? []
+          if (JSON.stringify(handTargetsToUse) !== JSON.stringify(prevHandTargetsRef.current)) {
+            setValidHandTargets(handTargetsToUse)
+            prevHandTargetsRef.current = handTargetsToUse
+          }
+          return undefined
+        }
+
+        // CRITICAL: Don't restore targetingMode if handleCancelAllModes was just called (right-click cancel)
+        // Check if cancelAllModes was called within the last 500ms
+        const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
+
+        // CRITICAL: Line selection modes should NOT call setTargetingMode - they use validTargets for highlights
+        // This prevents setTargetingMode from overriding validTargets with empty boardTargets
         const isLineSelectionMode = targetingAction.mode === 'SCORE_LAST_PLAYED_LINE' ||
+                                   targetingAction.mode === 'SELECT_LINE_START' ||
                                    targetingAction.mode === 'SELECT_LINE_END' ||
                                    targetingAction.mode === 'ZIUS_LINE_SELECT'
 
-        if (!isLineSelectionMode) {
-          // CRITICAL: For SELECT_CELL mode, never pass handTargets - only board targets
-          // SELECT_CELL is for selecting empty cells on the board, NOT cards in hand
-          const finalHandTargets = targetingAction.mode === 'SELECT_CELL' ? [] : handTargets
-
-          // CRITICAL: Don't override targetingMode if it already has handTargets
-          // This prevents CREATE_STACK handler's handTargets from being overwritten by useEffect
-          // When cursorStack is active, createTargetingActionFromCursorStack doesn't calculate handTargets,
-          // so we need to preserve the existing handTargets from gameState.targetingMode
-          const hasExistingHandTargets = gameState.targetingMode?.handTargets && gameState.targetingMode.handTargets.length > 0
-          if (hasExistingHandTargets && finalHandTargets.length === 0 && targetingAction.mode === 'SELECT_TARGET') {
-            // Preserve existing targetingMode with handTargets - don't overwrite with empty array
-            // Still update validTargets for UI highlights
-            if (boardTargetsChanged) {
-              setValidTargets(boardTargets)
-              prevBoardTargetsRef.current = boardTargets
-            }
-            const handTargetsToUse = gameState.targetingMode?.handTargets ?? []
-            if (JSON.stringify(handTargetsToUse) !== JSON.stringify(prevHandTargetsRef.current)) {
-              setValidHandTargets(handTargetsToUse)
-              prevHandTargetsRef.current = handTargetsToUse
-            }
-            return undefined
-          }
-
-          // CRITICAL: Don't restore targetingMode if handleCancelAllModes was just called (right-click cancel)
-          // Check if cancelAllModes was called within the last 500ms
-          const timeSinceCancel = Date.now() - cancelAllModesTimestampRef.current
-          if (timeSinceCancel > 500) {
-            // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
-            setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
-          }
-        } else {
-          // For line selection modes, only set local validTargets - don't call setTargetingMode
-          // The line selection is handled via handleLineSelection in lineSelectionHandlers.ts
+        if (timeSinceCancel > 500 && !isLineSelectionMode) {
+          // Pass pre-calculated boardTargets and handTargets to avoid recalculating (important for line modes and hand targeting)
+          setTargetingMode(targetingAction, targetingPlayerId, sourceCoords, boardTargets, commandContext, finalHandTargets)
         }
       }
     } else if (!hasActiveMode) {
@@ -1939,6 +1979,11 @@ const AppInner = function AppInner() {
         setValidHandTargets([])
       }
     }
+
+    // CRITICAL: Update prevAbilityModeRef at the END of the useEffect
+    // This ensures that modeChanged is calculated correctly in the NEXT render
+    // If we update it at the beginning, modeChanged will be calculated with the new value
+    prevAbilityModeRef.current = abilityMode
 
     return undefined
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1983,7 +2028,7 @@ const AppInner = function AppInner() {
   // This ensures targeting highlights are cleared on all clients when Deploy finishes
   // CRITICAL: Don't auto-clear if cursorStack is active (e.g., placing tokens with cursorStack)
   // CRITICAL: Don't auto-clear if targetingMode has handTargets (DISCARD_FROM_HAND abilities)
-  const prevAbilityModeRef = useRef<AbilityAction | null>(null)
+  // NOTE: prevAbilityModeRef is already declared at component level (line 1517)
   useEffect(() => {
     const hadAbilityMode = prevAbilityModeRef.current !== null
     const hasAbilityMode = abilityMode !== null
@@ -2400,11 +2445,6 @@ const AppInner = function AppInner() {
 
       // Context Injection Logic for Multi-Step Commands (False Orders / Tactical Maneuver)
       const actionToProcess = { ...nextAction }
-      console.log('[OVERWATCH-DEBUG] Processing action from queue:', {
-        actionType: actionToProcess.type,
-        hasStepContext: !!actionToProcess.payload?.stepContext,
-        stepPlacedTokensCount: actionToProcess.payload?.stepContext?.placedTokens?.length || 0,
-      })
 
       // Only use commandContext if the action explicitly requests it (via useContextCard flag)
       // This prevents actions like Recon Drone's Setup from incorrectly targeting the wrong card

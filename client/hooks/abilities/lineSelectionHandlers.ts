@@ -7,10 +7,21 @@
 import type { AbilityAction, FloatingTextData } from '@/types'
 import { TIMING } from '@/utils/common'
 import { calculateActiveBounds } from '@shared/utils/lineSelection'
+import { countersDatabase } from '@/content'
 
 // Import advanceToNextStepWithCoords from modeHandlers
 // Note: This creates a circular dependency, but it's safe because we only use the function
 // We'll pass it as a prop instead to avoid the circular dependency
+
+/**
+ * Check if a status type is a "counter" (convertible by Digital Sermon) vs a "status" (service marker)
+ * Counters: Aim, Exploit, Revealed, Stun, Shield, Resurrected
+ * Statuses: LastPlayed, Support, Threat
+ */
+function isCounterType(statusType: string): boolean {
+  const counterDef = countersDatabase[statusType]
+  return counterDef?.type === 'counter' || false
+}
 
 export interface LineSelectionProps {
   gameState: any
@@ -29,6 +40,10 @@ export interface LineSelectionProps {
   isWebRTCMode?: boolean  // Whether WebRTC P2P mode is enabled
   // CRITICAL: Props for AUTO_STEPS continuation (for command cards like Logistics Chain)
   continueAutoSteps?: (currentStepIndex: number) => void  // Callback to continue to next AUTO_STEPS
+  // CRITICAL: Props for token manipulation (Digital Sermon)
+  addBoardCardStatus?: (coords: {row: number, col: number}, status: string, pid: number, count?: number) => void
+  removeBoardCardStatusByOwner?: (coords: {row: number, col: number}, status: string, pid: number) => void
+  drawCardsBatch?: (playerId: number, count: number) => void
 }
 
 /**
@@ -55,6 +70,9 @@ export function handleLineSelection(
     commandContext,
     isWebRTCMode = false,
     continueAutoSteps,
+    addBoardCardStatus,
+    removeBoardCardStatusByOwner,
+    drawCardsBatch,
   } = props
 
   if (!abilityMode) {
@@ -453,6 +471,202 @@ export function handleLineSelection(
         }
       }
       markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
+    }
+    // DIGITAL_SERMON_CONVERT_THEN_DRAW (Digital Sermon Option 1)
+    else if (actionType === 'DIGITAL_SERMON_CONVERT_THEN_DRAW') {
+      const gridSize = gameState.board.length
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
+      let startR = minBound, endR = maxBound
+      let startC = minBound, endC = maxBound
+
+      if (r1 === r2) {
+        // Horizontal line
+        startR = endR = r1
+      } else if (c1 === c2) {
+        // Vertical line
+        startC = endC = c1
+      } else {
+        setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+        return true
+      }
+
+      // Collect all tokens from cards in the line and convert to Exploit
+      const cardsToUpdate: Array<{row: number, col: number, tokensToRemove: Array<{type: string, addedByPlayerId: number}>, exploitCount: number}> = []
+      let totalExploitCount = 0
+
+      for (let r = startR; r <= endR; r++) {
+        for (let c = startC; c <= endC; c++) {
+          const cell = gameState.board[r][c]
+          if (cell.card) {
+            const card = cell.card
+            const statuses = card.statuses || []
+
+            // Count non-Exploit tokens and track card for update
+            // CRITICAL: Only count actual counters (type: 'counter'), not service statuses (type: 'status')
+            // Counters: Aim, Exploit, Revealed, Stun, Shield, Resurrected
+            // Statuses: LastPlayed, Support, Threat
+            const nonExploitTokens = statuses.filter((s: any) =>
+              s.type !== 'Exploit' && isCounterType(s.type)
+            )
+            const currentExploits = statuses.filter((s: any) => s.type === 'Exploit' && s.addedByPlayerId === actorId).length
+
+            if (nonExploitTokens.length > 0) {
+              cardsToUpdate.push({
+                row: r,
+                col: c,
+                tokensToRemove: nonExploitTokens.map((s: any) => ({type: s.type, addedByPlayerId: s.addedByPlayerId})),
+                exploitCount: currentExploits + nonExploitTokens.length
+              })
+              totalExploitCount += currentExploits + nonExploitTokens.length
+            } else {
+              totalExploitCount += currentExploits
+            }
+          }
+        }
+      }
+
+      // Convert tokens and draw cards
+      if (!removeBoardCardStatusByOwner || !addBoardCardStatus) {
+        console.error('[lineSelectionHandlers] Required token manipulation functions not provided')
+        return false
+      }
+
+      for (const cardData of cardsToUpdate) {
+        // Remove all non-Exploit tokens
+        for (const token of cardData.tokensToRemove) {
+          removeBoardCardStatusByOwner({row: cardData.row, col: cardData.col}, token.type, token.addedByPlayerId)
+        }
+        // Add Exploit tokens (all at once with count parameter)
+        if (cardData.tokensToRemove.length > 0) {
+          addBoardCardStatus({row: cardData.row, col: cardData.col}, 'Exploit', actorId, cardData.tokensToRemove.length)
+        }
+      }
+
+      // Draw cards: floor(totalExploitCount / 2)
+      const cardsToDraw = Math.floor(totalExploitCount / 2)
+      if (cardsToDraw > 0) {
+        if (drawCardsBatch) {
+          drawCardsBatch(actorId, cardsToDraw)
+          triggerFloatingText({
+            row: sourceCoords?.row || 0,
+            col: sourceCoords?.col || 0,
+            text: `+${cardsToDraw}`,
+            playerId: actorId,
+          })
+        }
+      }
+
+      // Mark ability as used and clear mode
+      if (sourceCoords && sourceCoords.row >= 0) {
+        markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
+      }
+
+      // Continue AUTO_STEPS if this is part of a command card
+      const autoStepsContext = (payload as any)?._autoStepsContext
+      if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined && continueAutoSteps) {
+        continueAutoSteps(autoStepsContext.currentStepIndex + 1)
+      } else {
+        setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+      }
+
+      return true
+    }
+    // DIGITAL_SERMON_CONVERT_THEN_SCORE (Digital Sermon Option 2)
+    else if (actionType === 'DIGITAL_SERMON_CONVERT_THEN_SCORE') {
+      const gridSize = gameState.board.length
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
+      let startR = minBound, endR = maxBound
+      let startC = minBound, endC = maxBound
+
+      if (r1 === r2) {
+        // Horizontal line
+        startR = endR = r1
+      } else if (c1 === c2) {
+        // Vertical line
+        startC = endC = c1
+      } else {
+        setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+        return true
+      }
+
+      // Collect all tokens from cards in the line and convert to Exploit
+      const cardsToUpdate: Array<{row: number, col: number, tokensToRemove: Array<{type: string, addedByPlayerId: number}>, exploitCount: number}> = []
+      let totalExploitCount = 0
+
+      for (let r = startR; r <= endR; r++) {
+        for (let c = startC; c <= endC; c++) {
+          const cell = gameState.board[r][c]
+          if (cell.card) {
+            const card = cell.card
+            const statuses = card.statuses || []
+
+            // Count non-Exploit tokens and track card for update
+            // CRITICAL: Only count actual counters (type: 'counter'), not service statuses (type: 'status')
+            // Counters: Aim, Exploit, Revealed, Stun, Shield, Resurrected
+            // Statuses: LastPlayed, Support, Threat
+            const nonExploitTokens = statuses.filter((s: any) =>
+              s.type !== 'Exploit' && isCounterType(s.type)
+            )
+            const currentExploits = statuses.filter((s: any) => s.type === 'Exploit' && s.addedByPlayerId === actorId).length
+
+            if (nonExploitTokens.length > 0) {
+              cardsToUpdate.push({
+                row: r,
+                col: c,
+                tokensToRemove: nonExploitTokens.map((s: any) => ({type: s.type, addedByPlayerId: s.addedByPlayerId})),
+                exploitCount: currentExploits + nonExploitTokens.length
+              })
+              totalExploitCount += currentExploits + nonExploitTokens.length
+            } else {
+              totalExploitCount += currentExploits
+            }
+          }
+        }
+      }
+
+      // Convert tokens and score points
+      if (!removeBoardCardStatusByOwner || !addBoardCardStatus) {
+        console.error('[lineSelectionHandlers] Required token manipulation functions not provided')
+        return false
+      }
+
+      for (const cardData of cardsToUpdate) {
+        // Remove all non-Exploit tokens
+        for (const token of cardData.tokensToRemove) {
+          removeBoardCardStatusByOwner({row: cardData.row, col: cardData.col}, token.type, token.addedByPlayerId)
+        }
+        // Add Exploit tokens (all at once with count parameter)
+        if (cardData.tokensToRemove.length > 0) {
+          addBoardCardStatus({row: cardData.row, col: cardData.col}, 'Exploit', actorId, cardData.tokensToRemove.length)
+        }
+      }
+
+      // Score points: floor(totalExploitCount / 2)
+      const pointsToGain = Math.floor(totalExploitCount / 2)
+      if (pointsToGain > 0) {
+        updatePlayerScore(actorId, pointsToGain)
+        triggerFloatingText({
+          row: sourceCoords?.row || 0,
+          col: sourceCoords?.col || 0,
+          text: `+${pointsToGain}`,
+          playerId: actorId,
+        })
+      }
+
+      // Mark ability as used and clear mode
+      if (sourceCoords && sourceCoords.row >= 0) {
+        markAbilityUsed(sourceCoords, isDeployAbility, false, readyStatusToRemove)
+      }
+
+      // Continue AUTO_STEPS if this is part of a command card
+      const autoStepsContext = (payload as any)?._autoStepsContext
+      if (autoStepsContext?.steps && autoStepsContext.currentStepIndex !== undefined && continueAutoSteps) {
+        continueAutoSteps(autoStepsContext.currentStepIndex + 1)
+      } else {
+        setTimeout(() => setAbilityMode(null), TIMING.MODE_CLEAR_DELAY)
+      }
+
+      return true
     }
     // SCORE_LINE or generic
     else if (actionType === 'SCORE_LINE' || !actionType) {

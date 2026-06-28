@@ -3728,6 +3728,7 @@ function handlePlayCardFromDiscard(state: GameState, playerId: number, data: any
  */
 function handleAddStatusToBoardCard(state: GameState, _playerId: number, data: any): GameState {
   const { boardCoords, statusType, ownerId, replaceStatusType, count = 1 } = data || {}
+
   if (!boardCoords || !statusType || ownerId === undefined) {
     return state
   }
@@ -3793,11 +3794,15 @@ function handleAddStatusToBoardCard(state: GameState, _playerId: number, data: a
   let newStatuses = [...filteredStatuses]
   const MAX_TOKENS_PER_TYPE = 99
 
+  // DEBUG: Count how many tokens we actually add
+  let tokensAdded = 0
+
   for (let i = 0; i < count; i++) {
     if (isSingletonStatus) {
       // For singleton, only add if not already present (checked above)
       const newStatus = { type: statusType, addedByPlayerId: ownerId }
       newStatuses = [...newStatuses, newStatus]
+      tokensAdded++
       break // Only add one for singleton statuses
     } else {
       // For stackable tokens, count existing tokens of this type from this owner
@@ -3810,6 +3815,7 @@ function handleAddStatusToBoardCard(state: GameState, _playerId: number, data: a
 
       const newStatus = { type: statusType, addedByPlayerId: ownerId }
       newStatuses = [...newStatuses, newStatus]
+      tokensAdded++
     }
   }
 

@@ -2048,6 +2048,69 @@
           ]
         }
       ]
+    },
+    "digitalSermon": {
+      "name": "Digital Sermon",
+      "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1782679401/FUS_DIGITAl_SERMON_ldp94p.webp",
+      "fallbackImage": "/images/cards/FUS_ZEALOUS_MISSIONARY.png",
+      "power": 0,
+      "cost": 0,
+      "loyalty": 2,
+      "discipline": 1,
+      "abilityText": "● Select a line. Convert all tokens in that line to Exploit counters. Draw half that many cards (rounded down).\n● Select a line. Convert all tokens in that line to Exploit counters. Gain half that many points (rounded down).",
+      "flavorText": "The Signal converts all. Resistance is inefficient.",
+      "types": [
+        "Command",
+        "Fusion"
+      ],
+      "faction": "Command",
+      "allowedPanels": [
+        "DECK_BUILDER"
+      ],
+      "ABILITIES": [
+        {
+          "type": "command",
+          "optionIndex": 1,
+          "optionText": "Select a line. Convert all tokens in that line to Exploit counters. Draw half that many cards (rounded down).",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_LINE_START",
+              "details": {
+                "actionType": "DIGITAL_SERMON_CONVERT_THEN_DRAW"
+              }
+            },
+            {
+              "action": "GLOBAL_AUTO_APPLY",
+              "mode": null,
+              "details": {
+                "customAction": "CLEANUP_COMMAND"
+              }
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "optionIndex": 2,
+          "optionText": "Select a line. Convert all tokens in that line to Exploit counters. Gain half that many points (rounded down).",
+          "steps": [
+            {
+              "action": "ENTER_MODE",
+              "mode": "SELECT_LINE_START",
+              "details": {
+                "actionType": "DIGITAL_SERMON_CONVERT_THEN_SCORE"
+              }
+            },
+            {
+              "action": "GLOBAL_AUTO_APPLY",
+              "mode": null,
+              "details": {
+                "customAction": "CLEANUP_COMMAND"
+              }
+            }
+          ]
+        }
+      ]
     }
   },
   "tokenDatabase": {
@@ -2143,6 +2206,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365400/Aim_qzeaqn.webp",
       "description": "This counter has no effect on its own, but it can modify the abilities of cards.\nThis card is easier to destroy.",
       "sortOrder": 1,
+      "type": "counter",
       "allowedPanels": [
         "COUNTER_PANEL"
       ],
@@ -2155,6 +2219,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365398/Exploit_pf2zwf.webp",
       "description": "This counter has no effect on its own, but it can modify the abilities of cards.\nHacker and programmer cards will have a greater effect on this card.",
       "sortOrder": 2,
+      "type": "counter",
       "allowedPanels": [
         "COUNTER_PANEL"
       ],
@@ -2167,6 +2232,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365397/LastPlayed_ge4gyh.webp",
       "description": "This card was last played by its owner.",
       "sortOrder": 99,
+      "type": "status",
       "allowedPanels": [],
       "allowedTargets": [
         "board"
@@ -2177,6 +2243,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365393/Revealed_lsan64.webp",
       "description": "This card's face is visible to the owner of the counter revealed. Can be placed on opponent's cards in hand or on board.",
       "sortOrder": 7,
+      "type": "counter",
       "allowedPanels": [
         "COUNTER_PANEL"
       ],
@@ -2190,6 +2257,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365403/Stun_pbe7ex.webp",
       "description": "A stunned card cannot activate abilities (Deploy, Setup, Commit, Passive). It is ignored when calculating dynamic statuses (Support, Threat).\nRemove 1 stun counter from the card after the Scoring Phase.",
       "sortOrder": 4,
+      "type": "counter",
       "allowedPanels": [
         "COUNTER_PANEL"
       ],
@@ -2202,6 +2270,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365393/Shield_yilhdt.webp",
       "description": "If an effect attempts to destroy this card, remove 1 shield counter from it instead.",
       "sortOrder": 3,
+      "type": "counter",
       "allowedPanels": [
         "COUNTER_PANEL"
       ],
@@ -2214,6 +2283,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365402/Support_hxzufw.webp",
       "description": "This counter has no effect on its own, but it can modify the abilities of cards.\nThis card is adjacent to its ally.",
       "sortOrder": 5,
+      "type": "status",
       "allowedPanels": [],
       "allowedTargets": [
         "board"
@@ -2224,6 +2294,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771368527/Threat_dqnnsq.webp",
       "description": "This counter has no effect on its own, but it can modify the abilities of cards.\nThis card is surrounded and pinned to the edge of the battlefield by an opponent's cards.",
       "sortOrder": 6,
+      "type": "status",
       "allowedPanels": [],
       "allowedTargets": [
         "board"
@@ -2234,6 +2305,7 @@
       "imageUrl": "https://res.cloudinary.com/dxxh6meej/image/upload/v1771365394/Resurrected_awaucv.webp",
       "description": "When phase changes, this unit receives 2 Stun tokens, then all Resurrected tokens are removed from it.",
       "sortOrder": 8,
+      "type": "counter",
       "allowedPanels": [],
       "allowedTargets": [
         "board"
@@ -2558,10 +2630,6 @@
           "quantity": 3
         },
         {
-          "cardId": "overwatch",
-          "quantity": 1
-        },
-        {
           "cardId": "tacticalManeuver",
           "quantity": 1
         },
@@ -2595,6 +2663,10 @@
         },
         {
           "cardId": "enhancedInterrogation",
+          "quantity": 1
+        },
+        {
+          "cardId": "digitalSermon",
           "quantity": 1
         }
       ]

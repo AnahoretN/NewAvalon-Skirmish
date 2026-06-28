@@ -45,8 +45,6 @@ export function countTokensFromBoard(playerId: number, gameState: GameState, tok
     })
   })
 
-  console.log('[OVERWATCH-DEBUG] countTokensFromBoard - board token keys:', boardTokenKeys)
-
   // CRITICAL FIX: Include lastPlacedToken if provided and not already counted
   // This fixes guest Overwatch where the newly placed token isn't in gameState yet (WebRTC sync delay)
   // Now that lastPlacedToken includes statusIndex, we can use simple key matching to avoid double-counting.
@@ -59,23 +57,18 @@ export function countTokensFromBoard(playerId: number, gameState: GameState, tok
       ? `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId},${lastPlacedToken.statusIndex}`
       : `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId}`
 
-    console.log('[OVERWATCH-DEBUG] countTokensFromBoard - lastPlacedToken key:', tokenKey, 'has statusIndex:', lastPlacedToken.statusIndex !== undefined)
-
     if (!countedTokens.has(tokenKey)) {
-      console.log('[OVERWATCH-DEBUG] countTokensFromBoard - adding lastPlacedToken (not on board yet):', lastPlacedToken)
       tokens.push(lastPlacedToken)
       countedTokens.add(tokenKey)
-    } else {
-      console.log('[OVERWATCH-DEBUG] countTokensFromBoard - lastPlacedToken already on board, skipping')
     }
   }
 
-  console.log('[OVERWATCH-DEBUG] countTokensFromBoard - result:', {
+  const result = {
     tokenCount: tokens.length,
     tokens: tokens.map(t => ({ cardId: t.cardId, tokenType: t.tokenType }))
-  })
+  }
 
-  return tokens
+  return result
 }
 
 interface UseAppCountersProps {
@@ -131,16 +124,8 @@ export const useAppCounters = ({
   // This ensures we can access the current value when creating CONTINUE_AUTO_STEPS
   const updateCommandContext = (updater: React.SetStateAction<CommandContext>) => {
     setCommandContext(prev => {
-      console.log('[OVERWATCH-DEBUG] updateCommandContext - prev:', {
-        prevPlacedTokens: prev.placedTokens,
-        prevPlacedTokensCount: prev.placedTokens?.length || 0,
-      })
       const updated = typeof updater === 'function' ? updater(prev) : updater
       commandContextRef.current = updated
-      console.log('[OVERWATCH-DEBUG] updateCommandContext - updated:', {
-        updatedPlacedTokens: updated.placedTokens,
-        updatedPlacedTokensCount: updated.placedTokens?.length || 0,
-      })
       return updated
     })
   }
@@ -578,11 +563,9 @@ export const useAppCounters = ({
                   cursorStack.originalOwnerId, // CRITICAL: Pass token owner ID for command cards
                 )
 
-                console.log('[OVERWATCH-DEBUG] Target validation result:', { isValid, targetCard: targetCard?.name, cursorStackType: cursorStack.type })
                 if (!isValid) {
                   // Invalid target - keep cursor stack active to allow retry
                   // Don't close selection mode on invalid target
-                  console.log('[OVERWATCH-DEBUG] Invalid target - returning early, NOT calling updateCommandContext')
                   return
                 }
 
@@ -620,15 +603,6 @@ export const useAppCounters = ({
                 // of the statuses array (after being added). So we use (length - 1).
                 const statusIndex = (targetCard.statuses?.length || 1) - 1
 
-                console.log('[OVERWATCH-DEBUG] Token placed - calculating statusIndex:', {
-                  targetCard: targetCard.name,
-                  cursorStackType: cursorStack.type,
-                  effectiveActorId,
-                  statusesLength: targetCard.statuses?.length || 0,
-                  calculatedStatusIndex: statusIndex,
-                  allStatuses: targetCard.statuses?.map((s, i) => ({ index: i, type: s.type, addedBy: s.addedByPlayerId }))
-                })
-
                 const lastPlacedToken = {
                   cardId: targetCard.id,
                   tokenType: cursorStack.type,
@@ -637,17 +611,7 @@ export const useAppCounters = ({
                   statusIndex,  // CRITICAL: Include to match board token keys
                 }
 
-                console.log('[OVERWATCH-DEBUG] Token placed - creating lastPlacedToken:', {
-                  lastPlacedToken,
-                  targetCard: targetCard.name,
-                  effectiveActorId,
-                  localPlayerId,
-                  cursorStackType: cursorStack.type,
-                })
-                console.log('[OVERWATCH-DEBUG] About to call updateCommandContext - commandContextRef.current.placedTokens:', commandContextRef.current.placedTokens)
-
                 updateCommandContext(prev => {
-                  console.log('[OVERWATCH-DEBUG] updateCommandContext INSINE function - prev.placedTokens:', prev.placedTokens)
                   // CRITICAL FIX: Append to placedTokens array to track ALL tokens placed in current step
                   // This fixes Overwatch where multiple tokens placed in the same step need to be counted
                   const newToken = {
@@ -669,7 +633,6 @@ export const useAppCounters = ({
                       sourceOwnerId: targetCard.ownerId,
                     } : {}),
                   }
-                  console.log('[OVERWATCH-DEBUG] setCommandContext called with:', updated)
                   return updated
                 })
 
@@ -684,12 +647,6 @@ export const useAppCounters = ({
                 } else {
                   // Stack is now empty - clear it and execute chained action
                   if (cursorStack.chainedAction) {
-                    console.log('[OVERWATCH-DEBUG] cursorStack.chainedAction found:', {
-                      chainedActionType: cursorStack.chainedAction.type,
-                      chainedActionMode: cursorStack.chainedAction.mode,
-                      placedTokens: commandContextRef.current.placedTokens,
-                      placedTokensCount: commandContextRef.current.placedTokens?.length || 0,
-                    })
                     const chained = { ...cursorStack.chainedAction }
                     if (cursorStack.recordContext) {
                       if (chained.mode === 'SELECT_CELL') {
@@ -764,10 +721,6 @@ export const useAppCounters = ({
 
                       // Update commandContext before executing chained action
                       if (cursorStack.recordContext && setCommandContext) {
-                        console.log('[OVERWATCH-DEBUG] setCommandContext (chainedAction) - prev:', {
-                          prevPlacedTokens: commandContextRef.current.placedTokens,
-                          prevPlacedTokensCount: commandContextRef.current.placedTokens?.length || 0,
-                        })
                         // CRITICAL FIX: Use updateCommandContext instead of setCommandContext to ensure commandContextRef.current is updated
                         updateCommandContext(prev => ({
                           ...prev,
@@ -775,7 +728,6 @@ export const useAppCounters = ({
                           lastMovedCardId: targetCard.id,
                           sourceOwnerId: targetCard.ownerId,
                         }))
-                        console.log('[OVERWATCH-DEBUG] setCommandContext (chainedAction) - updated')
                       }
 
                       // CRITICAL: Use flushSync to ensure abilityMode is set synchronously
@@ -804,12 +756,6 @@ export const useAppCounters = ({
                       // This ensures the actionQueue useEffect can process the chained action immediately
                       // Also ensures cleanupCommand stays at the end
                       // Add unique ID to prevent duplicate processing
-                      console.log('[OVERWATCH-DEBUG] CREATE_STACK with AUTO_STEPS - adding to actionQueue:', {
-                        chainedType: chained.type,
-                        chainedMode: chained.mode,
-                        chainedAction: chained.action,
-                        hasDynamicCount: !!chained.details?.dynamicCount || !!chained.payload?.dynamicCount,
-                      })
                       if (!chained._uniqueId) {
                         chained._uniqueId = `${chained.type}_${Date.now()}_${Math.random()}`
                       }
@@ -834,24 +780,12 @@ export const useAppCounters = ({
                           stepContext: stepContextForChained,
                         },
                       }
-                      console.log('[OVERWATCH-DEBUG] Adding chainedWithContext to queue:', {
-                        hasStepContext: !!chainedWithContext.payload.stepContext,
-                        stepPlacedTokensCount: chainedWithContext.payload.stepContext?.placedTokens?.length || 0,
-                        chainedType: chained.type,
-                      })
                       const actionsToQueue: any[] = [chainedWithContext]
                       if (cursorStack._autoStepsContext) {
                         // CRITICAL: For CREATE_STACK actions, currentStepIndex points to the NEXT step (nextStepIndex + 1)
                         // We need to decrement it to get the COMPLETED step index for handleContinueAutoSteps
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
                         const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
-
-                        console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS with stepContext:', {
-                          lastPlacedToken,
-                          targetCard: targetCard.name,
-                          completedStepIndex,
-                          totalSteps: autoStepsContext.steps?.length,
-                        })
 
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
@@ -877,7 +811,6 @@ export const useAppCounters = ({
                             }
                           }
                         }
-                        console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS action created:', continueAction)
                         actionsToQueue.push(continueAction)
                       }
 
@@ -929,13 +862,6 @@ export const useAppCounters = ({
                         const autoStepsContext = { ...cursorStack._autoStepsContext }
                         const completedStepIndex = autoStepsContext.currentStepIndex > 0 ? autoStepsContext.currentStepIndex - 1 : 0
 
-                        console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS (direct exec) with stepContext:', {
-                          lastPlacedToken,
-                          targetCard: targetCard.name,
-                          completedStepIndex,
-                          totalSteps: autoStepsContext.steps?.length,
-                        })
-
                         const continueAction: any = {
                           type: 'CONTINUE_AUTO_STEPS',
                           sourceCard: cursorStack.sourceCard,
@@ -960,7 +886,6 @@ export const useAppCounters = ({
                             }
                           }
                         }
-                        console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS (direct exec) action created:', continueAction)
                         onAction(continueAction, { row, col })
                       }
                     }
@@ -1008,21 +933,6 @@ export const useAppCounters = ({
                         }
                       }
                     }
-
-                    console.log('[OVERWATCH-DEBUG] Creating CONTINUE_AUTO_STEPS (cursorStack complete) with stepContext:', {
-                      lastPlacedToken,
-                      targetCard: targetCard.name,
-                      completedStepIndex,
-                      totalSteps: autoStepsContext.steps?.length,
-                      hasChainedAction,
-                      chainedActionType,
-                      commandContextRefPlacedTokens: commandContextRef.current.placedTokens,
-                      commandContextRefPlacedTokensCount: commandContextRef.current.placedTokens?.length || 0,
-                      usingCommandContextRef: true,
-                    })
-                    console.log('[OVERWATCH-DEBUG] CONTINUE_AUTO_STEPS (cursorStack complete) action created:', continueAction)
-                    console.log('[OVERWATCH-DEBUG] stepContext.placedTokens:', continueAction.payload.stepContext.placedTokens)
-                    console.log('[OVERWATCH-DEBUG] stepContext.placedTokensCount:', continueAction.payload.stepContext.placedTokens?.length || 0)
 
                     // CRITICAL: Pass chainedAction so modeHandlers can execute it before advancing to next step
                     // This fixes Temporary Shelter where chainedAction (REMOVE_ALL_AIM_FROM_CONTEXT) must execute

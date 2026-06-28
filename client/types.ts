@@ -53,6 +53,7 @@ export interface CounterDefinition {
     imageUrl: string;
     description: string;
     sortOrder: number;
+    type?: 'counter' | 'status'; // 'counter' = actual counters (Aim, Exploit, Revealed, Stun, Shield, Resurrected), 'status' = service statuses (LastPlayed, Support, Threat)
     allowedPanels?: string[]; // Controls visibility in UI panels (e.g. 'COUNTER_PANEL')
     allowedTargets?: ('board' | 'board-facedown' | 'hand' | 'deck' | 'discard' | 'announced')[]; // Controls where this counter can be placed
 }

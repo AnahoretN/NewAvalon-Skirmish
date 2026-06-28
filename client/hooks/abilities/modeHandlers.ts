@@ -937,18 +937,6 @@ export function advanceToNextStepWithCoords(
         ...(resolvedChainedAction ? { chainedAction: resolvedChainedAction } : {}),
       }
 
-      console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - creating GLOBAL_AUTO_APPLY action:', {
-        hasLastPlacedTokenInStepContext: !!stepContext?.lastPlacedToken,
-        lastPlacedTokenInStepContext: stepContext?.lastPlacedToken,
-        hasLastPlacedTokenInAction: !!actionToExecute.payload._lastPlacedToken,
-        lastPlacedTokenInAction: actionToExecute.payload._lastPlacedToken,
-        hasPlacedTokensInStepContext: !!stepContext?.placedTokens,
-        placedTokensCountInStepContext: stepContext?.placedTokens?.length || 0,
-        placedTokensInStepContext: stepContext?.placedTokens,
-        hasPlacedTokensInAction: !!actionToExecute.payload._placedTokens,
-        placedTokensInAction: actionToExecute.payload._placedTokens,
-      })
-
       handleActionExecution(actionToExecute, sourceCoords || { row: 0, col: 0 })
 
       // After execution, check if there are more steps
@@ -1304,28 +1292,13 @@ export function advanceToNextStepWithCoords(
       // CRITICAL: Update commandContext with lastPlacedToken from stepContext BEFORE executing any action
       // This ensures Enhanced Interrogation and Overwatch Option 2 can count tokens just placed
       if (stepContext?.lastPlacedToken && props.setCommandContext) {
-        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - updating commandContext with lastPlacedToken from stepContext:', {
-          lastPlacedToken: stepContext.lastPlacedToken,
-          sourceOwnerId: stepContext.sourceOwnerId,
-          currentCommandContext: props.commandContext,
-          nextStepAction: nextStep.action,
-        })
         props.setCommandContext(prev => {
           const updated = {
             ...prev,
             lastPlacedToken: stepContext.lastPlacedToken,
             sourceOwnerId: stepContext.sourceOwnerId,
           }
-          console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - commandContext updated:', updated)
           return updated
-        })
-      } else {
-        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - NOT updating commandContext:', {
-          hasStepContext: !!stepContext,
-          hasLastPlacedToken: !!stepContext?.lastPlacedToken,
-          stepContext,
-          hasSetCommandContext: !!props.setCommandContext,
-          nextStepAction: nextStep.action,
         })
       }
 
@@ -1339,7 +1312,6 @@ export function advanceToNextStepWithCoords(
       } else if (nextStep.action === "GLOBAL_AUTO_APPLY" && props.handleActionExecution) {
         // CRITICAL: For GLOBAL_AUTO_APPLY actions (Overwatch Option 2), execute directly
         // These are auto-executed actions that don't require targeting mode
-        console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords - executing GLOBAL_AUTO_APPLY directly')
         setAbilityMode(stepAction)
         props.handleActionExecution(stepAction, sourceCoords || { row: 0, col: 0 })
       } else {
@@ -1361,18 +1333,12 @@ export function advanceToNextStepWithCoords(
         // CRITICAL: Update commandContext with lastPlacedToken from stepContext
         // This ensures Enhanced Interrogation can count Aim tokens just placed in previous step
         if (stepContext?.lastPlacedToken && props.setCommandContext) {
-          console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords (hand targeting) - updating commandContext with lastPlacedToken from stepContext:', {
-            lastPlacedToken: stepContext.lastPlacedToken,
-            sourceOwnerId: stepContext.sourceOwnerId,
-            currentCommandContext: props.commandContext,
-          })
           props.setCommandContext(prev => {
             const updated = {
               ...prev,
               lastPlacedToken: stepContext.lastPlacedToken,
               sourceOwnerId: stepContext.sourceOwnerId,
             }
-            console.log('[OVERWATCH-DEBUG] advanceToNextStepWithCoords (hand targeting) - commandContext updated:', updated)
             return updated
           })
         }

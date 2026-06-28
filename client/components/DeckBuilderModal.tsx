@@ -123,7 +123,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
   }, [allCards])
 
   // Check if card can be added based on selected factions
-  const isCardAddable = (cardId: string, cardFaction?: string) => {
+  const isCardAddable = (cardId: string, cardFaction?: string, cardTypes?: string[]) => {
     // Block ALL cards if Faction 1 is not selected
     if (!selectedFaction1) {
       return false
@@ -131,8 +131,8 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
 
     const isCommand = commandCardIds.has(cardId)
     const isNeutral = cardFaction === 'Neutral'
-    const isFaction1 = selectedFaction1 && cardFaction === selectedFaction1
-    const isFaction2 = selectedFaction2 && cardFaction === selectedFaction2
+    const isFaction1 = selectedFaction1 && (cardFaction === selectedFaction1 || cardTypes?.includes(selectedFaction1))
+    const isFaction2 = selectedFaction2 && (cardFaction === selectedFaction2 || cardTypes?.includes(selectedFaction2))
 
     return isFaction1 || isFaction2 || isNeutral || isCommand
   }
@@ -149,7 +149,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
       if (!cardDef) return
 
       // Check if card is still addable with current faction selection
-      if (isCardAddable(cardId, cardDef.faction)) {
+      if (isCardAddable(cardId, cardDef.faction, cardDef.types)) {
         newDeck.set(cardId, qty)
       } else {
         removedAny = true
@@ -234,7 +234,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
     if (!cardDef) return
 
     // Check if card can be added based on selected factions
-    if (!isCardAddable(cardId, cardDef.faction)) {
+    if (!isCardAddable(cardId, cardDef.faction, cardDef.types)) {
       const factionName = selectableFactions.find(f => f.id === cardDef.faction)?.name || cardDef.faction
       if (!selectedFaction1) {
         alert(t('selectFaction1First'))
@@ -549,7 +549,7 @@ export const DeckBuilderModal: React.FC<DeckBuilderModalProps> = ({ isOpen, onCl
                   }
 
                   const factionColor = getFactionColor(card.faction)
-                  const canAdd = isCardAddable(id, card.faction)
+                  const canAdd = isCardAddable(id, card.faction, card.types)
 
                   return (
                     <div

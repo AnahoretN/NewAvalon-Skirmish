@@ -34,6 +34,8 @@ export interface EmptyCellClickProps {
   triggerFloatingText: (data: any) => void
   handleLineSelection: (coords: {row: number, col: number}) => void
   addBoardCardStatus: (coords: { row: number; col: number }, status: string, playerId: number, count?: number) => void
+  removeBoardCardStatusByOwner?: (coords: { row: number; col: number }, status: string, playerId: number) => void
+  drawCardsBatch?: (playerId: number, count: number) => void
   updateState?: (stateOrFn: any) => void
   nextPhase?: (forceTurnPass?: boolean) => void
   modifyBoardCardPower?: (coords: any, delta: number) => void
@@ -57,9 +59,6 @@ export function handleEmptyCellClick(
   boardCoords: { row: number; col: number },
   props: EmptyCellClickProps
 ): boolean {
-  // DEBUG: Log all empty cell clicks
-  console.log('[handleEmptyCellClick] Click coords:', boardCoords, 'abilityMode:', props.abilityMode?.mode)
-
   const {
     gameState,
     localPlayerId,
@@ -82,6 +81,8 @@ export function handleEmptyCellClick(
     triggerFloatingText,
     handleLineSelection: _handleLineSelection,
     addBoardCardStatus,
+    removeBoardCardStatusByOwner,
+    drawCardsBatch,
     nextPhase,
     modifyBoardCardPower,
     scoreLine,
@@ -909,6 +910,9 @@ export function handleEmptyCellClick(
         commandContext,
         isWebRTCMode: props.isWebRTCMode,
         continueAutoSteps,
+        addBoardCardStatus,
+        removeBoardCardStatusByOwner,
+        drawCardsBatch,
       })
     } else {
       // Silently ignore clicks from non-active players

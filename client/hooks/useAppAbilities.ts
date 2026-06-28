@@ -138,6 +138,9 @@ export const useAppAbilities = ({
   // Store handleLineSelection ref to avoid circular dependency
   const lineSelectionRef = useRef<(coords: { row: number; col: number }) => void>(() => {})
 
+  // Store handleActionExecution ref to avoid circular dependency
+  const handleActionExecutionRef = useRef<(action: AbilityAction, sourceCoords: { row: number; col: number }) => void>(() => {})
+
   // Store abilityMode in ref to always have access to current value
   // This avoids stale closure issues in event handlers
   const abilityModeRef = useRef<AbilityAction | null>(abilityMode)
@@ -150,6 +153,83 @@ export const useAppAbilities = ({
    * Defined BEFORE handleActionExecution to avoid circular dependency
    */
   const handleLineSelection = useCallback((coords: { row: number; col: number }) => {
+    // CRITICAL: Create continueAutoSteps function for AUTO_STEPS continuation
+    // This fixes command cards not discarding after ability completion
+    const continueAutoSteps = (nextStepIndex: number) => {
+      // Build ModeHandlersProps from available props
+      const modeProps: any = {
+        gameState,
+        getFreshGameState,
+        localPlayerId,
+        abilityMode,
+        setAbilityMode,
+        cursorStack,
+        setCursorStack,
+        commandContext,
+        setCommandContext,
+        markAbilityUsed,
+        triggerNoTarget,
+        triggerClickWave,
+        handleActionExecution,
+        interactionLock,
+        moveItem,
+        swapCards,
+        transferStatus,
+        transferAllCounters,
+        destroyCard,
+        spawnToken,
+        modifyBoardCardPower,
+        addBoardCardStatus,
+        removeBoardCardStatus,
+        removeBoardCardStatusByOwner,
+        removeStatusByType,
+        resetDeployStatus,
+        updatePlayerScore,
+        triggerFloatingText,
+        triggerDeckSelection,
+        setCounterSelectionData,
+        setViewingDiscard,
+        scoreLine,
+        scoreDiagonal,
+        nextPhase,
+        sendAction,
+        setActionQueue,
+        pendingChainedActionRef,
+        validTargets,
+        setTargetingMode,
+        clearTargetingMode,
+        draggedItem: null,
+        setDraggedItem: () => {},
+        openContextMenu: () => {},
+        playMode: null,
+        setPlayMode,
+        onAbilityComplete,
+      }
+
+      // Import and call advanceToNextStepWithCoords from modeHandlers
+      import('./abilities/modeHandlers.js').then(({ advanceToNextStepWithCoords }) => {
+        const autoStepsContext = abilityMode?.payload?._autoStepsContext
+        if (!autoStepsContext) return
+
+        // Create CONTINUE_AUTO_STEPS action
+        const continueAction: AbilityAction = {
+          type: 'CONTINUE_AUTO_STEPS',
+          mode: 'AUTO_STEPS',
+          payload: {
+            _autoStepsContext: {
+              ...autoStepsContext,
+              currentStepIndex: nextStepIndex,
+            },
+          },
+          sourceCard: abilityMode?.sourceCard,
+          sourceCoords: abilityMode?.sourceCoords,
+        }
+
+        // Execute the next step using ref to avoid circular dependency
+        handleActionExecutionRef.current(continueAction, abilityMode?.sourceCoords || { row: -1, col: -1 })
+      })
+    }
+
     handleLineSelectionModule(coords, {
       gameState,
       localPlayerId,
@@ -164,8 +244,13 @@ export const useAppAbilities = ({
       scoreLine,
       scoreDiagonal,
       commandContext,
+      isWebRTCMode: getWebRTCEnabled(),
+      continueAutoSteps,
+      addBoardCardStatus,
+      removeBoardCardStatusByOwner,
+      drawCardsBatch,
     })
-  }, [abilityMode, gameState, localPlayerId, interactionLock, setAbilityMode, markAbilityUsed, updatePlayerScore, triggerFloatingText, nextPhase, modifyBoardCardPower, scoreLine, scoreDiagonal, commandContext])
+  }, [abilityMode, gameState, localPlayerId, interactionLock, setAbilityMode, markAbilityUsed, updatePlayerScore, triggerFloatingText, nextPhase, modifyBoardCardPower, scoreLine, scoreDiagonal, commandContext, getFreshGameState, cursorStack, setCursorStack, setCommandContext, triggerNoTarget, triggerClickWave, moveItem, swapCards, transferStatus, transferAllCounters, destroyCard, spawnToken, addBoardCardStatus, removeBoardCardStatus, removeBoardCardStatusByOwner, removeStatusByType, resetDeployStatus, triggerDeckSelection, setCounterSelectionData, setViewingDiscard, sendAction, setActionQueue, pendingChainedActionRef, validTargets, setTargetingMode, clearTargetingMode, drawCardsBatch, onAbilityComplete])
 
   // Update ref whenever handleLineSelection changes
   lineSelectionRef.current = handleLineSelection
@@ -266,6 +351,9 @@ export const useAppAbilities = ({
     pendingChainedActionRef,
     setActionQueue,
   ])
+
+  // Update ref whenever handleActionExecution changes
+  handleActionExecutionRef.current = handleActionExecution
 
   // Auto-Execute GLOBAL_AUTO_APPLY actions when they appear in abilityMode
   useEffect(() => {
@@ -509,6 +597,8 @@ export const useAppAbilities = ({
       triggerFloatingText,
       handleLineSelection,
       addBoardCardStatus,
+      removeBoardCardStatusByOwner,
+      drawCardsBatch,
       updateState,
       nextPhase,
       modifyBoardCardPower,

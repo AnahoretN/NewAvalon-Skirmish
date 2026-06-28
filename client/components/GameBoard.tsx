@@ -58,6 +58,7 @@ interface GameBoardProps {
 // Helper to check if an ability mode is a line selection mode
 const isLineSelectionMode = (mode: string | undefined): boolean => {
   return mode === 'SCORE_LAST_PLAYED_LINE' ||
+         mode === 'SELECT_LINE_START' ||
          mode === 'SELECT_LINE_END' ||
          mode === 'ZIUS_LINE_SELECT' ||
          mode === 'SELECT_LINE_FOR_EXPLOIT_SCORING' ||
@@ -645,7 +646,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
             )
           })()}
 
-          {/* Line selection modes highlight - no border, only glow and gradient */}
+          {/* Line selection modes highlight - with glowing border like scoring */}
           {/* Shows highlight for: SELECT_LINE_FOR_EXPLOIT_SCORING, SELECT_LINE_FOR_SUPPORT_COUNTERS, SELECT_LINE_FOR_THREAT_COUNTERS, SELECT_DIAGONAL, etc. */}
           {(isLineSelectionMode(abilityMode?.mode) || isLineSelectionMode(targetingModeActionMode)) && isValidTarget && (() => {
             const highlightOwnerId = activePlayerId ?? localPlayerId ?? targetingModePlayerId
@@ -660,7 +661,9 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
                 style={{
                   zIndex: 45,
                   boxShadow: `0 0 calc(2.5 * var(--vu-effect-md)) rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.75)`,
-                  // No border - removed white border
+                  borderWidth: 'var(--vu-border-md)',
+                  borderStyle: 'solid',
+                  borderColor: 'white',
                   background: `radial-gradient(circle at center, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.75) 100%)`,
                 }}
               />
@@ -1089,6 +1092,31 @@ export const GameBoard = memo<GameBoardProps>(({
           return true
         }
 
+        // SELECT_LINE_START for command cards (first click)
+        // Highlight all cells in active grid for first click selection
+        if (abilityMode?.mode === 'SELECT_LINE_START') {
+          // If sourceCoords exists AND is within the active grid (deploy abilities from cards on board)
+          // highlight row and column through it
+          // BUT ignore sourceCoords if it's outside the board (command cards may have {-1, -1})
+          if (abilityMode.sourceCoords && abilityMode.sourceCoords.row >= 0 && abilityMode.sourceCoords.col >= 0) {
+            // Check if sourceCoords is within active grid bounds
+            const totalSize = activeBoard.length || 7
+            const gridOffset = Math.floor((totalSize - activeGridSize) / 2)
+            const sourceInActiveGrid = abilityMode.sourceCoords.row >= gridOffset &&
+                                       abilityMode.sourceCoords.row < gridOffset + activeGridSize &&
+                                       abilityMode.sourceCoords.col >= gridOffset &&
+                                       abilityMode.sourceCoords.col < gridOffset + activeGridSize
+
+            if (sourceInActiveGrid) {
+              return row === abilityMode.sourceCoords.row || col === abilityMode.sourceCoords.col
+            }
+          }
+          // Otherwise (command cards or sourceCoords outside grid), highlight all cells in active grid
+          const inActiveGrid = row >= offset && row < offset + activeGridSize &&
+                               col >= offset && col < offset + activeGridSize
+          return inActiveGrid
+        }
+
         // Other line selection modes need targetCoords
         if (!lineSelectionTargetCoords) {
           return false
@@ -1097,16 +1125,10 @@ export const GameBoard = memo<GameBoardProps>(({
         const isSameRow = row === lineSelectionTargetCoords.row
         const isSameCol = col === lineSelectionTargetCoords.col
 
-        // SELECT_LINE_END requires checking against firstCoords
+        // SELECT_LINE_END highlights all cells in the same row OR column as firstCoords
         if (abilityMode?.mode === 'SELECT_LINE_END' && abilityMode?.payload?.firstCoords) {
           const firstCoords = abilityMode.payload.firstCoords
-          return (row === firstCoords.row && col === lineSelectionTargetCoords.col) ||
-                 (col === firstCoords.col && row === lineSelectionTargetCoords.row)
-        }
-
-        // For SELECT_LINE_START and similar, highlight row and column through source coords
-        if (abilityMode?.mode === 'SELECT_LINE_START' && abilityMode?.sourceCoords) {
-          return row === abilityMode.sourceCoords.row || col === abilityMode.sourceCoords.col
+          return row === firstCoords.row || col === firstCoords.col
         }
 
         // Default line selection: same row or column as target coords
