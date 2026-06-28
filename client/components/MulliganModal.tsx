@@ -88,16 +88,20 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
       return displayIndex
     }
 
+    // If Hero is already at position 0, no shift occurred
+    if (heroIndex === 0) {
+      return displayIndex
+    }
+
     // If we're looking at the first card and it's the hero, return the hero's original index
     if (displayIndex === 0) {
       return heroIndex
     }
 
-    // For cards after position 0, adjust for the shift
-    const originalHand = hand.map((c, i) => ({ card: c, originalIndex: i }))
-    const withoutHero = originalHand.filter((_, i) => i !== heroIndex)
-
-    return withoutHero[displayIndex]?.originalIndex ?? displayIndex
+    // For cards after position 0 in displayHand (which had Hero removed from original position):
+    // displayHand[1] was hand[0], displayHand[2] was hand[1], etc.
+    // So we need to return displayIndex - 1
+    return displayIndex - 1
   }
 
   // Check if a card at display index is the hero card
@@ -118,11 +122,15 @@ export const MulliganModal: React.FC<MulliganModalProps> = ({
         setAttempts(newAttempts)
       }
 
-      // Sync hand
+      // Sync hand - compare card IDs in order to detect card order changes
       if (freshPlayer.hand && freshPlayer.hand.length > 0) {
         const currentHandIds = hand.map((c: any) => c.id).join(',')
         const newHandIds = freshPlayer.hand.map((c: any) => c.id).join(',')
-        if (currentHandIds !== newHandIds) {
+        // Also check if Hero position changed (for starting hero mode)
+        const currentHeroIdx = hand.findIndex(c => c.types && c.types.includes('Hero'))
+        const newHeroIdx = freshPlayer.hand.findIndex(c => c.types && c.types.includes('Hero'))
+
+        if (currentHandIds !== newHandIds || currentHeroIdx !== newHeroIdx) {
           setHand(freshPlayer.hand)
         }
       }

@@ -12,9 +12,11 @@ import { createTokenCursorStack, canTokenTargetHand } from '@/utils/tokenTargeti
  * CRITICAL: Returns ONE ELEMENT PER TOKEN (not per card) - a card can have multiple tokens of same type
  * @export - Used by actionExecutionHandler.ts for dynamicResource calculations
  */
-export function countTokensFromBoard(playerId: number, gameState: GameState, tokenType?: string, lastPlacedToken?: {boardCoords: {row: number, col: number}, cardId: string, tokenType: string, addedByPlayerId: number}) {
+export function countTokensFromBoard(playerId: number, gameState: GameState, tokenType?: string, lastPlacedToken?: {boardCoords: {row: number, col: number}, cardId: string, tokenType: string, addedByPlayerId: number, statusIndex?: number}) {
   const tokens: Array<{boardCoords: {row: number, col: number}, cardId: string, tokenType: string, addedByPlayerId: number}> = []
   const countedTokens = new Set<string>() // Track individual tokens to avoid duplicates
+
+  const boardTokenKeys: string[] = []
 
   gameState.board.forEach((row, rowIdx) => {
     row.forEach((cell, colIdx) => {
@@ -27,6 +29,7 @@ export function countTokensFromBoard(playerId: number, gameState: GameState, tok
             // Uses statusIndex to differentiate multiple tokens of same type on same card
             // This fixes the case where a card has multiple tokens of the same type (e.g., 2 Aim on Secret Informant)
             const tokenKey = `${rowIdx},${colIdx},${status.type},${status.addedByPlayerId},${statusIndex}`
+            boardTokenKeys.push(tokenKey)
             if (!countedTokens.has(tokenKey)) {
               tokens.push({
                 boardCoords: { row: rowIdx, col: colIdx },
@@ -42,10 +45,22 @@ export function countTokensFromBoard(playerId: number, gameState: GameState, tok
     })
   })
 
+  console.log('[OVERWATCH-DEBUG] countTokensFromBoard - board token keys:', boardTokenKeys)
+
   // CRITICAL FIX: Include lastPlacedToken if provided and not already counted
   // This fixes guest Overwatch where the newly placed token isn't in gameState yet (WebRTC sync delay)
+  // Now that lastPlacedToken includes statusIndex, we can use simple key matching to avoid double-counting.
+  // For host: token is on board, key matches, skip (correct!)
+  // For guest: token not on board, key doesn't match, add (correct!)
   if (lastPlacedToken && lastPlacedToken.addedByPlayerId === playerId && (!tokenType || lastPlacedToken.tokenType === tokenType)) {
-    const tokenKey = `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId}`
+    // Create key using same format as board tokens (including statusIndex if available)
+    // If statusIndex is not available (older code paths), use format without it
+    const tokenKey = lastPlacedToken.statusIndex !== undefined
+      ? `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId},${lastPlacedToken.statusIndex}`
+      : `${lastPlacedToken.boardCoords.row},${lastPlacedToken.boardCoords.col},${lastPlacedToken.tokenType},${lastPlacedToken.addedByPlayerId}`
+
+    console.log('[OVERWATCH-DEBUG] countTokensFromBoard - lastPlacedToken key:', tokenKey, 'has statusIndex:', lastPlacedToken.statusIndex !== undefined)
+
     if (!countedTokens.has(tokenKey)) {
       console.log('[OVERWATCH-DEBUG] countTokensFromBoard - adding lastPlacedToken (not on board yet):', lastPlacedToken)
       tokens.push(lastPlacedToken)
@@ -600,11 +615,26 @@ export const useAppCounters = ({
 
                 // CRITICAL: Create lastPlacedToken object BEFORE updating commandContext
                 // This ensures we can pass it to CONTINUE_AUTO_STEPS immediately
+                // CRITICAL: Include statusIndex to fix double-counting bug for host.
+                // For both host and guest: the newly placed token is always at the LAST index
+                // of the statuses array (after being added). So we use (length - 1).
+                const statusIndex = (targetCard.statuses?.length || 1) - 1
+
+                console.log('[OVERWATCH-DEBUG] Token placed - calculating statusIndex:', {
+                  targetCard: targetCard.name,
+                  cursorStackType: cursorStack.type,
+                  effectiveActorId,
+                  statusesLength: targetCard.statuses?.length || 0,
+                  calculatedStatusIndex: statusIndex,
+                  allStatuses: targetCard.statuses?.map((s, i) => ({ index: i, type: s.type, addedBy: s.addedByPlayerId }))
+                })
+
                 const lastPlacedToken = {
                   cardId: targetCard.id,
                   tokenType: cursorStack.type,
                   addedByPlayerId: effectiveActorId,
                   boardCoords: { row, col },
+                  statusIndex,  // CRITICAL: Include to match board token keys
                 }
 
                 console.log('[OVERWATCH-DEBUG] Token placed - creating lastPlacedToken:', {

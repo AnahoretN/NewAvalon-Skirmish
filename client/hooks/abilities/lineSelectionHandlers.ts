@@ -6,6 +6,7 @@
 
 import type { AbilityAction, FloatingTextData } from '@/types'
 import { TIMING } from '@/utils/common'
+import { calculateActiveBounds } from '@shared/utils/lineSelection'
 
 // Import advanceToNextStepWithCoords from modeHandlers
 // Note: This creates a circular dependency, but it's safe because we only use the function
@@ -71,9 +72,25 @@ export function handleLineSelection(
 
     const { row: r1, col: c1 } = abilityMode.sourceCoords
     const { row: r2, col: c2 } = coords
-    if (r1 !== r2 && c1 !== c2) {
+
+    // DEBUG: Log what we're clicking on
+    console.log('[SCORE_LAST_PLAYED_LINE] Click coords:', { r1, c1, r2, c2, isSame: r1 === r2 && c1 === c2 })
+
+    // CRITICAL: Cannot click on the last played card itself
+    // Player must click on another cell in the same row or column to select the line
+    if (r1 === r2 && c1 === c2) {
+      // Clicked on the same cell as the last played card - ignore
+      console.log('[SCORE_LAST_PLAYED_LINE] Blocked: clicked on same cell')
       return true
     }
+
+    // Ignore clicks that are not in the same row or column
+    if (r1 !== r2 && c1 !== c2) {
+      console.log('[SCORE_LAST_PLAYED_LINE] Blocked: not in same row or column')
+      return true
+    }
+
+    console.log('[SCORE_LAST_PLAYED_LINE] Proceeding with scoring')
 
     // Lock interaction to prevent multiple clicks
     interactionLock.current = true
@@ -87,13 +104,18 @@ export function handleLineSelection(
       // Guest: Calculate score locally, then send result to host
       const playerId = localPlayerId ?? gameState.activePlayerId!
       const gridSize = gameState.board.length
+      // CRITICAL FIX: Use active grid boundaries, not full board boundaries
+      // When activeGridSize < gridSize, the active grid is centered with an offset
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
       let rStart = r1, rEnd = r1, cStart = c1, cEnd = c1
       if (r1 === r2) {
+        // Horizontal line: same row, iterate through active grid columns
         rStart = r1; rEnd = r1
-        cStart = 0; cEnd = gridSize - 1
+        cStart = minBound; cEnd = maxBound
       } else if (c1 === c2) {
+        // Vertical line: same column, iterate through active grid rows
         cStart = c2; cEnd = c2
-        rStart = 0; rEnd = gridSize - 1
+        rStart = minBound; rEnd = maxBound
       } else {
         interactionLock.current = false
         return true
@@ -206,13 +228,18 @@ export function handleLineSelection(
     // Host (or non-WebRTC): Process scoring locally
     const playerId = gameState.activePlayerId!
     const gridSize = gameState.board.length
+    // CRITICAL FIX: Use active grid boundaries, not full board boundaries
+    // When activeGridSize < gridSize, the active grid is centered with an offset
+    const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
     let rStart = r1, rEnd = r1, cStart = c1, cEnd = c1
     if (r1 === r2) {
+      // Horizontal line: same row, iterate through active grid columns
       rStart = r1; rEnd = r1
-      cStart = 0; cEnd = gridSize - 1
+      cStart = minBound; cEnd = maxBound
     } else if (c1 === c2) {
+      // Vertical line: same column, iterate through active grid rows
       cStart = c2; cEnd = c2
-      rStart = 0; rEnd = gridSize - 1
+      rStart = minBound; rEnd = maxBound
     } else {
       interactionLock.current = false
       return true
@@ -327,6 +354,15 @@ export function handleLineSelection(
   if (mode === 'SELECT_LINE_END' && payload?.firstCoords) {
     const { row: r1, col: c1 } = payload.firstCoords
     const { row: r2, col: c2 } = coords
+
+    // CRITICAL: Cannot select the same point as the starting point
+    // Player must click on a different cell in the same row or column
+    if (r1 === r2 && c1 === c2) {
+      // Clicked on the same cell as the starting point - ignore
+      return true
+    }
+
+    // Ignore clicks that are not in the same row or column
     if (r1 !== r2 && c1 !== c2) {
       return true
     }
@@ -351,8 +387,10 @@ export function handleLineSelection(
       }
 
       const gridSize = gameState.board.length
-      let startR = 0, endR = gridSize - 1
-      let startC = 0, endC = gridSize - 1
+      // CRITICAL FIX: Use active grid boundaries, not full board boundaries
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
+      let startR = minBound, endR = maxBound
+      let startC = minBound, endC = maxBound
 
       if (r1 === r2) {
         startR = endR = r1
@@ -390,8 +428,10 @@ export function handleLineSelection(
     // CENTURION_BUFF
     else if (actionType === 'CENTURION_BUFF' && sourceCard && sourceCoords && actorId) {
       const gridSize = gameState.board.length
-      let startR = 0, endR = gridSize - 1
-      let startC = 0, endC = gridSize - 1
+      // CRITICAL FIX: Use active grid boundaries, not full board boundaries
+      const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
+      let startR = minBound, endR = maxBound
+      let startC = minBound, endC = maxBound
       if (r1 === r2) {
         startR = endR = r1
       } else {
@@ -500,6 +540,10 @@ export function handleLineSelection(
     const targetCoords = payload?.targetCoords || commandContext.lastMovedCardCoords
 
     const { row: clickedRow, col: clickedCol } = coords
+
+    // DEBUG: Log what we're clicking on
+    console.log('[SELECT_LINE_FOR_EXPLOIT_SCORING] Click coords:', { clickedRow, clickedCol, targetCoords, sourceCoords })
+
     let isSameRow = false
     let isSameCol = false
     let selectedRow = clickedRow
@@ -508,6 +552,15 @@ export function handleLineSelection(
     if (targetCoords) {
       // Zius Setup: Must select line through the target card
       const { row: targetRow, col: targetCol } = targetCoords
+
+      // CRITICAL: Cannot click on the target card itself
+      // Player must click on another cell in the same row or column to select the line
+      if (clickedRow === targetRow && clickedCol === targetCol) {
+        // Clicked on the same cell as the target card - ignore
+        console.log('[SELECT_LINE_FOR_EXPLOIT_SCORING] Blocked: clicked on target card')
+        return true
+      }
+
       isSameRow = clickedRow === targetRow
       isSameCol = clickedCol === targetCol
 
@@ -527,18 +580,27 @@ export function handleLineSelection(
       // This fixes Unwavering Integrator line selection not working when clicking empty cells
       const hasValidSourceCoords = sourceRowFromCoords !== null && sourceColFromCoords !== undefined
 
-
       if (hasValidSourceCoords) {
+        // CRITICAL: Cannot click on the Unwavering Integrator card itself
+        if (clickedRow === sourceRowFromCoords && clickedCol === sourceColFromCoords) {
+          console.log('[SELECT_LINE_FOR_EXPLOIT_SCORING] Blocked: clicked on source card')
+          return true
+        }
+
+        // We have valid source coords - check if clicked cell is in same row or column
+        isSameRow = clickedRow === sourceRowFromCoords
+        isSameCol = clickedCol === sourceColFromCoords
+        // Player must click on another cell in the same row or column to select the line
+        if (clickedRow === sourceRowFromCoords && clickedCol === sourceColFromCoords) {
+          // Clicked on the same cell as Unwavering Integrator - ignore
+          return true
+        }
+
         // We have valid source coords - check if clicked cell is in same row or column
         isSameRow = clickedRow === sourceRowFromCoords
         isSameCol = clickedCol === sourceColFromCoords
 
-        // If clicked on sourceCoords itself, default to row
-        if (isSameRow && isSameCol) {
-          // Clicked on Unwavering Integrator itself - default to row
-          isSameRow = true
-          isSameCol = false
-        }
+        // Only proceed if in same row OR same column (not both, since we already excluded that case)
       } else {
         // No valid source coords - first click determines the line (row or column)
         // Default to row for consistency
@@ -557,9 +619,12 @@ export function handleLineSelection(
     const actorId = sourceCard?.ownerId ?? (gameState.players.find((p: any) => p.id === gameState.activePlayerId)?.isDummy ? gameState.activePlayerId : (localPlayerId || gameState.activePlayerId))
     const gridSize = gameState.board.length
 
+    // CRITICAL FIX: Use active grid boundaries, not full board boundaries
+    const { minBound, maxBound } = calculateActiveBounds(gridSize, gameState.activeGridSize)
+
     // Determine the line boundaries based on whether row or column was selected
-    let startR = 0, endR = gridSize - 1
-    let startC = 0, endC = gridSize - 1
+    let startR = minBound, endR = maxBound
+    let startC = minBound, endC = maxBound
 
     if (isSameRow) {
       // Scoring the entire row

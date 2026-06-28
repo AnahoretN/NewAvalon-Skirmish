@@ -57,6 +57,9 @@ export function handleEmptyCellClick(
   boardCoords: { row: number; col: number },
   props: EmptyCellClickProps
 ): boolean {
+  // DEBUG: Log all empty cell clicks
+  console.log('[handleEmptyCellClick] Click coords:', boardCoords, 'abilityMode:', props.abilityMode?.mode)
+
   const {
     gameState,
     localPlayerId,
@@ -810,6 +813,14 @@ export function handleEmptyCellClick(
 
     const sameRow = boardCoords.row === contextCoords.row
     const sameCol = boardCoords.col === contextCoords.col
+
+    // CRITICAL: Cannot click on the same cell as the source/target card
+    // Player must click on another cell in the same row or column to select the line
+    if (sameRow && sameCol) {
+      // Clicked on the same cell - ignore
+      console.log('[ZIUS_LINE_SELECT] Blocked: clicked on same cell', { boardCoords, contextCoords })
+      return false
+    }
 
     if (!sameRow && !sameCol) {return false}
 

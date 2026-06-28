@@ -413,6 +413,7 @@ export interface CommandContext {
         cardId: string;
         tokenType: string;
         addedByPlayerId: number;
+        statusIndex?: number; // CRITICAL: Index in statuses array to prevent double-counting for host
     }; // For Data Interception, Overwatch - tracks token placement for dynamic count calculations
     placedTokens?: Array<{
         boardCoords: { row: number; col: number };

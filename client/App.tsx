@@ -366,14 +366,6 @@ const AppInner = function AppInner() {
     setCommandContext(prev => {
       const updated = typeof value === 'function' ? value(prev) : value
       commandContextRef.current = updated
-      // CRITICAL: Log all setCommandContext calls to track who's clearing placedTokens
-      console.log('[OVERWATCH-DEBUG-APP] setCommandContextWithRef called:', {
-        prevPlacedTokens: prev.placedTokens,
-        prevPlacedTokensCount: prev.placedTokens?.length || 0,
-        updatedPlacedTokens: updated.placedTokens,
-        updatedPlacedTokensCount: updated.placedTokens?.length || 0,
-        stackTrace: new Error().stack?.split('\n').slice(2, 15).join('\n'),
-      })
       return updated
     })
   }, [])
@@ -383,14 +375,6 @@ const AppInner = function AppInner() {
   useEffect(() => {
     const prev = prevCommandContextRef.current
     const current = commandContext
-    console.log('[OVERWATCH-DEBUG-APP] commandContext changed:', {
-      prevPlacedTokens: prev.placedTokens,
-      prevPlacedTokensCount: prev.placedTokens?.length || 0,
-      placedTokens: current.placedTokens,
-      placedTokensCount: current.placedTokens?.length || 0,
-      lastPlacedToken: current.lastPlacedToken,
-      stackTrace: new Error().stack?.split('\n').slice(2, 8).join('\n'),
-    })
     prevCommandContextRef.current = current
   }, [commandContext])
 
@@ -642,6 +626,30 @@ const AppInner = function AppInner() {
 
     if (!canControlScoring) {
       return
+    }
+
+    // CRITICAL: Cannot click on the last played card itself
+    // Player must click on another cell in the same row or column to select the line
+    if (activePlayer?.lastPlayedCardId) {
+      // Find the last played card on the board
+      let lastPlayedCoords: { row: number; col: number } | null = null
+      const boardSize = gameState.board.length
+
+      for (let r = 0; r < boardSize; r++) {
+        for (let c = 0; c < boardSize; c++) {
+          const cell = gameState.board[r]?.[c]
+          if (cell.card?.id === activePlayer.lastPlayedCardId) {
+            lastPlayedCoords = { row: r, col: c }
+            break
+          }
+        }
+        if (lastPlayedCoords) {break}
+      }
+
+      // If clicked on the last played card itself, ignore
+      if (lastPlayedCoords && lastPlayedCoords.row === boardCoords.row && lastPlayedCoords.col === boardCoords.col) {
+        return
+      }
     }
 
     // CRITICAL: Convert full board coordinates to active grid coordinates
@@ -1400,13 +1408,6 @@ const AppInner = function AppInner() {
   useEffect(() => {
     // When playMode goes from non-null to null and there's a pending command card
     if (prevPlayModeRef.current && !playMode && commandContext.pendingCommandCard) {
-      console.log('[OVERWATCH-DEBUG-APP] playMode useEffect - clearing pendingCommandCard', {
-        prevPlayMode: prevPlayModeRef.current,
-        playMode,
-        pendingCommandCard: commandContext.pendingCommandCard,
-        placedTokens: commandContext.placedTokens,
-        lastPlacedToken: commandContext.lastPlacedToken,
-      })
       const { sourceCoords, isDeployAbility, readyStatusToRemove, _autoStepsContext } = commandContext.pendingCommandCard
 
       // CRITICAL: Check if there's an AUTO_STEPS context to continue (for command cards with CLEANUP_COMMAND step)
@@ -1441,11 +1442,6 @@ const AppInner = function AppInner() {
       // CRITICAL: Preserve placedTokens and lastPlacedToken for multi-step commands
       setCommandContextWithRef((prev: any) => {
         const { pendingCommandCard, ...rest } = prev
-        console.log('[OVERWATCH-DEBUG-APP] playMode useEffect - clearing pendingCommandCard, returning:', {
-          hasPlacedTokens: !!rest.placedTokens,
-          placedTokensCount: rest.placedTokens?.length || 0,
-          hasLastPlacedToken: !!rest.lastPlacedToken,
-        })
         return rest
       })
     }
@@ -2924,7 +2920,6 @@ const AppInner = function AppInner() {
 
   // Derived highlighting filter for DiscardModal (Deck Search)
   const highlightFilter = useMemo(() => {
-    console.log('[highlightFilter] filterType:', viewingDiscard?.pickConfig?.filterType)
     if (viewingDiscard?.pickConfig?.filterType === 'Unit') {
       return (card: Card) => !!card.types?.includes('Unit')
     }

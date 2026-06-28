@@ -231,7 +231,7 @@ export function recalculateAllReadyStatuses(gameState: GameState): void {
   // - Phase 1 (Setup): Add readySetup, keep readyDeploy
   // - Phase 2 (Main): Add readyDeploy to newly played cards
   // - Phase 3 (Commit): Add readyCommit, keep readyDeploy
-  // - Phase 4 (Scoring): Remove all phase-specific statuses, keep readyDeploy
+  // - Phase 4 (Scoring): No ready highlights shown (abilities cannot be activated)
   updateReadyStatuses({ gameState }, getCardAbilityInfo)
 }
 

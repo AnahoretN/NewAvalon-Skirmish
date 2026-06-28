@@ -645,7 +645,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
             )
           })()}
 
-          {/* Line selection modes highlight - solid border for all line selection systems */}
+          {/* Line selection modes highlight - no border, only glow and gradient */}
           {/* Shows highlight for: SELECT_LINE_FOR_EXPLOIT_SCORING, SELECT_LINE_FOR_SUPPORT_COUNTERS, SELECT_LINE_FOR_THREAT_COUNTERS, SELECT_DIAGONAL, etc. */}
           {(isLineSelectionMode(abilityMode?.mode) || isLineSelectionMode(targetingModeActionMode)) && isValidTarget && (() => {
             const highlightOwnerId = activePlayerId ?? localPlayerId ?? targetingModePlayerId
@@ -660,9 +660,7 @@ const readyAbilityDelay = useMemo(() => Math.random() * 0.25, [cell.card?.id])
                 style={{
                   zIndex: 45,
                   boxShadow: `0 0 calc(2.5 * var(--vu-effect-md)) rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.75)`,
-                  borderWidth: 'var(--vu-border-md)',
-                  borderStyle: 'solid',
-                  borderColor: 'white',
+                  // No border - removed white border
                   background: `radial-gradient(circle at center, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0) 0%, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.75) 100%)`,
                 }}
               />

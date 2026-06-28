@@ -462,7 +462,12 @@ export function skipDeployAbility(card: Card): void {
  * to use the Setup ability immediately after playing the card.
  */
 export function getReadyStatusForPhase(card: Card, phaseIndex: number): ReadyStatusType | null {
-  // Priority 1: Deploy in any phase
+  // Scoring phase (4) - no abilities can be activated
+  if (phaseIndex === 4) {
+    return null
+  }
+
+  // Priority 1: Deploy in any phase except Scoring
   if (hasReadyStatus(card, READY_STATUS.DEPLOY)) {
     return READY_STATUS.DEPLOY
   }
